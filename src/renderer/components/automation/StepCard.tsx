@@ -1,0 +1,99 @@
+import { useSortable } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import type { AutomationStep } from '@/store';
+import Tooltip from '@/components/Tooltip';
+
+function formatDuration(ms: number): string {
+  const s = Math.floor(ms / 1000);
+  const m = Math.floor(s / 60);
+  const sec = s % 60;
+  return `${m}:${sec.toString().padStart(2, '0')}`;
+}
+
+const typeIcons: Record<string, string> = {
+  track: '\u{1F3B5}',
+  jingle: '\u{1F399}',
+  pause: '\u23F8',
+};
+
+interface StepCardProps {
+  step: AutomationStep;
+  index: number;
+  isPlaying: boolean;
+  isSelected: boolean;
+  onSelect: () => void;
+  onDelete: () => void;
+}
+
+export default function StepCard({ step, index, isPlaying, isSelected, onSelect, onDelete }: StepCardProps) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: step.id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  const name = step.type === 'pause' ? step.label || 'Pause Point' : step.name;
+  const subtitle = step.type === 'track' ? step.artist : step.type === 'jingle' ? 'Jingle' : 'Automation pauses here';
+  const duration = step.type !== 'pause' ? formatDuration(step.durationMs) : '--:--';
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      onClick={onSelect}
+      className={`flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer transition-all group ${
+        isSelected ? 'bg-bg-elevated ring-1 ring-accent/40' : 'hover:bg-bg-elevated/60'
+      } ${isPlaying ? 'border-l-2 border-l-accent' : 'border-l-2 border-l-transparent'}`}
+    >
+      {/* Drag handle */}
+      <Tooltip content="Drag to reorder steps" placement="left">
+        <button
+          {...attributes}
+          {...listeners}
+          data-coachmark="drag-handle"
+          className="shrink-0 cursor-grab active:cursor-grabbing text-text-muted hover:text-text-secondary p-0.5"
+          aria-label="Drag to reorder"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+            <circle cx="9" cy="6" r="1.5" />
+            <circle cx="15" cy="6" r="1.5" />
+            <circle cx="9" cy="12" r="1.5" />
+            <circle cx="15" cy="12" r="1.5" />
+            <circle cx="9" cy="18" r="1.5" />
+            <circle cx="15" cy="18" r="1.5" />
+          </svg>
+        </button>
+      </Tooltip>
+
+      {/* Type icon */}
+      <span className="text-base shrink-0 w-6 text-center">{typeIcons[step.type]}</span>
+
+      {/* Playing indicator */}
+      {isPlaying && (
+        <span className="shrink-0 w-2 h-2 rounded-full bg-accent animate-pulse" />
+      )}
+
+      {/* Name + subtitle */}
+      <div className="flex-1 min-w-0">
+        <div className="text-sm text-text-primary truncate">{name}</div>
+        <div className="text-xs text-text-muted truncate">{subtitle}</div>
+      </div>
+
+      {/* Duration */}
+      <span className="text-xs text-text-muted tabular-nums shrink-0">{duration}</span>
+
+      {/* Delete */}
+      <button
+        onClick={(e) => { e.stopPropagation(); onDelete(); }}
+        className="shrink-0 p-1 rounded text-text-muted hover:text-danger hover:bg-danger/10 transition-colors opacity-0 group-hover:opacity-100"
+        aria-label="Remove step"
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+          <path d="M18 6L6 18M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
+  );
+}

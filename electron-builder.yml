@@ -1,0 +1,22 @@
+appId: com.radiosankt.app
+productName: Radio Sankt
+directories:
+  output: release
+files:
+  - dist/**/*
+  - package.json
+mac:
+  category: public.app-category.music
+  target:
+    - dmg
+    - zip
+win:
+  target:
+    - nsis
+linux:
+  target:
+    - AppImage
+publish:
+  provider: github
+  owner: radiosankt
+  repo: radiosankt
