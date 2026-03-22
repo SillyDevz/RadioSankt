@@ -129,7 +129,7 @@ function StepSpotify({ onNext, onSkip }: { onNext: () => void; onSkip: () => voi
   };
 
   const handleCopy = () => {
-    navigator.clipboard.writeText('http://localhost:8888/callback');
+    navigator.clipboard.writeText('http://127.0.0.1:8888/callback');
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -197,7 +197,7 @@ function StepSpotify({ onNext, onSkip }: { onNext: () => void; onSkip: () => voi
             <span>In Redirect URIs, add:</span>
             <div className="flex items-center gap-2">
               <code className="bg-bg-primary border border-border px-3 py-1.5 rounded text-xs text-text-muted font-mono">
-                http://localhost:8888/callback
+                http://127.0.0.1:8888/callback
               </code>
               <button
                 onClick={handleCopy}

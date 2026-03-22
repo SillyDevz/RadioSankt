@@ -236,7 +236,7 @@ export default function SettingsPage() {
                 <li>Go to <button onClick={() => window.electronAPI?.openExternal('https://developer.spotify.com/dashboard')} className="text-accent hover:underline">developer.spotify.com/dashboard</button></li>
                 <li>Log in with your Spotify account (free or premium)</li>
                 <li>Click "Create app"</li>
-                <li>Set the Redirect URI to <code className="bg-bg-primary px-1 py-0.5 rounded text-text-muted">http://localhost:8888/callback</code></li>
+                <li>Set the Redirect URI to <code className="bg-bg-primary px-1 py-0.5 rounded text-text-muted">http://127.0.0.1:8888/callback</code></li>
                 <li>Check "Web Playback SDK" under APIs used</li>
                 <li>Copy the Client ID and paste it below</li>
                 <li>Click "Connect"</li>

@@ -5,7 +5,7 @@ import Store from 'electron-store';
 
 const store = new Store();
 
-const REDIRECT_URI = 'http://localhost:8888/callback';
+const REDIRECT_URI = 'http://127.0.0.1:8888/callback';
 const SCOPES = [
   'streaming',
   'user-read-email',
@@ -87,7 +87,7 @@ function startCallbackServer(
     }
 
     callbackServer = createServer(async (req, res) => {
-      const url = new URL(req.url || '', `http://localhost:8888`);
+      const url = new URL(req.url || '', `http://127.0.0.1:8888`);
 
       if (url.pathname === '/callback') {
         const code = url.searchParams.get('code');
@@ -124,7 +124,7 @@ function startCallbackServer(
       }
     });
 
-    callbackServer.listen(8888, () => resolve());
+    callbackServer.listen(8888, '127.0.0.1', () => resolve());
     callbackServer.on('error', reject);
 
     // Auto-close after 5 minutes if no callback

@@ -16,7 +16,7 @@ The app routes Spotify audio and local jingle files through a Web Audio API mixi
 2. Log in with your Spotify account
 3. Click **Create app**
 4. Give it any name (e.g. "Radio Sankt")
-5. Set the **Redirect URI** to `http://localhost:8888/callback`
+5. Set the **Redirect URI** to `http://127.0.0.1:8888/callback`
 6. Under **APIs used**, check **Web Playback SDK**
 7. Save the app and copy the **Client ID**
 8. Paste the Client ID into Radio Sankt's Settings page and click **Connect**
@@ -72,7 +72,7 @@ All shortcuts are rebindable from Settings.
 
 **"Spotify player not ready"** — Make sure you have Spotify Premium. The Web Playback SDK requires a Premium account to stream audio.
 
-**Auth callback fails** — Verify your Redirect URI is exactly `http://localhost:8888/callback` in your Spotify Developer dashboard. No trailing slash.
+**Auth callback fails** — Verify your Redirect URI is exactly `http://127.0.0.1:8888/callback` in your Spotify Developer dashboard. No trailing slash.
 
 **No audio after connecting** — Click anywhere in the app window first. Browsers (and Electron) require a user gesture before allowing audio playback via the Web Audio API.
 

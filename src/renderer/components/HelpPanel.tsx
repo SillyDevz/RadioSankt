@@ -69,7 +69,7 @@ export default function HelpPanel() {
                 <span>
                   Set Redirect URI to{' '}
                   <code className="bg-bg-primary px-1 py-0.5 rounded text-text-muted font-mono">
-                    http://localhost:8888/callback
+                    http://127.0.0.1:8888/callback
                   </code>
                 </span>
               </li>
