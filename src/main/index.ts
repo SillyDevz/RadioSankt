@@ -128,7 +128,7 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.handle('open-external', (_event, url: string) => {
-    shell.openExternal(url);
+    return shell.openExternal(url);
   });
 
   // File system - binary
