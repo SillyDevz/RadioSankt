@@ -65,8 +65,9 @@ export default function SpotifySearch() {
         try {
           const results = await searchTracks(value);
           setSearchResults(results);
-        } catch {
-          addToast('Search failed', 'error');
+        } catch (err) {
+          console.error('Spotify search error:', err);
+          addToast(`Search failed: ${err instanceof Error ? err.message : String(err)}`, 'error');
         } finally {
           setLoading(false);
         }
@@ -181,7 +182,8 @@ export default function SpotifySearch() {
           {searchResults.map((track) => (
             <div
               key={track.uri}
-              className="flex items-center gap-3 px-4 py-2.5 hover:bg-bg-elevated transition-colors group"
+              onClick={() => handlePlayNow(track.uri)}
+              className="flex items-center gap-3 px-4 py-2.5 hover:bg-bg-elevated transition-colors group cursor-pointer"
             >
               {/* Album art */}
               <img
@@ -205,7 +207,7 @@ export default function SpotifySearch() {
               <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
                 <Tooltip content="Adds this track to your current automation playlist" placement="top">
                   <button
-                    onClick={() => handleAddToAutomation(track)}
+                    onClick={(e) => { e.stopPropagation(); handleAddToAutomation(track); }}
                     className="p-1.5 rounded hover:bg-bg-primary text-text-secondary hover:text-text-primary transition-colors"
                     aria-label="Add to Automation"
                   >
@@ -217,7 +219,7 @@ export default function SpotifySearch() {
                 </Tooltip>
                 <Tooltip content="Play this track now" placement="top">
                   <button
-                    onClick={() => handlePlayNow(track.uri)}
+                    onClick={(e) => { e.stopPropagation(); handlePlayNow(track.uri); }}
                     className="p-1.5 rounded hover:bg-accent/20 text-accent transition-colors"
                     aria-label="Play Now"
                   >

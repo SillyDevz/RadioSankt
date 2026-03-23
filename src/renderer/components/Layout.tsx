@@ -66,6 +66,16 @@ function Layout() {
     api.getFromStore('githubRepo').then((val) => { if (typeof val === 'string') useStore.setState({ githubRepo: val }); });
     api.getFromStore('shortcuts').then((val) => { if (Array.isArray(val)) useStore.setState({ shortcuts: val as ShortcutBinding[] }); });
     api.getFromStore('quickFireSlots').then((val) => { if (Array.isArray(val) && val.length === 12) useStore.setState({ quickFireSlots: val as QuickFireSlot[] }); });
+
+    // Restore Spotify session
+    api.getSpotifyClientId().then((id) => {
+      if (id) useStore.setState({ clientId: id });
+    });
+    api.getSpotifyToken().then(async (token) => {
+      if (token) {
+        useStore.setState({ token, connected: true });
+      }
+    });
   }, []);
 
   // Apply theme + accent whenever they change

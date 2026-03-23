@@ -75,6 +75,14 @@ export function useSpotifyPlayer() {
   useEffect(() => {
     if (document.getElementById('spotify-sdk-script')) return;
 
+    // Define the callback before loading the script to avoid race condition
+    // The actual player init happens in the next useEffect when token is available
+    if (!window.onSpotifyWebPlaybackSDKReady) {
+      window.onSpotifyWebPlaybackSDKReady = () => {
+        // SDK is ready — player init will happen when token arrives
+      };
+    }
+
     const script = document.createElement('script');
     script.id = 'spotify-sdk-script';
     script.src = 'https://sdk.scdn.co/spotify-player.js';

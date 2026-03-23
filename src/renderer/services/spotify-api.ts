@@ -41,11 +41,15 @@ export async function searchTracks(query: string): Promise<SpotifySearchResult[]
   const params = new URLSearchParams({
     q: query,
     type: 'track',
-    limit: '20',
+    limit: '10',
   });
 
   const res = await apiFetch(`/search?${params.toString()}`);
-  if (!res.ok) return [];
+  if (!res.ok) {
+    const errorBody = await res.text();
+    console.error('Spotify search error:', res.status, errorBody);
+    throw new Error(`Spotify API ${res.status}: ${errorBody}`);
+  }
 
   const data = await res.json();
   return (data.tracks?.items || []).map((track: {
