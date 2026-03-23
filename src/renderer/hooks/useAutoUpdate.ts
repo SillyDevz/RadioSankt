@@ -15,7 +15,7 @@ export function useAutoUpdate() {
     const cleanupDownloaded = api.onUpdateDownloaded(() => {
       addToast('Update downloaded. Restart to apply.', 'success', {
         label: 'Restart',
-        onClick: () => api.checkForUpdates(),
+        onClick: () => api.quitAndInstall(),
       });
     });
 

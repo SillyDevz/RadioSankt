@@ -1,7 +1,8 @@
-import { useEffect, lazy, Suspense } from 'react';
+import { useEffect, useState, lazy, Suspense } from 'react';
 import { useStore } from '@/store';
 import type { Page, CoachMarkId, AccentColor, ThemeMode, QuickFireSlot, ShortcutBinding } from '@/store';
 import { ACCENT_COLORS } from '@/store';
+import { getProfile } from '@/services/spotify-api';
 import Sidebar from './Sidebar';
 import NowPlayingBar from './NowPlayingBar';
 import SpotifySearch from './SpotifySearch';
@@ -40,42 +41,81 @@ function Layout() {
   const theme = useStore((s) => s.theme);
   const accentColor = useStore((s) => s.accentColor);
   const PageComponent = pages[currentPage];
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
   useAutoUpdate();
   useKeyboardShortcuts();
 
   // Load persisted settings from electron-store on mount
   useEffect(() => {
     const api = window.electronAPI;
+    if (!api) {
+      setSettingsLoaded(true);
+      return;
+    }
+
+    Promise.all([
+      api.getFromStore('hasCompletedOnboarding').then((val) => {
+        if (val === true) useStore.setState({ hasCompletedOnboarding: true });
+      }),
+      api.getFromStore('seenCoachMarks').then((val) => {
+        if (val && typeof val === 'object') useStore.setState({ seenCoachMarks: val as Record<CoachMarkId, boolean> });
+      }),
+      api.getFromStore('theme').then((val) => { if (val) useStore.setState({ theme: val as ThemeMode }); }),
+      api.getFromStore('accentColor').then((val) => { if (val) useStore.setState({ accentColor: val as AccentColor }); }),
+      api.getFromStore('fadeInMs').then((val) => { if (typeof val === 'number') useStore.setState({ fadeInMs: val }); }),
+      api.getFromStore('fadeOutMs').then((val) => { if (typeof val === 'number') useStore.setState({ fadeOutMs: val }); }),
+      api.getFromStore('crossfadeMs').then((val) => { if (typeof val === 'number') useStore.setState({ crossfadeMs: val }); }),
+      api.getFromStore('duckLevel').then((val) => { if (typeof val === 'number') useStore.setState({ duckLevel: val }); }),
+      api.getFromStore('autoUpdate').then((val) => { if (typeof val === 'boolean') useStore.setState({ autoUpdate: val }); }),
+      api.getFromStore('githubRepo').then((val) => { if (typeof val === 'string') useStore.setState({ githubRepo: val }); }),
+      api.getFromStore('shortcuts').then((val) => { if (Array.isArray(val)) useStore.setState({ shortcuts: val as ShortcutBinding[] }); }),
+      api.getFromStore('quickFireSlots').then((val) => { if (Array.isArray(val) && val.length === 12) useStore.setState({ quickFireSlots: val as QuickFireSlot[] }); }),
+      api.getSpotifyClientId().then((id) => {
+        if (id) useStore.setState({ clientId: id });
+      }),
+      api.getSpotifyToken().then(async (token) => {
+        if (token) {
+          useStore.setState({ token, connected: true });
+          try {
+            const profile = await getProfile();
+            useStore.setState({ user: profile.displayName, userAvatar: profile.avatar });
+          } catch {
+            // Token might be expired — will be refreshed
+          }
+        }
+      }),
+    ]).finally(() => setSettingsLoaded(true));
+  }, []);
+
+  // Centralized Spotify auth event listeners
+  useEffect(() => {
+    const api = window.electronAPI;
     if (!api) return;
 
-    api.getFromStore('hasCompletedOnboarding').then((val) => {
-      if (val === true) useStore.setState({ hasCompletedOnboarding: true });
-    });
-    api.getFromStore('seenCoachMarks').then((val) => {
-      if (val && typeof val === 'object') useStore.setState({ seenCoachMarks: val as Record<CoachMarkId, boolean> });
-    });
-
-    // Settings
-    api.getFromStore('theme').then((val) => { if (val) useStore.setState({ theme: val as ThemeMode }); });
-    api.getFromStore('accentColor').then((val) => { if (val) useStore.setState({ accentColor: val as AccentColor }); });
-    api.getFromStore('fadeInMs').then((val) => { if (typeof val === 'number') useStore.setState({ fadeInMs: val }); });
-    api.getFromStore('fadeOutMs').then((val) => { if (typeof val === 'number') useStore.setState({ fadeOutMs: val }); });
-    api.getFromStore('crossfadeMs').then((val) => { if (typeof val === 'number') useStore.setState({ crossfadeMs: val }); });
-    api.getFromStore('duckLevel').then((val) => { if (typeof val === 'number') useStore.setState({ duckLevel: val }); });
-    api.getFromStore('autoUpdate').then((val) => { if (typeof val === 'boolean') useStore.setState({ autoUpdate: val }); });
-    api.getFromStore('githubRepo').then((val) => { if (typeof val === 'string') useStore.setState({ githubRepo: val }); });
-    api.getFromStore('shortcuts').then((val) => { if (Array.isArray(val)) useStore.setState({ shortcuts: val as ShortcutBinding[] }); });
-    api.getFromStore('quickFireSlots').then((val) => { if (Array.isArray(val) && val.length === 12) useStore.setState({ quickFireSlots: val as QuickFireSlot[] }); });
-
-    // Restore Spotify session
-    api.getSpotifyClientId().then((id) => {
-      if (id) useStore.setState({ clientId: id });
-    });
-    api.getSpotifyToken().then(async (token) => {
-      if (token) {
-        useStore.setState({ token, connected: true });
+    const unsubComplete = api.onSpotifyAuthComplete(async (data) => {
+      useStore.setState({ token: data.accessToken, connected: true });
+      useStore.getState().addToast('Connected to Spotify', 'success');
+      try {
+        const profile = await getProfile();
+        useStore.setState({ user: profile.displayName, userAvatar: profile.avatar });
+      } catch {
+        // Profile fetch failed
       }
     });
+
+    const unsubError = api.onSpotifyAuthError((error) => {
+      useStore.getState().addToast(`Spotify auth failed: ${error}`, 'error');
+    });
+
+    const unsubRefresh = api.onSpotifyTokenRefreshed((data) => {
+      useStore.setState({ token: data.accessToken });
+    });
+
+    return () => {
+      unsubComplete();
+      unsubError();
+      unsubRefresh();
+    };
   }, []);
 
   // Apply theme + accent whenever they change
@@ -85,21 +125,29 @@ function Layout() {
 
   return (
     <div className="h-screen flex flex-col bg-bg-primary">
-      {!hasCompletedOnboarding && <OnboardingWizard />}
-      <div className="flex flex-1 overflow-hidden">
-        <Sidebar />
-        <main className="flex-1 overflow-y-auto p-6">
-          <Suspense fallback={<div className="flex items-center justify-center h-full"><span className="text-text-muted text-sm">Loading...</span></div>}>
-            <div key={currentPage} className="animate-page-enter h-full">
-              <PageComponent />
-            </div>
-          </Suspense>
-        </main>
-      </div>
-      <NowPlayingBar />
-      <SpotifySearch />
-      <ToastContainer />
-      <HelpPanel />
+      {!settingsLoaded ? (
+        <div className="flex items-center justify-center h-full">
+          <div className="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+        </div>
+      ) : (
+        <>
+          {!hasCompletedOnboarding && <OnboardingWizard />}
+          <div className="flex flex-1 overflow-hidden">
+            <Sidebar />
+            <main className="flex-1 overflow-y-auto p-6">
+              <Suspense fallback={<div className="flex items-center justify-center h-full"><span className="text-text-muted text-sm">Loading...</span></div>}>
+                <div key={currentPage} className="animate-page-enter h-full">
+                  <PageComponent />
+                </div>
+              </Suspense>
+            </main>
+          </div>
+          <NowPlayingBar />
+          <SpotifySearch />
+          <ToastContainer />
+          <HelpPanel />
+        </>
+      )}
     </div>
   );
 }

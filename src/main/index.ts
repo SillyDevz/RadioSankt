@@ -1,8 +1,8 @@
 import { app, BrowserWindow, ipcMain, dialog, shell, components } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import Store from 'electron-store';
-import { join } from 'path';
-import { readFileSync } from 'fs';
+import { join, resolve, normalize } from 'path';
+import { promises as fs } from 'fs';
 import {
   saveJingle,
   getJingles,
@@ -41,6 +41,7 @@ function createWindow(): void {
       preload: join(__dirname, '../preload/index.js'),
       nodeIntegration: false,
       contextIsolation: true,
+      sandbox: true,
     },
   });
 
@@ -56,6 +57,16 @@ function createWindow(): void {
     mainWindow = null;
     stopTokenRefreshTimer();
   });
+
+  // Prevent navigation to external URLs
+  mainWindow.webContents.on('will-navigate', (event, url) => {
+    const devUrl = process.env.VITE_DEV_SERVER_URL;
+    if (devUrl && url.startsWith(devUrl)) return;
+    if (url.startsWith('file://')) return;
+    event.preventDefault();
+  });
+
+  mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' as const }));
 
   // Start token refresh if we have stored tokens
   if (getStoredToken()) {
@@ -85,16 +96,25 @@ function registerIpcHandlers(): void {
     return autoUpdater.checkForUpdates();
   });
 
+  ipcMain.handle('quit-and-install', () => {
+    autoUpdater.quitAndInstall();
+  });
+
   ipcMain.handle('get-app-version', () => {
     return app.getVersion();
   });
 
   ipcMain.handle('open-file-dialog', async (_event, options) => {
-    return dialog.showOpenDialog(options);
+    // Only allow safe options from the renderer
+    return dialog.showOpenDialog({
+      properties: options?.properties || ['openFile'],
+      filters: options?.filters,
+      title: options?.title,
+    });
   });
 
-  ipcMain.handle('read-file', (_event, filePath: string) => {
-    return readFileSync(filePath, 'utf-8');
+  ipcMain.handle('read-file', async (_event, filePath: string) => {
+    return fs.readFile(filePath, 'utf-8');
   });
 
   ipcMain.handle('save-to-store', (_event, key: string, value: unknown) => {
@@ -131,13 +151,22 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.handle('open-external', (_event, url: string) => {
-    return shell.openExternal(url);
+    // Only allow http/https URLs
+    try {
+      const parsed = new URL(url);
+      if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
+        return shell.openExternal(url);
+      }
+    } catch {
+      // Invalid URL
+    }
+    return Promise.resolve();
   });
 
   // File system - binary
-  ipcMain.handle('read-file-buffer', (_event, filePath: string) => {
-    const buffer = readFileSync(filePath);
-    return buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength);
+  ipcMain.handle('read-file-buffer', async (_event, filePath: string) => {
+    const buf = await fs.readFile(filePath);
+    return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
   });
 
   // Jingles
@@ -187,9 +216,9 @@ app.whenReady().then(async () => {
     console.warn('Widevine CDM not available:', e);
   }
   getDatabase();
+  registerIpcHandlers();
   createWindow();
   setupAutoUpdater();
-  registerIpcHandlers();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

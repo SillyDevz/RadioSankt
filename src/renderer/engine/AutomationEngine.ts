@@ -149,10 +149,12 @@ class AutomationEngine {
 
   async resume(): Promise<void> {
     const store = this.getStore();
-    if (store.automationStatus !== 'waitingAtPause') return;
-
-    const nextIndex = store.currentStepIndex + 1;
-    await this.executeStep(nextIndex);
+    if (store.automationStatus === 'waitingAtPause') {
+      const nextIndex = store.currentStepIndex + 1;
+      await this.executeStep(nextIndex);
+    } else if (store.automationStatus === 'paused') {
+      await this.executeStep(store.currentStepIndex);
+    }
   }
 
   private scheduleNextStep(step: AutomationStep, currentIndex: number): void {
@@ -166,30 +168,39 @@ class AutomationEngine {
     const delay = Math.max(durationMs - overlapMs, 500);
 
     this.nextStepTimer = setTimeout(async () => {
-      const audio = AudioEngine.get();
+      try {
+        const audio = AudioEngine.get();
 
-      // Apply transition out on current step
-      if (step.transitionOut === 'fadeOut' && audio) {
-        const channel = step.type === 'jingle' ? 'B' : 'A';
-        audio.fadeOut(channel, FADE_DURATION);
-      }
-
-      // If next step is crossfade, start it overlapping
-      if (nextStep?.transitionIn === 'crossfade' && audio) {
-        const fromChannel = step.type === 'jingle' ? 'B' : 'A';
-        const toChannel = nextStep.type === 'jingle' ? 'B' : 'A';
-        if (fromChannel !== toChannel) {
-          audio.crossfade(fromChannel, toChannel, FADE_DURATION);
+        // Apply transition out on current step
+        if (step.transitionOut === 'fadeOut' && audio) {
+          const channel = step.type === 'jingle' ? 'B' : 'A';
+          audio.fadeOut(channel, FADE_DURATION);
         }
-      }
 
-      await this.executeStep(currentIndex + 1);
+        // If next step is crossfade, start it overlapping
+        if (nextStep?.transitionIn === 'crossfade' && audio) {
+          const fromChannel = step.type === 'jingle' ? 'B' : 'A';
+          const toChannel = nextStep.type === 'jingle' ? 'B' : 'A';
+          if (fromChannel !== toChannel) {
+            audio.crossfade(fromChannel, toChannel, FADE_DURATION);
+          }
+        }
+
+        await this.executeStep(currentIndex + 1);
+      } catch (err) {
+        this.emit({ type: 'error', message: `Step transition failed: ${err}` });
+        this.scheduleNextStepImmediate(currentIndex);
+      }
     }, delay);
   }
 
   private scheduleNextStepImmediate(currentIndex: number): void {
     this.clearNextStepTimer();
-    this.nextStepTimer = setTimeout(() => this.executeStep(currentIndex + 1), 200);
+    this.nextStepTimer = setTimeout(() => {
+      this.executeStep(currentIndex + 1).catch((err) => {
+        this.emit({ type: 'error', message: `Failed to advance: ${err}` });
+      });
+    }, 200);
   }
 
   private startCountdown(step: AutomationStep): void {

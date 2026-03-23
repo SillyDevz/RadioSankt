@@ -25,13 +25,9 @@ export default function SpotifySearch() {
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // CMD+K shortcut
+  // Escape to close
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-        e.preventDefault();
-        setOpen(!open);
-      }
       if (e.key === 'Escape' && open) {
         setOpen(false);
       }

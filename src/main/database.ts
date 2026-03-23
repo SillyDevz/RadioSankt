@@ -101,12 +101,20 @@ export function loadPlaylist(id: number): PlaylistRow | undefined {
 export function listPlaylists(): PlaylistSummary[] {
   const db = getDatabase();
   const rows = db.prepare('SELECT id, name, steps, updatedAt FROM automation_playlists ORDER BY updatedAt DESC').all() as PlaylistRow[];
-  return rows.map((r) => ({
-    id: r.id,
-    name: r.name,
-    stepCount: JSON.parse(r.steps).length,
-    updatedAt: r.updatedAt,
-  }));
+  return rows.map((r) => {
+    let stepCount = 0;
+    try {
+      stepCount = JSON.parse(r.steps).length;
+    } catch {
+      // corrupted steps JSON — treat as empty
+    }
+    return {
+      id: r.id,
+      name: r.name,
+      stepCount,
+      updatedAt: r.updatedAt,
+    };
+  });
 }
 
 export function deletePlaylist(id: number): void {

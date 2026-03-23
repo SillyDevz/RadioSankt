@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import { useStore } from '@/store';
-import { getProfile } from '@/services/spotify-api';
 
 const STEPS = ['Welcome', 'Spotify', 'Jingles', 'Ready'];
 
@@ -78,10 +77,6 @@ function StepWelcome({ onNext }: { onNext: () => void }) {
 // ── Step 2: Connect Spotify ─────────────────────────────────────────────
 
 function StepSpotify({ onNext, onSkip }: { onNext: () => void; onSkip: () => void }) {
-  const setConnected = useStore((s) => s.setConnected);
-  const setUser = useStore((s) => s.setUser);
-  const setUserAvatar = useStore((s) => s.setUserAvatar);
-  const setToken = useStore((s) => s.setToken);
   const setClientId = useStore((s) => s.setClientId);
   const connected = useStore((s) => s.connected);
   const user = useStore((s) => s.user);
@@ -91,20 +86,11 @@ function StepSpotify({ onNext, onSkip }: { onNext: () => void; onSkip: () => voi
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
 
-  // Listen for auth events
+  // Track auth results for local UI state (store updates handled by Layout)
   useEffect(() => {
-    const unsubComplete = window.electronAPI?.onSpotifyAuthComplete(async (data) => {
-      setToken(data.accessToken);
-      setConnected(true);
+    const unsubComplete = window.electronAPI?.onSpotifyAuthComplete(() => {
       setConnecting(false);
       setError('');
-      try {
-        const profile = await getProfile();
-        setUser(profile.displayName);
-        setUserAvatar(profile.avatar);
-      } catch {
-        // Profile fetch failed but auth succeeded
-      }
     });
 
     const unsubError = window.electronAPI?.onSpotifyAuthError(() => {
@@ -116,7 +102,7 @@ function StepSpotify({ onNext, onSkip }: { onNext: () => void; onSkip: () => voi
       unsubComplete?.();
       unsubError?.();
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleConnect = async () => {
     const trimmed = clientIdInput.trim();

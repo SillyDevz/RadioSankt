@@ -12,6 +12,7 @@ interface ElectronAPI {
   onUpdateAvailable: (cb: () => void) => () => void;
   onUpdateDownloaded: (cb: () => void) => () => void;
   getAppVersion: () => Promise<string>;
+  quitAndInstall: () => Promise<void>;
 
   // File system
   openFileDialog: (options: Record<string, unknown>) => Promise<Electron.OpenDialogReturnValue>;

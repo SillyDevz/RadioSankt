@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { useStore } from '@/store';
 import type { AccentColor, ThemeMode } from '@/store';
 import { ACCENT_COLORS } from '@/store';
-import { getProfile } from '@/services/spotify-api';
 import Tooltip from '@/components/Tooltip';
 
 const ACCENT_SWATCHES: { id: AccentColor; label: string }[] = [
@@ -19,10 +18,6 @@ export default function SettingsPage() {
   const user = useStore((s) => s.user);
   const userAvatar = useStore((s) => s.userAvatar);
   const clientId = useStore((s) => s.clientId);
-  const setConnected = useStore((s) => s.setConnected);
-  const setUser = useStore((s) => s.setUser);
-  const setUserAvatar = useStore((s) => s.setUserAvatar);
-  const setToken = useStore((s) => s.setToken);
   const setClientId = useStore((s) => s.setClientId);
   const addToast = useStore((s) => s.addToast);
 
@@ -65,53 +60,6 @@ export default function SettingsPage() {
       }
     }).catch(() => {});
   }, [setClientId]);
-
-  // Check for existing token on mount
-  useEffect(() => {
-    window.electronAPI?.getSpotifyToken().then(async (token) => {
-      if (token) {
-        setToken(token);
-        setConnected(true);
-        try {
-          const profile = await getProfile();
-          setUser(profile.displayName);
-          setUserAvatar(profile.avatar);
-        } catch {
-          // Token might be expired
-        }
-      }
-    }).catch(() => {});
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Listen for auth events
-  useEffect(() => {
-    const unsubComplete = window.electronAPI?.onSpotifyAuthComplete(async (data) => {
-      setToken(data.accessToken);
-      setConnected(true);
-      addToast('Connected to Spotify', 'success');
-      try {
-        const profile = await getProfile();
-        setUser(profile.displayName);
-        setUserAvatar(profile.avatar);
-      } catch {
-        // Profile fetch failed
-      }
-    });
-
-    const unsubError = window.electronAPI?.onSpotifyAuthError((error) => {
-      addToast(`Spotify auth failed: ${error}`, 'error');
-    });
-
-    const unsubRefresh = window.electronAPI?.onSpotifyTokenRefreshed((data) => {
-      setToken(data.accessToken);
-    });
-
-    return () => {
-      unsubComplete?.();
-      unsubError?.();
-      unsubRefresh?.();
-    };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Keyboard rebinding listener
   useEffect(() => {
@@ -162,10 +110,6 @@ export default function SettingsPage() {
 
   const handleDisconnect = async () => {
     await window.electronAPI?.disconnectSpotify();
-    setConnected(false);
-    setUser(null);
-    setUserAvatar(null);
-    setToken(null);
     useStore.getState().disconnectSpotify();
     addToast('Disconnected from Spotify', 'info');
   };

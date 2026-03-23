@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useStore } from '@/store';
 
 export default function HelpPanel() {
@@ -166,8 +167,6 @@ export default function HelpPanel() {
 }
 
 // ── Accordion ───────────────────────────────────────────────────────────
-
-import { useState } from 'react';
 
 function AccordionSection({ title, children }: { title: string; children: React.ReactNode }) {
   const [open, setOpen] = useState(false);

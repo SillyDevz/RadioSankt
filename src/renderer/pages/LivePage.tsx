@@ -279,10 +279,16 @@ export default function LivePage() {
     setPlayingSlotId(slot.id);
     setPlayingSlotProgress(0);
 
-    // Short fade in
-    audio.setVolume('B', 0);
-    await audio.playJingle(slot.jinglePath);
-    await audio.fadeIn('B', 200);
+    try {
+      // Short fade in
+      audio.setVolume('B', 0);
+      await audio.playJingle(slot.jinglePath);
+      await audio.fadeIn('B', 200);
+    } catch {
+      setPlayingSlotId(null);
+      setPlayingSlotProgress(0);
+      return;
+    }
 
     // Track progress
     const startTime = Date.now();
@@ -487,7 +493,7 @@ export default function LivePage() {
         <ContextMenu
           x={contextMenu.x}
           y={contextMenu.y}
-          slot={quickFireSlots.find((s) => s.id === contextMenu.slotId)!}
+          slot={quickFireSlots.find((s) => s.id === contextMenu.slotId) || quickFireSlots[0]}
           onAssign={() => { setAssigningSlotId(contextMenu.slotId); setContextMenu(null); }}
           onRename={() => {
             const slot = quickFireSlots.find((s) => s.id === contextMenu.slotId);

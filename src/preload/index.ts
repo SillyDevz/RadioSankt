@@ -4,14 +4,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Updates
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
   onUpdateAvailable: (cb: () => void) => {
-    ipcRenderer.on('update-available', () => cb());
-    return () => ipcRenderer.removeAllListeners('update-available');
+    const handler = () => cb();
+    ipcRenderer.on('update-available', handler);
+    return () => ipcRenderer.removeListener('update-available', handler);
   },
   onUpdateDownloaded: (cb: () => void) => {
-    ipcRenderer.on('update-downloaded', () => cb());
-    return () => ipcRenderer.removeAllListeners('update-downloaded');
+    const handler = () => cb();
+    ipcRenderer.on('update-downloaded', handler);
+    return () => ipcRenderer.removeListener('update-downloaded', handler);
   },
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+  quitAndInstall: () => ipcRenderer.invoke('quit-and-install'),
 
   // File system
   openFileDialog: (options: Record<string, unknown>) => ipcRenderer.invoke('open-file-dialog', options),

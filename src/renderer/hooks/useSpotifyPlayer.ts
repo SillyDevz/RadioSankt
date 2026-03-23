@@ -27,13 +27,14 @@ export function useSpotifyPlayer() {
 
   const startPositionTracking = useCallback(() => {
     clearPositionTracking();
-    positionInterval.current = setInterval(async () => {
+    positionInterval.current = setInterval(() => {
       const player = playerRef.current;
       if (!player) return;
-      const state = await player.getCurrentState();
-      if (state && !state.paused) {
-        setPosition(state.position);
-      }
+      player.getCurrentState().then((state) => {
+        if (state && !state.paused) {
+          setPosition(state.position);
+        }
+      }).catch(() => {});
     }, 500);
   }, [clearPositionTracking, setPosition]);
 
@@ -44,13 +45,18 @@ export function useSpotifyPlayer() {
     if (!playerId) return;
 
     // The SDK creates an audio element we can tap into
+    let attempts = 0;
+    const maxAttempts = 20; // 10 seconds total
+
     const tryConnect = () => {
       const audioEl = document.querySelector(`audio[data-testid="audio-element"]`) as HTMLAudioElement
         || document.querySelector('audio') as HTMLAudioElement;
 
       if (!audioEl) {
-        // Retry briefly - SDK may not have created it yet
-        setTimeout(tryConnect, 500);
+        attempts++;
+        if (attempts < maxAttempts) {
+          setTimeout(tryConnect, 500);
+        }
         return;
       }
 
@@ -163,7 +169,9 @@ export function useSpotifyPlayer() {
         addToast(`Spotify account error: ${message}`, 'error');
       });
 
-      player.connect();
+      player.connect().catch((err: unknown) => {
+        addToast(`Spotify connect failed: ${err}`, 'error');
+      });
       playerRef.current = player;
     };
 
@@ -175,14 +183,19 @@ export function useSpotifyPlayer() {
 
     return () => {
       clearPositionTracking();
+      if (playerRef.current) {
+        playerRef.current.disconnect();
+        playerRef.current = null;
+      }
+      sourceNode = null;
     };
   }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Listen for keyboard shortcut events
   useEffect(() => {
-    const onToggle = () => { playerRef.current?.togglePlay(); };
-    const onPrev = () => { playerRef.current?.previousTrack(); };
-    const onNext = () => { playerRef.current?.nextTrack(); };
+    const onToggle = () => { playerRef.current?.togglePlay().catch(() => {}); };
+    const onPrev = () => { playerRef.current?.previousTrack().catch(() => {}); };
+    const onNext = () => { playerRef.current?.nextTrack().catch(() => {}); };
 
     window.addEventListener('radio-sankt:toggle-play', onToggle);
     window.addEventListener('radio-sankt:previous-track', onPrev);
@@ -207,26 +220,28 @@ export function useSpotifyPlayer() {
   const togglePlay = useCallback(async () => {
     const player = playerRef.current;
     if (!player) return;
-    await player.togglePlay();
+    try { await player.togglePlay(); } catch { /* SDK disconnected */ }
   }, []);
 
   const previousTrack = useCallback(async () => {
     const player = playerRef.current;
     if (!player) return;
-    await player.previousTrack();
+    try { await player.previousTrack(); } catch { /* SDK disconnected */ }
   }, []);
 
   const nextTrack = useCallback(async () => {
     const player = playerRef.current;
     if (!player) return;
-    await player.nextTrack();
+    try { await player.nextTrack(); } catch { /* SDK disconnected */ }
   }, []);
 
   const seek = useCallback(async (positionMs: number) => {
     const player = playerRef.current;
     if (!player) return;
-    await player.seek(positionMs);
-    setPosition(positionMs);
+    try {
+      await player.seek(positionMs);
+      setPosition(positionMs);
+    } catch { /* SDK disconnected */ }
   }, [setPosition]);
 
   return {
