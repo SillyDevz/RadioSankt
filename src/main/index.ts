@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell, components } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import Store from 'electron-store';
 import { join } from 'path';
@@ -63,8 +63,10 @@ function createWindow(): void {
   }
 }
 
-// Auto-update
+// Auto-update (only in packaged builds)
 function setupAutoUpdater(): void {
+  if (!app.isPackaged) return;
+
   autoUpdater.checkForUpdatesAndNotify();
 
   autoUpdater.on('update-available', (info) => {
@@ -79,6 +81,7 @@ function setupAutoUpdater(): void {
 // IPC handlers
 function registerIpcHandlers(): void {
   ipcMain.handle('check-for-updates', () => {
+    if (!app.isPackaged) return null;
     return autoUpdater.checkForUpdates();
   });
 
@@ -176,7 +179,13 @@ function registerIpcHandlers(): void {
   });
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  try {
+    await components.whenReady();
+    console.log('Widevine CDM loaded');
+  } catch (e) {
+    console.warn('Widevine CDM not available:', e);
+  }
   getDatabase();
   createWindow();
   setupAutoUpdater();

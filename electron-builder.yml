@@ -1,5 +1,6 @@
 appId: com.radiosankt.app
 productName: Radio Sankt
+electronDist: node_modules/electron/dist
 directories:
   output: release
 files:
