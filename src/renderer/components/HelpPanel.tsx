@@ -133,6 +133,46 @@ export default function HelpPanel() {
             </div>
           </AccordionSection>
 
+          <AccordionSection title="Spotify plays elsewhere but not in the app (license 500)">
+            <div className="text-xs text-text-secondary leading-relaxed flex flex-col gap-2">
+              <p>
+                If Spotify shows “Playing on Radio Sankt” but you hear nothing, open DevTools → Network and look for{' '}
+                <code className="bg-bg-primary px-1 py-0.5 rounded text-text-muted font-mono text-[10px]">
+                  widevine-license
+                </code>
+                . A 500 there means Spotify’s DRM server rejected the Widevine request.
+              </p>
+              <p>
+                Castlabs Electron is only development-signed by default. Spotify expects a production VMP signature via free{' '}
+                <button
+                  onClick={() => openExternal('https://github.com/castlabs/electron-releases/wiki/EVS')}
+                  className="text-accent hover:underline"
+                >
+                  Castlabs EVS
+                </button>
+                . Signing <code className="font-mono bg-bg-primary px-1 rounded text-[10px]">release/…</code> does{' '}
+                <em>not</em> sign what <code className="font-mono text-[10px]">npm run electron:dev</code> runs — that uses a
+                different <code className="font-mono text-[10px]">Electron.app</code> under <code className="font-mono text-[10px]">node_modules/electron/dist</code>.
+              </p>
+              <pre className="bg-bg-primary text-text-muted px-3 py-2 rounded text-[10px] font-mono overflow-x-auto">
+                pip install castlabs-evs{'\n'}
+                python3 -m castlabs_evs.account signup   # once{'\n'}
+                npm run evs:sign-electron-dist          # required for electron:dev (after every npm install){'\n'}
+                npm run evs:verify-electron-dist        # optional: should report valid streaming signature{'\n'}
+                npm run electron:build:mac:evs          # packaged .app only (or :win:evs)
+              </pre>
+              <p className="text-text-muted">
+                Re-run signing after <code className="font-mono">npm install</code> refreshes Electron. Packaged apps need{' '}
+                <code className="font-mono">sign-pkg</code> on the output directory (macOS: VMP before code signing). Linux
+                uses a different Widevine path; check Castlabs docs if you develop there.
+              </p>
+              <p className="text-text-muted">
+                Without production VMP, the SDK may retry Widevine many times (console full of 500s) before audio starts, then
+                stall again when licenses renew — EVS signing is the proper fix.
+              </p>
+            </div>
+          </AccordionSection>
+
           <AccordionSection title="Keyboard shortcuts">
             <div className="flex flex-col gap-2">
               {[
@@ -156,7 +196,7 @@ export default function HelpPanel() {
             <p className="text-xs text-text-secondary">
               Found an issue? Report it on{' '}
               <button
-                onClick={() => openExternal('https://github.com/anthropics/claude-code/issues')}
+                onClick={() => openExternal('https://github.com/radiosankt/radiosankt/issues')}
                 className="text-accent hover:underline"
               >
                 GitHub Issues

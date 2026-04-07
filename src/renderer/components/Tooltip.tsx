@@ -15,9 +15,11 @@ interface TooltipProps {
   placement?: Placement;
   shortcut?: string;
   children: ReactNode;
+  /** Merged onto the reference wrapper (e.g. flex-1 min-w-0 when the child needs to participate in a parent flex row). */
+  referenceClassName?: string;
 }
 
-function Tooltip({ content, placement = 'top', shortcut, children }: TooltipProps) {
+function Tooltip({ content, placement = 'top', shortcut, children, referenceClassName }: TooltipProps) {
   const [isOpen, setIsOpen] = useState(false);
 
   const { refs, floatingStyles, context } = useFloating({
@@ -35,7 +37,7 @@ function Tooltip({ content, placement = 'top', shortcut, children }: TooltipProp
 
   return (
     <>
-      <span ref={refs.setReference} {...getReferenceProps()}>
+      <span ref={refs.setReference} className={referenceClassName} {...getReferenceProps()}>
         {children}
       </span>
       <FloatingPortal>

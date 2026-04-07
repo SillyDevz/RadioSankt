@@ -4,6 +4,7 @@ import type { Page, CoachMarkId, AccentColor, ThemeMode, QuickFireSlot, Shortcut
 import { ACCENT_COLORS } from '@/store';
 import { getProfile } from '@/services/spotify-api';
 import Sidebar from './Sidebar';
+import MacTitleBarInset from './MacTitleBarInset';
 import NowPlayingBar from './NowPlayingBar';
 import SpotifySearch from './SpotifySearch';
 import ToastContainer from './Toast';
@@ -123,24 +124,46 @@ function Layout() {
     applyThemeVars(theme, accentColor);
   }, [theme, accentColor]);
 
+  const showWebPreviewBanner = typeof window !== 'undefined' && !window.electronAPI;
+  const showMacTitleInset = Boolean(window.electronAPI?.platform === 'darwin');
+
   return (
     <div className="h-screen flex flex-col bg-bg-primary">
+      {showWebPreviewBanner && (
+        <div className="shrink-0 z-[60] px-4 py-2 text-center text-xs text-amber-100 bg-amber-900/40 border-b border-amber-500/30 leading-snug space-y-1">
+          <p>
+            Browser preview only — Spotify and file access need Electron. Run{' '}
+            <code className="px-1 py-0.5 rounded bg-bg-primary/50 font-mono text-text-primary">npm run electron:dev</code>
+            {' '}(Vite + desktop; DevTools opens docked at the bottom).
+          </p>
+          <p>
+            In this tab only, use <kbd className="px-1 py-0.5 rounded bg-bg-primary/50 font-mono">F12</kbd> or macOS{' '}
+            <kbd className="px-1 py-0.5 rounded bg-bg-primary/50 font-mono">⌥⌘I</kbd> for DevTools.
+          </p>
+        </div>
+      )}
       {!settingsLoaded ? (
-        <div className="flex items-center justify-center h-full">
-          <div className="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+        <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
+          {showMacTitleInset && <MacTitleBarInset />}
+          <div className="flex flex-1 items-center justify-center min-h-0">
+            <div className="w-5 h-5 border-2 border-accent border-t-transparent rounded-full animate-spin" />
+          </div>
         </div>
       ) : (
         <>
           {!hasCompletedOnboarding && <OnboardingWizard />}
-          <div className="flex flex-1 overflow-hidden">
+          <div className="flex flex-1 flex-col min-h-0 overflow-hidden">
+            {showMacTitleInset && <MacTitleBarInset />}
+            <div className="flex flex-1 min-h-0 overflow-hidden">
             <Sidebar />
-            <main className="flex-1 overflow-y-auto p-6">
-              <Suspense fallback={<div className="flex items-center justify-center h-full"><span className="text-text-muted text-sm">Loading...</span></div>}>
-                <div key={currentPage} className="animate-page-enter h-full">
+            <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-6">
+              <Suspense fallback={<div className="flex items-center justify-center min-h-[40vh]"><span className="text-text-muted text-sm">Loading...</span></div>}>
+                <div key={currentPage} className="animate-page-enter min-h-0 h-full">
                   <PageComponent />
                 </div>
               </Suspense>
             </main>
+            </div>
           </div>
           <NowPlayingBar />
           <SpotifySearch />

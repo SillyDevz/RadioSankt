@@ -25,6 +25,15 @@ export interface SpotifySearchResult {
   durationMs: number;
 }
 
+/** Lifecycle of the embedded Spotify Web Playback SDK (see Settings for diagnostics). */
+export type WebPlaybackPhase =
+  | 'idle'
+  | 'loading_sdk'
+  | 'initializing'
+  | 'connecting'
+  | 'ready'
+  | 'error';
+
 export interface Toast {
   id: string;
   message: string;
@@ -117,6 +126,8 @@ interface SpotifySlice {
   clientId: string | null;
   deviceId: string | null;
   sdkReady: boolean;
+  webPlaybackPhase: WebPlaybackPhase;
+  webPlaybackLastError: string | null;
   searchResults: SpotifySearchResult[];
   setConnected: (connected: boolean) => void;
   setUser: (user: string | null) => void;
@@ -125,6 +136,7 @@ interface SpotifySlice {
   setClientId: (id: string | null) => void;
   setDeviceId: (id: string | null) => void;
   setSdkReady: (ready: boolean) => void;
+  setWebPlaybackDiag: (phase: WebPlaybackPhase, lastError?: string | null) => void;
   setSearchResults: (results: SpotifySearchResult[]) => void;
   disconnectSpotify: () => void;
 }
@@ -261,6 +273,8 @@ const createSpotifySlice: StateCreator<StoreState, [], [], SpotifySlice> = (set)
   clientId: null,
   deviceId: null,
   sdkReady: false,
+  webPlaybackPhase: 'idle',
+  webPlaybackLastError: null,
   searchResults: [],
   setConnected: (connected) => set({ connected }),
   setUser: (user) => set({ user }),
@@ -269,6 +283,11 @@ const createSpotifySlice: StateCreator<StoreState, [], [], SpotifySlice> = (set)
   setClientId: (id) => set({ clientId: id }),
   setDeviceId: (id) => set({ deviceId: id }),
   setSdkReady: (ready) => set({ sdkReady: ready }),
+  setWebPlaybackDiag: (phase, lastError = null) =>
+    set({
+      webPlaybackPhase: phase,
+      webPlaybackLastError: lastError,
+    }),
   setSearchResults: (results) => set({ searchResults: results }),
   disconnectSpotify: () =>
     set({
@@ -278,6 +297,8 @@ const createSpotifySlice: StateCreator<StoreState, [], [], SpotifySlice> = (set)
       token: null,
       deviceId: null,
       sdkReady: false,
+      webPlaybackPhase: 'idle',
+      webPlaybackLastError: null,
       searchResults: [],
     }),
 });
@@ -321,10 +342,39 @@ const createAutomationSlice: StateCreator<StoreState, [], [], AutomationSlice> =
     }),
   reorderAutomationSteps: (fromIndex, toIndex) =>
     set((s) => {
-      const steps = [...s.automationSteps];
+      const prev = [...s.automationSteps];
+      const cur = s.currentStepIndex;
+      const sel = s.selectedStepIndex;
+      const currentId = cur >= 0 && cur < prev.length ? prev[cur].id : null;
+      const selectedId =
+        sel !== null && sel >= 0 && sel < prev.length ? prev[sel].id : null;
+
+      const steps = [...prev];
       const [moved] = steps.splice(fromIndex, 1);
       steps.splice(toIndex, 0, moved);
-      return { automationSteps: steps };
+
+      const clamp = (i: number) =>
+        steps.length === 0 ? 0 : Math.max(0, Math.min(i, steps.length - 1));
+
+      let nextCur = cur;
+      if (currentId !== null) {
+        const i = steps.findIndex((st) => st.id === currentId);
+        if (i !== -1) nextCur = i;
+      }
+
+      let nextSel = sel;
+      if (selectedId !== null) {
+        const i = steps.findIndex((st) => st.id === selectedId);
+        nextSel = i === -1 ? null : i;
+      } else if (sel !== null) {
+        nextSel = steps.length === 0 ? null : Math.min(sel, steps.length - 1);
+      }
+
+      return {
+        automationSteps: steps,
+        currentStepIndex: clamp(nextCur),
+        selectedStepIndex: nextSel,
+      };
     }),
   updateAutomationStep: (id, updates) =>
     set((s) => ({

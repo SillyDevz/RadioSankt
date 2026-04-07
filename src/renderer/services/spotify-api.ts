@@ -85,9 +85,13 @@ export async function getProfile(): Promise<SpotifyProfile> {
 }
 
 export async function playTrack(uri: string, deviceId: string): Promise<void> {
-  await apiFetch(`/me/player/play?device_id=${deviceId}`, {
+  const res = await apiFetch(`/me/player/play?device_id=${encodeURIComponent(deviceId)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ uris: [uri] }),
   });
+  if (!res.ok && res.status !== 204) {
+    const body = await res.text();
+    throw new Error(`Play failed ${res.status}: ${body}`);
+  }
 }

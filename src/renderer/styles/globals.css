@@ -2,6 +2,11 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Electron macOS: keep nav interactive when a parent uses -webkit-app-region: drag */
+.app-region-no-drag {
+  -webkit-app-region: no-drag;
+}
+
 /* ── Dark theme (default) ──────────────────────────────────────────── */
 :root,
 [data-theme='dark'] {
@@ -38,8 +43,9 @@
 body {
   overflow: hidden;
   user-select: none;
-  -webkit-app-region: drag;
 }
+
+/* Window dragging is only on MacTitleBarInset; body-level drag breaks scrolling in main content. */
 
 button, input, a, select, textarea, label {
   -webkit-app-region: no-drag;

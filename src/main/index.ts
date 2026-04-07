@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, components } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell, components, session } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import Store from 'electron-store';
 import { join, resolve, normalize } from 'path';
@@ -29,19 +29,34 @@ import {
 const store = new Store();
 let mainWindow: BrowserWindow | null = null;
 
+/** Spotify / Widevine need EME; denying unknown permission checks can block CDM registration. */
+function allowPlaybackPermissions(): void {
+  const ses = session.defaultSession;
+  ses.setPermissionRequestHandler((_wc, _permission, callback) => {
+    callback(true);
+  });
+  ses.setPermissionCheckHandler(() => true);
+}
+
 function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
     minWidth: 900,
     minHeight: 600,
-    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : undefined,
+    ...(process.platform === 'darwin'
+      ? {
+          titleBarStyle: 'hiddenInset' as const,
+          trafficLightPosition: { x: 14, y: 12 },
+        }
+      : {}),
     backgroundColor: '#0f0f0f',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       nodeIntegration: false,
       contextIsolation: true,
-      sandbox: true,
+      // Widevine / EME (Spotify Web Playback) does not initialize with a sandboxed renderer on ECS.
+      sandbox: false,
     },
   });
 
@@ -49,6 +64,7 @@ function createWindow(): void {
 
   if (isDev && process.env.VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
+    mainWindow.webContents.openDevTools({ mode: 'bottom' });
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'));
   }
@@ -134,6 +150,10 @@ function registerIpcHandlers(): void {
     return getStoredToken();
   });
 
+  ipcMain.handle('toggle-devtools', () => {
+    mainWindow?.webContents.toggleDevTools();
+  });
+
   ipcMain.handle('spotify-refresh-token', async () => {
     return refreshToken(mainWindow);
   });
@@ -208,15 +228,80 @@ function registerIpcHandlers(): void {
   });
 }
 
+function formatWidevineFailure(e: unknown): string {
+  const lines: string[] = [];
+  const walk = (x: unknown, indent: string): void => {
+    if (x == null) {
+      lines.push(`${indent}${String(x)}`);
+      return;
+    }
+    if (x instanceof Error) {
+      lines.push(`${indent}${x.name}: ${x.message}`);
+      const ext = x as Error & { detail?: unknown; errors?: unknown[] };
+      if (ext.detail !== undefined) {
+        lines.push(`${indent}detail:`);
+        walk(ext.detail, `${indent}  `);
+      }
+      if (Array.isArray(ext.errors)) {
+        ext.errors.forEach((sub, i) => {
+          lines.push(`${indent}[${i}]`);
+          walk(sub, `${indent}  `);
+        });
+      }
+      return;
+    }
+    if (typeof x === 'object') {
+      try {
+        lines.push(`${indent}${JSON.stringify(x, null, 2).split('\n').join(`\n${indent}`)}`);
+      } catch {
+        lines.push(`${indent}${Object.prototype.toString.call(x)}`);
+      }
+      return;
+    }
+    lines.push(`${indent}${String(x)}`);
+  };
+  walk(e, '');
+  return lines.join('\n');
+}
+
 app.whenReady().then(async () => {
-  try {
-    await components.whenReady();
-    console.log('Widevine CDM loaded');
-  } catch (e) {
-    console.warn('Widevine CDM not available:', e);
-  }
+  allowPlaybackPermissions();
   getDatabase();
   registerIpcHandlers();
+
+  const widevineId = components.WIDEVINE_CDM_ID;
+  console.log('[Widevine] userData:', app.getPath('userData'));
+  console.log('[Widevine] WIDEVINE_CDM_ID:', widevineId);
+  console.log('[Widevine] component updates enabled:', components.updatesEnabled);
+
+  try {
+    await components.whenReady([widevineId]);
+    const st = components.status()[widevineId];
+    console.log('[Widevine] component status:', st);
+    if (!st?.version) {
+      throw new Error(
+        `Widevine CDM has no version (status: ${JSON.stringify(st)}). Component Updater could not install DRM — often fixed by upgrading to a supported Castlabs Electron line (see package.json).`,
+      );
+    }
+  } catch (e) {
+    console.error('[Widevine] CDM setup failed:', e);
+    const detail = formatWidevineFailure(e);
+    void dialog.showMessageBox({
+      type: 'warning',
+      title: 'Widevine (DRM)',
+      message:
+        'The Widevine CDM is not usable. Spotify in-app playback needs a working CDM from Google’s Component Updater.',
+      detail: `${detail}
+
+Common causes:
+• Using an old Electron/Chromium line: Google only serves CDM updates for roughly the last year of Chromium releases. This app pins a current Castlabs ECS version in package.json — run npm install after pulling.
+• Network / proxy blocking component downloads.
+• Linux: after the first CDM download, fully quit and launch the app again.
+
+Your node_modules/electron package should show version like 41.x.x+wvcus (check package.json "electron" field).`,
+    });
+  }
+
   createWindow();
   setupAutoUpdater();
 

@@ -3,6 +3,17 @@ import { useStore } from '@/store';
 import type { Page } from '@/store';
 import Tooltip from './Tooltip';
 
+function LogoVinylIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" aria-hidden>
+      <circle cx="10" cy="10" r="8" stroke="currentColor" strokeWidth="1.5" />
+      <circle cx="10" cy="10" r="6" stroke="currentColor" strokeWidth="1.5" strokeOpacity="0.35" />
+      <circle cx="10" cy="10" r="3.25" stroke="currentColor" strokeWidth="1.5" />
+      <circle cx="10" cy="10" r="1" fill="currentColor" />
+    </svg>
+  );
+}
+
 const navItems: { page: Page; label: string; icon: JSX.Element }[] = [
   {
     page: 'library',
@@ -77,14 +88,29 @@ function Sidebar() {
     <aside
       onMouseEnter={() => setExpanded(true)}
       onMouseLeave={() => setExpanded(false)}
-      className="bg-bg-surface border-r border-border flex flex-col py-4 transition-all duration-300 ease-in-out overflow-hidden"
+      className="bg-bg-surface border-r border-border flex flex-col py-4 transition-all duration-300 ease-in-out overflow-hidden app-region-no-drag"
       style={{ width: expanded ? 220 : 64 }}
     >
-      {/* Logo */}
-      <div className="px-3 mb-6 flex items-center h-8 shrink-0">
-        <span className="text-accent font-bold text-lg whitespace-nowrap">
-          {expanded ? 'Radio Sankt' : 'RS'}
-        </span>
+      {/* Brand — vinyl mark + wordmark; inset matches search + nav */}
+      <div className="px-2 mb-6 shrink-0 text-accent">
+        {expanded ? (
+          <div className="flex items-center h-8 px-3 min-w-0">
+            <span className="shrink-0">
+              <LogoVinylIcon />
+            </span>
+            <span className="text-base font-bold tracking-tight whitespace-nowrap truncate ml-3">
+              Radio Sankt
+            </span>
+          </div>
+        ) : (
+          <Tooltip content="Radio Sankt" placement="right">
+            <div className="flex items-center h-8 px-3 min-w-0">
+              <span className="shrink-0">
+                <LogoVinylIcon />
+              </span>
+            </div>
+          </Tooltip>
+        )}
       </div>
 
       {/* Search button */}

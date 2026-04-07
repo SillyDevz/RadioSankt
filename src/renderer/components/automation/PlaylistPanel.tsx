@@ -215,11 +215,14 @@ export default function PlaylistPanel() {
                 <StepCard
                   key={step.id}
                   step={step}
-                  index={i}
                   isPlaying={automationStatus === 'playing' && currentStepIndex === i}
                   isSelected={selectedStepIndex === i}
                   onSelect={() => setSelectedStepIndex(i)}
                   onDelete={() => removeAutomationStep(step.id)}
+                  onPlayFromHere={() => {
+                    setSelectedStepIndex(i);
+                    void engine.playFromStep(i);
+                  }}
                 />
               ))}
             </div>

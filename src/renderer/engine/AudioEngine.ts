@@ -56,6 +56,13 @@ class AudioEngine {
     return this.ctx;
   }
 
+  /** Spotify routes through this graph; browsers/Electron may suspend the context until resumed. */
+  resumeContextIfNeeded(): void {
+    if (this.ctx.state === 'suspended') {
+      void this.ctx.resume();
+    }
+  }
+
   getGainNode(channel: Channel): GainNode {
     return channel === 'A' ? this.gainA : this.gainB;
   }

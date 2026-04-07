@@ -1,8 +1,19 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useStore } from '@/store';
 import AudioEngine from '@/engine/AudioEngine';
+import AutomationEngine from '@/engine/AutomationEngine';
 
 let sourceNode: MediaElementAudioSourceNode | null = null;
+
+/** Latest init from the token effect; called when sdk.scdn.co finishes loading. */
+let pendingSpotifyPlayerInit: (() => void) | null = null;
+
+/** Bumped on effect cleanup so late SDK events from a torn-down player are ignored (e.g. React Strict Mode). */
+let webPlaybackSessionGen = 0;
+
+function triggerSpotifyPlayerInit() {
+  pendingSpotifyPlayerInit?.();
+}
 
 export function useSpotifyPlayer() {
   const token = useStore((s) => s.token);
@@ -38,13 +49,7 @@ export function useSpotifyPlayer() {
     }, 500);
   }, [clearPositionTracking, setPosition]);
 
-  // Route audio through Web Audio API
-  const connectWebAudio = useCallback((player: SpotifyPlayer) => {
-    // Find the SDK's audio element
-    const playerId = player._options?.id;
-    if (!playerId) return;
-
-    // The SDK creates an audio element we can tap into
+  const connectWebAudio = useCallback((_player: SpotifyPlayer) => {
     let attempts = 0;
     const maxAttempts = 20; // 10 seconds total
 
@@ -69,6 +74,7 @@ export function useSpotifyPlayer() {
         sourceNode = ctx.createMediaElementSource(audioEl);
         sourceNode.connect(engine.getGainNode('A'));
         engine.setVolume('A', useStore.getState().volume);
+        engine.resumeContextIfNeeded();
       } catch {
         // May fail if already connected - that's fine
       }
@@ -77,30 +83,32 @@ export function useSpotifyPlayer() {
     tryConnect();
   }, []);
 
-  // Load SDK script
   useEffect(() => {
-    if (document.getElementById('spotify-sdk-script')) return;
+    window.onSpotifyWebPlaybackSDKReady = triggerSpotifyPlayerInit;
 
-    // Define the callback before loading the script to avoid race condition
-    // The actual player init happens in the next useEffect when token is available
-    if (!window.onSpotifyWebPlaybackSDKReady) {
-      window.onSpotifyWebPlaybackSDKReady = () => {
-        // SDK is ready — player init will happen when token arrives
-      };
+    if (!document.getElementById('spotify-sdk-script')) {
+      const script = document.createElement('script');
+      script.id = 'spotify-sdk-script';
+      script.src = 'https://sdk.scdn.co/spotify-player.js';
+      script.async = true;
+      document.body.appendChild(script);
     }
-
-    const script = document.createElement('script');
-    script.id = 'spotify-sdk-script';
-    script.src = 'https://sdk.scdn.co/spotify-player.js';
-    script.async = true;
-    document.body.appendChild(script);
   }, []);
 
-  // Initialize player when token is available
   useEffect(() => {
-    if (!token) return;
+    const { setWebPlaybackDiag } = useStore.getState();
+
+    if (!token) {
+      pendingSpotifyPlayerInit = null;
+      setWebPlaybackDiag('idle', null);
+      return;
+    }
 
     const initPlayer = () => {
+      if (!window.Spotify) return;
+      const myGen = ++webPlaybackSessionGen;
+      setWebPlaybackDiag('initializing', null);
+
       if (playerRef.current) {
         playerRef.current.disconnect();
       }
@@ -108,27 +116,35 @@ export function useSpotifyPlayer() {
       const player = new window.Spotify.Player({
         name: 'Radio Sankt',
         getOAuthToken: (cb) => {
-          // Always get fresh token
-          window.electronAPI.getSpotifyToken().then((t) => {
-            cb(t || token);
-          }).catch(() => cb(token));
+          window.electronAPI.getSpotifyToken().then(async (t) => {
+            const refreshed = t || await window.electronAPI.refreshSpotifyToken();
+            const tok = refreshed || useStore.getState().token;
+            if (!tok) {
+              console.error('[Spotify Web Playback] No access token for SDK');
+            }
+            cb(tok || '');
+          }).catch(() => cb(useStore.getState().token || ''));
         },
         volume: volume,
       });
 
       player.addListener('ready', ({ device_id }: { device_id: string }) => {
+        if (myGen !== webPlaybackSessionGen) return;
         setDeviceId(device_id);
         setSdkReady(true);
+        setWebPlaybackDiag('ready', null);
         connectWebAudio(player);
         addToast('Spotify player ready', 'success');
       });
 
       player.addListener('not_ready', () => {
+        if (myGen !== webPlaybackSessionGen) return;
         setSdkReady(false);
         setDeviceId(null);
       });
 
       player.addListener('player_state_changed', (state: SpotifyPlaybackState | null) => {
+        if (myGen !== webPlaybackSessionGen) return;
         if (!state) {
           setIsPlaying(false);
           clearPositionTracking();
@@ -157,31 +173,82 @@ export function useSpotifyPlayer() {
         }
       });
 
+      const reportSdkError = (label: string, message: string) => {
+        if (myGen !== webPlaybackSessionGen) return;
+        const full = `${label}: ${message}`;
+        console.error('[Spotify Web Playback]', full);
+        setWebPlaybackDiag('error', full);
+        addToast(full, 'error');
+      };
+
       player.addListener('initialization_error', ({ message }: { message: string }) => {
-        addToast(`Spotify init error: ${message}`, 'error');
+        reportSdkError('initialization_error', message);
       });
 
       player.addListener('authentication_error', ({ message }: { message: string }) => {
-        addToast(`Spotify auth error: ${message}`, 'error');
+        if (myGen !== webPlaybackSessionGen) return;
+        console.warn('[Spotify Web Playback] authentication_error — refreshing token and reconnecting', message);
+        window.electronAPI.refreshSpotifyToken().then(async (t) => {
+          if (myGen !== webPlaybackSessionGen) return;
+          if (t) useStore.setState({ token: t });
+          try {
+            player.disconnect();
+            const ok = await player.connect();
+            if (!ok) reportSdkError('authentication_error', message);
+          } catch {
+            reportSdkError('authentication_error', message);
+          }
+        }).catch(() => reportSdkError('authentication_error', message));
       });
 
       player.addListener('account_error', ({ message }: { message: string }) => {
-        addToast(`Spotify account error: ${message}`, 'error');
+        reportSdkError('account_error', message);
       });
 
-      player.connect().catch((err: unknown) => {
-        addToast(`Spotify connect failed: ${err}`, 'error');
+      let lastPlaybackErrorToast = 0;
+      player.addListener('playback_error', (d: { message: string }) => {
+        if (myGen !== webPlaybackSessionGen) return;
+        console.warn('[Spotify Web Playback] playback_error', d);
+        setWebPlaybackDiag('error', d.message);
+        const now = Date.now();
+        if (now - lastPlaybackErrorToast > 20_000) {
+          lastPlaybackErrorToast = now;
+          addToast(`Playback interrupted: ${d.message}`, 'warning');
+        }
       });
+
+      setWebPlaybackDiag('connecting', null);
+      player
+        .connect()
+        .then((connected) => {
+          if (myGen !== webPlaybackSessionGen) return;
+          if (!connected) {
+            const msg =
+              'player.connect() returned false — Widevine/DRM blocked or unsigned Electron build. Run: npm run evs:sign-electron-dist, restart, then reconnect Spotify (see docs/widevine-and-evs.md).';
+            console.error('[Spotify Web Playback]', msg);
+            setWebPlaybackDiag('error', msg);
+            addToast(msg, 'error');
+          }
+        })
+        .catch((err: unknown) => {
+          if (myGen !== webPlaybackSessionGen) return;
+          const msg = `connect failed: ${err}`;
+          console.error('[Spotify Web Playback]', msg);
+          setWebPlaybackDiag('error', msg);
+          addToast(`Spotify ${msg}`, 'error');
+        });
       playerRef.current = player;
     };
 
-    if (window.Spotify) {
-      initPlayer();
-    } else {
-      window.onSpotifyWebPlaybackSDKReady = initPlayer;
+    if (!window.Spotify) {
+      setWebPlaybackDiag('loading_sdk', null);
     }
+    pendingSpotifyPlayerInit = initPlayer;
+    if (window.Spotify) initPlayer();
 
     return () => {
+      webPlaybackSessionGen++;
+      pendingSpotifyPlayerInit = null;
       clearPositionTracking();
       if (playerRef.current) {
         playerRef.current.disconnect();
@@ -191,20 +258,24 @@ export function useSpotifyPlayer() {
     };
   }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Listen for keyboard shortcut events
   useEffect(() => {
-    const onToggle = () => { playerRef.current?.togglePlay().catch(() => {}); };
-    const onPrev = () => { playerRef.current?.previousTrack().catch(() => {}); };
-    const onNext = () => { playerRef.current?.nextTrack().catch(() => {}); };
+    const prime = () => {
+      const engine = AudioEngine.get();
+      engine?.resumeContextIfNeeded();
+      playerRef.current?.activateElement().catch(() => {});
+    };
 
+    const onToggle = () => {
+      prime();
+      playerRef.current?.togglePlay().catch(() => {});
+    };
+
+    window.addEventListener('radio-sankt:prime-spotify-playback', prime);
     window.addEventListener('radio-sankt:toggle-play', onToggle);
-    window.addEventListener('radio-sankt:previous-track', onPrev);
-    window.addEventListener('radio-sankt:next-track', onNext);
 
     return () => {
+      window.removeEventListener('radio-sankt:prime-spotify-playback', prime);
       window.removeEventListener('radio-sankt:toggle-play', onToggle);
-      window.removeEventListener('radio-sankt:previous-track', onPrev);
-      window.removeEventListener('radio-sankt:next-track', onNext);
     };
   }, []);
 
@@ -224,23 +295,57 @@ export function useSpotifyPlayer() {
   }, []);
 
   const previousTrack = useCallback(async () => {
+    if (useStore.getState().automationStatus !== 'stopped') {
+      await AutomationEngine.getInstance().skipBackward();
+      return;
+    }
     const player = playerRef.current;
     if (!player) return;
     try { await player.previousTrack(); } catch { /* SDK disconnected */ }
   }, []);
 
   const nextTrack = useCallback(async () => {
+    if (useStore.getState().automationStatus !== 'stopped') {
+      await AutomationEngine.getInstance().skipForward();
+      return;
+    }
     const player = playerRef.current;
     if (!player) return;
     try { await player.nextTrack(); } catch { /* SDK disconnected */ }
   }, []);
 
+  useEffect(() => {
+    const prime = () => {
+      AudioEngine.get()?.resumeContextIfNeeded();
+      playerRef.current?.activateElement().catch(() => {});
+    };
+    const onPrev = () => {
+      prime();
+      void previousTrack();
+    };
+    const onNext = () => {
+      prime();
+      void nextTrack();
+    };
+    window.addEventListener('radio-sankt:previous-track', onPrev);
+    window.addEventListener('radio-sankt:next-track', onNext);
+    return () => {
+      window.removeEventListener('radio-sankt:previous-track', onPrev);
+      window.removeEventListener('radio-sankt:next-track', onNext);
+    };
+  }, [previousTrack, nextTrack]);
+
   const seek = useCallback(async (positionMs: number) => {
     const player = playerRef.current;
     if (!player) return;
+    const duration = useStore.getState().duration;
+    if (duration <= 0) return;
+    // Spotify rejects seeks at/ past full duration; leave a tiny margin so "jump to end" works for testing.
+    const maxSeek = Math.max(0, duration - 100);
+    const clamped = Math.min(Math.max(0, Math.round(positionMs)), maxSeek);
     try {
-      await player.seek(positionMs);
-      setPosition(positionMs);
+      await player.seek(clamped);
+      setPosition(clamped);
     } catch { /* SDK disconnected */ }
   }, [setPosition]);
 

@@ -10,7 +10,7 @@ function formatDuration(ms: number): string {
   return `${m}:${sec.toString().padStart(2, '0')}`;
 }
 
-const typeIcons: Record<string, string> = {
+const fallbackIcons: Record<string, string> = {
   track: '\u{1F3B5}',
   jingle: '\u{1F399}',
   pause: '\u23F8',
@@ -18,14 +18,14 @@ const typeIcons: Record<string, string> = {
 
 interface StepCardProps {
   step: AutomationStep;
-  index: number;
   isPlaying: boolean;
   isSelected: boolean;
   onSelect: () => void;
   onDelete: () => void;
+  onPlayFromHere: () => void;
 }
 
-export default function StepCard({ step, index, isPlaying, isSelected, onSelect, onDelete }: StepCardProps) {
+export default function StepCard({ step, isPlaying, isSelected, onSelect, onDelete, onPlayFromHere }: StepCardProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: step.id });
 
   const style = {
@@ -67,8 +67,34 @@ export default function StepCard({ step, index, isPlaying, isSelected, onSelect,
         </button>
       </Tooltip>
 
-      {/* Type icon */}
-      <span className="text-base shrink-0 w-6 text-center">{typeIcons[step.type]}</span>
+      <Tooltip content="Play automation from this step" placement="top">
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            onPlayFromHere();
+          }}
+          className="shrink-0 p-1.5 rounded-full text-accent hover:bg-accent/15 transition-colors"
+          aria-label="Play from this step"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+            <polygon points="6 4 20 12 6 20 6 4" />
+          </svg>
+        </button>
+      </Tooltip>
+
+      {step.type === 'track' && step.albumArt?.trim() ? (
+        <img
+          src={step.albumArt}
+          alt=""
+          className="h-10 w-10 rounded-md object-cover shrink-0 bg-bg-elevated"
+          loading="lazy"
+        />
+      ) : (
+        <div className="h-10 w-10 rounded-md bg-bg-elevated flex items-center justify-center shrink-0 text-base leading-none">
+          {fallbackIcons[step.type]}
+        </div>
+      )}
 
       {/* Playing indicator */}
       {isPlaying && (

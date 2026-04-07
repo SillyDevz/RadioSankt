@@ -27,11 +27,16 @@ The app routes Spotify audio and local jingle files through a Web Audio API mixi
 # Install dependencies
 npm install
 
+# Spotify DRM: VMP-sign the dev Electron binary (required after every npm install that touches electron)
+npm run evs:sign-electron-dist
+
 # Run in development mode (Vite + Electron)
 npm run electron:dev
 ```
 
 The app opens at `http://localhost:5173` with hot reload. Electron launches automatically once the dev server is ready.
+
+**Spotify / Widevine / Castlabs EVS:** See [docs/widevine-and-evs.md](docs/widevine-and-evs.md) for full setup, packaged builds, troubleshooting, and notes for AI assistants.
 
 ## Building
 
@@ -77,3 +82,5 @@ All shortcuts are rebindable from Settings.
 **No audio after connecting** — Click anywhere in the app window first. Browsers (and Electron) require a user gesture before allowing audio playback via the Web Audio API.
 
 **Token refresh errors** — The app auto-refreshes tokens every 60 seconds. If you see repeated auth errors, disconnect and reconnect from Settings.
+
+**`widevine-license` 500 / no audio in dev** — You must VMP-sign **`node_modules/electron/dist`** (`npm run evs:sign-electron-dist`), not only `release/`. Details: [docs/widevine-and-evs.md](docs/widevine-and-evs.md).

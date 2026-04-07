@@ -72,13 +72,36 @@ export default function SpotifySearch() {
     [setSearchResults, addToast],
   );
 
+  const waitForDeviceId = (timeoutMs: number) =>
+    new Promise<string | null>((resolve) => {
+      const deadline = Date.now() + timeoutMs;
+      const tick = () => {
+        const id = useStore.getState().deviceId;
+        if (id) {
+          resolve(id);
+          return;
+        }
+        if (Date.now() >= deadline) {
+          resolve(null);
+          return;
+        }
+        setTimeout(tick, 250);
+      };
+      tick();
+    });
+
   const handlePlayNow = async (uri: string) => {
-    if (!deviceId) {
-      addToast('Spotify player not ready', 'warning');
+    window.dispatchEvent(new CustomEvent('radio-sankt:prime-spotify-playback'));
+    let devId = deviceId || (await waitForDeviceId(15_000));
+    if (!devId) {
+      addToast(
+        'Web Playback is not connected — Spotify Premium is required. Wait for “Spotify player ready” or disconnect and reconnect Spotify in Settings.',
+        'warning',
+      );
       return;
     }
     try {
-      await playTrack(uri, deviceId);
+      await playTrack(uri, devId);
       setOpen(false);
     } catch {
       addToast('Failed to play track', 'error');

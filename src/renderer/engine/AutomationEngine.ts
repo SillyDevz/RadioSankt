@@ -13,6 +13,25 @@ type Listener = (event: AutomationEvent) => void;
 
 const FADE_DURATION = 800;
 
+function waitForSpotifyDeviceId(timeoutMs: number): Promise<string | null> {
+  return new Promise((resolve) => {
+    const deadline = Date.now() + timeoutMs;
+    const tick = () => {
+      const id = useStore.getState().deviceId;
+      if (id) {
+        resolve(id);
+        return;
+      }
+      if (Date.now() >= deadline) {
+        resolve(null);
+        return;
+      }
+      setTimeout(tick, 250);
+    };
+    tick();
+  });
+}
+
 class AutomationEngine {
   private static instance: AutomationEngine | null = null;
 
@@ -63,6 +82,44 @@ class AutomationEngine {
     await this.executeStep(store.currentStepIndex);
   }
 
+  /** Jump to a step and run automation from there (clears pending timers / jingle). */
+  async playFromStep(index: number): Promise<void> {
+    const steps = this.getSteps();
+    if (index < 0 || index >= steps.length) return;
+
+    this.clearNextStepTimer();
+    this.clearCountdown();
+    AudioEngine.get()?.stopJingle();
+
+    await this.executeStep(index);
+  }
+
+  async skipForward(): Promise<void> {
+    const store = this.getStore();
+    if (store.automationStatus === 'stopped') return;
+
+    window.dispatchEvent(new CustomEvent('radio-sankt:prime-spotify-playback'));
+
+    const steps = this.getSteps();
+    const next = store.currentStepIndex + 1;
+    if (next >= steps.length) {
+      this.emit({ type: 'finished' });
+      await this.stopInternal(false);
+      return;
+    }
+    await this.playFromStep(next);
+  }
+
+  async skipBackward(): Promise<void> {
+    const store = this.getStore();
+    if (store.automationStatus === 'stopped') return;
+
+    window.dispatchEvent(new CustomEvent('radio-sankt:prime-spotify-playback'));
+
+    const prev = store.currentStepIndex - 1;
+    await this.playFromStep(prev < 0 ? 0 : prev);
+  }
+
   async executeStep(index: number): Promise<void> {
     const steps = this.getSteps();
     const store = this.getStore();
@@ -101,20 +158,35 @@ class AutomationEngine {
       this.scheduleNextStep(step, index);
     } catch (err) {
       const stepName = 'name' in step ? step.name : '';
-      this.emit({ type: 'error', message: `Failed to play step: ${stepName}` });
+      const detail = err instanceof Error ? err.message : '';
+      this.emit({
+        type: 'error',
+        message: detail ? `Failed to play step: ${stepName} — ${detail}` : `Failed to play step: ${stepName}`,
+      });
       // Skip to next step on error
       this.scheduleNextStepImmediate(index);
     }
   }
 
   private async playTrackStep(step: AutomationStep & { type: 'track' }): Promise<void> {
-    const store = this.getStore();
-    const deviceId = store.deviceId;
-    if (!deviceId) throw new Error('Spotify player not ready');
+    window.dispatchEvent(new CustomEvent('radio-sankt:prime-spotify-playback'));
+    let deviceId = this.getStore().deviceId;
+    if (!deviceId) {
+      deviceId = await waitForSpotifyDeviceId(15_000);
+    }
+    if (!deviceId) {
+      throw new Error(
+        'Web Playback is not connected (Spotify Premium required). Wait for “Spotify player ready” or reconnect Spotify in Settings.',
+      );
+    }
 
     const audio = AudioEngine.get();
-    if (audio && step.transitionIn === 'fadeIn') {
-      audio.setVolume('A', 0);
+    if (audio) {
+      if (step.transitionIn === 'fadeIn') {
+        audio.setVolume('A', 0);
+      } else {
+        audio.setVolume('A', this.getStore().volume);
+      }
     }
 
     await playTrack(step.spotifyUri, deviceId);

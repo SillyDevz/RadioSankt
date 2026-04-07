@@ -81,6 +81,7 @@ function StepSpotify({ onNext, onSkip }: { onNext: () => void; onSkip: () => voi
   const setClientId = useStore((s) => s.setClientId);
   const connected = useStore((s) => s.connected);
   const user = useStore((s) => s.user);
+  const inElectron = typeof window !== 'undefined' && !!window.electronAPI;
 
   const [clientIdInput, setClientIdInput] = useState('');
   const [connecting, setConnecting] = useState(false);
@@ -94,9 +95,13 @@ function StepSpotify({ onNext, onSkip }: { onNext: () => void; onSkip: () => voi
       setError('');
     });
 
-    const unsubError = window.electronAPI?.onSpotifyAuthError(() => {
+    const unsubError = window.electronAPI?.onSpotifyAuthError((authError) => {
       setConnecting(false);
-      setError('Connection failed — double-check your Client ID and make sure the Redirect URI is set correctly.');
+      setError(
+        authError
+          ? `Connection failed: ${authError}`
+          : 'Connection failed — double-check your Client ID and make sure the Redirect URI is set correctly.',
+      );
     });
 
     return () => {
@@ -107,12 +112,18 @@ function StepSpotify({ onNext, onSkip }: { onNext: () => void; onSkip: () => voi
 
   const handleConnect = async () => {
     const trimmed = clientIdInput.trim();
-    if (!trimmed) return;
-    await window.electronAPI?.saveSpotifyClientId(trimmed);
-    setClientId(trimmed);
-    setConnecting(true);
-    setError('');
-    await window.electronAPI?.initiateSpotifyAuth();
+    if (!trimmed || !window.electronAPI) return;
+
+    try {
+      await window.electronAPI.saveSpotifyClientId(trimmed);
+      setClientId(trimmed);
+      setConnecting(true);
+      setError('');
+      await window.electronAPI.initiateSpotifyAuth();
+    } catch (err) {
+      setConnecting(false);
+      setError(`Failed to start Spotify auth: ${err instanceof Error ? err.message : String(err)}`);
+    }
   };
 
   const handleCopy = () => {
@@ -124,6 +135,14 @@ function StepSpotify({ onNext, onSkip }: { onNext: () => void; onSkip: () => voi
   return (
     <div className="flex flex-col gap-5">
       <h1 className="text-xl font-bold text-text-primary text-center">Connect your Spotify account</h1>
+
+      {!inElectron && (
+        <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg px-4 py-3 text-xs text-amber-200 leading-relaxed">
+          This screen is open in a normal browser tab, so Spotify login cannot run here (there is no Electron bridge).
+          Close this preview and start the desktop shell from the project folder:{' '}
+          <code className="bg-bg-primary/80 px-1.5 py-0.5 rounded font-mono text-text-primary">npm run electron:dev</code>
+        </div>
+      )}
 
       {/* Illustration */}
       <div className="flex items-center justify-center gap-4 py-3">
@@ -250,7 +269,7 @@ function StepSpotify({ onNext, onSkip }: { onNext: () => void; onSkip: () => voi
         ) : (
           <button
             onClick={handleConnect}
-            disabled={!clientIdInput.trim() || connecting}
+            disabled={!clientIdInput.trim() || connecting || !inElectron}
             className="px-6 py-2.5 bg-accent hover:bg-accent-hover text-bg-primary font-medium rounded-lg transition-colors text-sm disabled:opacity-30 disabled:cursor-not-allowed"
           >
             {connecting ? 'Connecting...' : 'Connect Spotify'}

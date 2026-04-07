@@ -1,6 +1,8 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
 contextBridge.exposeInMainWorld('electronAPI', {
+  platform: process.platform,
+
   // Updates
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
   onUpdateAvailable: (cb: () => void) => {
@@ -15,6 +17,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   quitAndInstall: () => ipcRenderer.invoke('quit-and-install'),
+  toggleDevTools: () => ipcRenderer.invoke('toggle-devtools'),
 
   // File system
   openFileDialog: (options: Record<string, unknown>) => ipcRenderer.invoke('open-file-dialog', options),

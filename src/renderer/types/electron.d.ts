@@ -7,12 +7,15 @@ interface JingleRecord {
 }
 
 interface ElectronAPI {
+  platform: NodeJS.Platform;
+
   // Updates
   checkForUpdates: () => Promise<void>;
   onUpdateAvailable: (cb: () => void) => () => void;
   onUpdateDownloaded: (cb: () => void) => () => void;
   getAppVersion: () => Promise<string>;
   quitAndInstall: () => Promise<void>;
+  toggleDevTools: () => Promise<void>;
 
   // File system
   openFileDialog: (options: Record<string, unknown>) => Promise<Electron.OpenDialogReturnValue>;

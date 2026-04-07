@@ -1,9 +1,20 @@
 import { useEffect, useState } from 'react';
 import { useStore } from '@/store';
-import type { AccentColor, ThemeMode } from '@/store';
+import type { AccentColor, ThemeMode, WebPlaybackPhase } from '@/store';
 import { ACCENT_COLORS } from '@/store';
 import Tooltip from '@/components/Tooltip';
 import { openExternal } from '@/utils/openExternal';
+
+const WEB_PLAYBACK_HELP: Record<WebPlaybackPhase, string> = {
+  idle: 'Log in to Spotify to start the in-app player.',
+  loading_sdk: 'Loading the Spotify script from sdk.scdn.co…',
+  initializing: 'Creating the Web Playback player instance…',
+  connecting:
+    'Calling player.connect() — waits for Widevine / permissions. If this never becomes Ready: from the project root run npm run evs:sign-electron-dist (Castlabs EVS), then restart. See docs/widevine-and-evs.md.',
+  ready: 'You can play tracks from search and automation.',
+  error:
+    'See details below. If it mentions connect() false, Authentication failed, or WebSocket closed: (1) npm run evs:sign-electron-dist after every npm install, (2) reconnect Spotify here, (3) Premium + streaming scope. Read docs/widevine-and-evs.md.',
+};
 
 const ACCENT_SWATCHES: { id: AccentColor; label: string }[] = [
   { id: 'green', label: 'Spotify Green' },
@@ -16,6 +27,8 @@ const ACCENT_SWATCHES: { id: AccentColor; label: string }[] = [
 export default function SettingsPage() {
   const [version, setVersion] = useState('dev');
   const connected = useStore((s) => s.connected);
+  const webPlaybackPhase = useStore((s) => s.webPlaybackPhase);
+  const webPlaybackLastError = useStore((s) => s.webPlaybackLastError);
   const user = useStore((s) => s.user);
   const userAvatar = useStore((s) => s.userAvatar);
   const clientId = useStore((s) => s.clientId);
@@ -240,6 +253,45 @@ export default function SettingsPage() {
               <img src={userAvatar} alt={user || ''} className="w-7 h-7 rounded-full" />
             )}
           </div>
+
+          {connected && (
+            <div className="rounded-lg border border-border bg-bg-elevated/50 px-4 py-3 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-medium text-text-primary">In-app Web Player</span>
+                <span
+                  className={`text-[10px] uppercase tracking-wide font-semibold ${
+                    webPlaybackPhase === 'ready'
+                      ? 'text-accent'
+                      : webPlaybackPhase === 'error'
+                        ? 'text-danger'
+                        : 'text-text-muted'
+                  }`}
+                >
+                  {webPlaybackPhase.replace(/_/g, ' ')}
+                </span>
+              </div>
+              <p className="text-[11px] text-text-secondary leading-snug">{WEB_PLAYBACK_HELP[webPlaybackPhase]}</p>
+              {webPlaybackLastError && (
+                <pre className="text-[11px] text-danger/90 whitespace-pre-wrap break-words font-mono bg-bg-primary/80 rounded p-2 max-h-32 overflow-y-auto border border-danger/20">
+                  {webPlaybackLastError}
+                </pre>
+              )}
+              {window.electronAPI?.toggleDevTools ? (
+                <button
+                  type="button"
+                  onClick={() => window.electronAPI.toggleDevTools()}
+                  className="text-[11px] text-accent hover:underline underline-offset-2"
+                >
+                  Open Developer Tools (Console)
+                </button>
+              ) : (
+                <p className="text-[11px] text-text-muted">
+                  In the browser, open DevTools with <kbd className="px-1 rounded bg-bg-primary font-mono text-text-secondary">F12</kbd> or{' '}
+                  <kbd className="px-1 rounded bg-bg-primary font-mono text-text-secondary">⌥⌘I</kbd> (macOS). Use Electron for Spotify debugging.
+                </p>
+              )}
+            </div>
+          )}
         </div>
       </section>
 
