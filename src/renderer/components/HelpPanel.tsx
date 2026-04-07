@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useStore } from '@/store';
+import { openExternal } from '@/utils/openExternal';
 
 export default function HelpPanel() {
   const open = useStore((s) => s.helpPanelOpen);
@@ -18,12 +19,15 @@ export default function HelpPanel() {
 
       {/* Backdrop */}
       {open && (
-        <div className="fixed inset-0 z-40 bg-black/40" onClick={() => setOpen(false)} />
+        <div
+          className="fixed inset-0 z-[100] bg-black/40 [-webkit-app-region:no-drag]"
+          onClick={() => setOpen(false)}
+          aria-hidden={true}
+        />
       )}
 
-      {/* Panel */}
       <div
-        className={`fixed top-0 right-0 z-50 h-full w-[380px] bg-bg-surface border-l border-border shadow-2xl transition-transform duration-300 ease-out flex flex-col ${
+        className={`fixed top-0 right-0 z-[110] h-full w-[380px] bg-bg-surface border-l border-border shadow-2xl transition-transform duration-300 ease-out flex flex-col [-webkit-app-region:no-drag] ${
           open ? 'translate-x-0' : 'translate-x-full'
         }`}
       >
@@ -50,7 +54,7 @@ export default function HelpPanel() {
                 <span>
                   Go to{' '}
                   <button
-                    onClick={() => window.electronAPI?.openExternal('https://developer.spotify.com/dashboard')}
+                    onClick={() => openExternal('https://developer.spotify.com/dashboard')}
                     className="text-accent hover:underline"
                   >
                     developer.spotify.com/dashboard
@@ -152,7 +156,7 @@ export default function HelpPanel() {
             <p className="text-xs text-text-secondary">
               Found an issue? Report it on{' '}
               <button
-                onClick={() => window.electronAPI?.openExternal('https://github.com/anthropics/claude-code/issues')}
+                onClick={() => openExternal('https://github.com/anthropics/claude-code/issues')}
                 className="text-accent hover:underline"
               >
                 GitHub Issues

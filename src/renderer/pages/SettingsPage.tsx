@@ -3,6 +3,7 @@ import { useStore } from '@/store';
 import type { AccentColor, ThemeMode } from '@/store';
 import { ACCENT_COLORS } from '@/store';
 import Tooltip from '@/components/Tooltip';
+import { openExternal } from '@/utils/openExternal';
 
 const ACCENT_SWATCHES: { id: AccentColor; label: string }[] = [
   { id: 'green', label: 'Spotify Green' },
@@ -177,7 +178,7 @@ export default function SettingsPage() {
             <div className="bg-bg-elevated rounded-lg px-4 py-3 text-xs text-text-secondary flex flex-col gap-2">
               <p className="font-medium text-text-primary">Setup instructions:</p>
               <ol className="list-decimal list-inside flex flex-col gap-1.5 pl-1">
-                <li>Go to <button onClick={() => window.electronAPI?.openExternal('https://developer.spotify.com/dashboard')} className="text-accent hover:underline">developer.spotify.com/dashboard</button></li>
+                <li>Go to <button onClick={() => openExternal('https://developer.spotify.com/dashboard')} className="text-accent hover:underline">developer.spotify.com/dashboard</button></li>
                 <li>Log in with your Spotify account (free or premium)</li>
                 <li>Click "Create app"</li>
                 <li>Set the Redirect URI to <code className="bg-bg-primary px-1 py-0.5 rounded text-text-muted">http://127.0.0.1:8888/callback</code></li>

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useStore } from '@/store';
+import { openExternal } from '@/utils/openExternal';
 
 const STEPS = ['Welcome', 'Spotify', 'Jingles', 'Ready'];
 
@@ -162,7 +163,7 @@ function StepSpotify({ onNext, onSkip }: { onNext: () => void; onSkip: () => voi
           <span>
             Go to{' '}
             <button
-              onClick={() => window.electronAPI?.openExternal('https://developer.spotify.com/dashboard')}
+              onClick={() => openExternal('https://developer.spotify.com/dashboard')}
               className="text-accent hover:underline"
             >
               developer.spotify.com/dashboard
