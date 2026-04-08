@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, dialog, shell, components, session } from 
 import { autoUpdater } from 'electron-updater';
 import Store from 'electron-store';
 import { join, resolve, normalize } from 'path';
-import { promises as fs } from 'fs';
+import { existsSync, promises as fs } from 'fs';
 import {
   saveJingle,
   getJingles,
@@ -24,10 +24,31 @@ import {
   setClientId,
   startTokenRefreshTimer,
   stopTokenRefreshTimer,
+  consumeSpotifyScopePurgeNotice,
+  getLastGrantedScopes,
 } from './spotify-auth';
+
+const SPOTIFY_SCOPE_RESET_MSG =
+  'Spotify login was reset: this version needs playlist permission. Open Settings and connect again.';
 
 const store = new Store();
 let mainWindow: BrowserWindow | null = null;
+
+function windowIconPath(): string | undefined {
+  const fromBuild = join(__dirname, '../renderer/icon.png');
+  if (existsSync(fromBuild)) return fromBuild;
+  const fromPublic = join(app.getAppPath(), 'public/icon.png');
+  if (existsSync(fromPublic)) return fromPublic;
+  return undefined;
+}
+
+/** macOS Dock shows Electron’s icon in dev unless we set it (BrowserWindow `icon` does not). */
+function applyDarwinDockIcon(): void {
+  if (process.platform !== 'darwin') return;
+  const icon = windowIconPath();
+  if (!icon) return;
+  app.dock?.setIcon(icon);
+}
 
 /** Spotify / Widevine need EME; denying unknown permission checks can block CDM registration. */
 function allowPlaybackPermissions(): void {
@@ -39,7 +60,9 @@ function allowPlaybackPermissions(): void {
 }
 
 function createWindow(): void {
+  const icon = windowIconPath();
   mainWindow = new BrowserWindow({
+    ...(icon ? { icon } : {}),
     width: 1280,
     height: 800,
     minWidth: 900,
@@ -147,7 +170,11 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.handle('spotify-get-token', () => {
-    return getStoredToken();
+    const token = getStoredToken();
+    if (consumeSpotifyScopePurgeNotice()) {
+      mainWindow?.webContents.send('spotify-scope-reset', SPOTIFY_SCOPE_RESET_MSG);
+    }
+    return token;
   });
 
   ipcMain.handle('toggle-devtools', () => {
@@ -155,16 +182,23 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.handle('spotify-refresh-token', async () => {
-    return refreshToken(mainWindow);
+    const token = await refreshToken(mainWindow);
+    if (consumeSpotifyScopePurgeNotice()) {
+      mainWindow?.webContents.send('spotify-scope-reset', SPOTIFY_SCOPE_RESET_MSG);
+    }
+    return token;
   });
 
   ipcMain.handle('spotify-disconnect', () => {
     disconnect();
+    store.delete('spotifyLastGrantedScopesDisplay');
   });
 
   ipcMain.handle('spotify-get-client-id', () => {
     return getClientId();
   });
+
+  ipcMain.handle('spotify-get-last-granted-scopes', () => getLastGrantedScopes());
 
   ipcMain.handle('spotify-save-client-id', (_event, id: string) => {
     setClientId(id);
@@ -302,6 +336,7 @@ Your node_modules/electron package should show version like 41.x.x+wvcus (check 
     });
   }
 
+  applyDarwinDockIcon();
   createWindow();
   setupAutoUpdater();
 

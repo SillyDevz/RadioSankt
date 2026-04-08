@@ -89,12 +89,15 @@ export default function PlaylistPanel() {
     <div className="flex flex-col h-full">
       {/* Toolbar */}
       <div className="flex items-center gap-2 pb-3 border-b border-border mb-3 flex-wrap">
-        <button
-          onClick={() => setSpotifySearchOpen(true)}
-          className="px-3 py-1.5 bg-accent hover:bg-accent-hover text-bg-primary font-medium rounded text-xs transition-colors"
-        >
-          Add Track
-        </button>
+        <Tooltip content="Search Spotify or open your playlists to add tracks or a whole playlist" placement="bottom">
+          <button
+            type="button"
+            onClick={() => setSpotifySearchOpen(true)}
+            className="px-3 py-1.5 bg-accent hover:bg-accent-hover text-bg-primary font-medium rounded text-xs transition-colors"
+          >
+            Add music
+          </button>
+        </Tooltip>
         <Tooltip content="Pick a jingle from your library to add to the playlist" placement="bottom">
           <button
             onClick={() => setJinglePickerOpen(true)}

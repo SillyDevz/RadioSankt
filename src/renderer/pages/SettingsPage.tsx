@@ -4,6 +4,7 @@ import type { AccentColor, ThemeMode, WebPlaybackPhase } from '@/store';
 import { ACCENT_COLORS } from '@/store';
 import Tooltip from '@/components/Tooltip';
 import { openExternal } from '@/utils/openExternal';
+import { clearSpotifyUserIdCache } from '@/services/spotify-api';
 
 const WEB_PLAYBACK_HELP: Record<WebPlaybackPhase, string> = {
   idle: 'Log in to Spotify to start the in-app player.',
@@ -59,6 +60,7 @@ export default function SettingsPage() {
   const [showHelp, setShowHelp] = useState(false);
   const [githubRepoInput, setGithubRepoInput] = useState(githubRepo);
   const [rebindingId, setRebindingId] = useState<string | null>(null);
+  const spotifyGrantedScopes = useStore((s) => s.spotifyGrantedScopes);
 
   // Load version
   useEffect(() => {
@@ -124,6 +126,8 @@ export default function SettingsPage() {
 
   const handleDisconnect = async () => {
     await window.electronAPI?.disconnectSpotify();
+    await window.electronAPI?.saveToStore('spotifyLastGrantedScopesDisplay', '');
+    clearSpotifyUserIdCache();
     useStore.getState().disconnectSpotify();
     addToast('Disconnected from Spotify', 'info');
   };
@@ -194,13 +198,24 @@ export default function SettingsPage() {
                 <li>Go to <button onClick={() => openExternal('https://developer.spotify.com/dashboard')} className="text-accent hover:underline">developer.spotify.com/dashboard</button></li>
                 <li>Log in with your Spotify account (free or premium)</li>
                 <li>Click "Create app"</li>
-                <li>Set the Redirect URI to <code className="bg-bg-primary px-1 py-0.5 rounded text-text-muted">http://127.0.0.1:8888/callback</code></li>
-                <li>Check "Web Playback SDK" under APIs used</li>
-                <li>Copy the Client ID and paste it below</li>
+                <li>Set the Redirect URI to <code className="bg-bg-primary px-1 py-0.5 rounded text-text-muted">http://127.0.0.1:8888/callback</code> exactly (not https)</li>
+                <li>In APIs, enable Web API and Web Playback SDK</li>
+                <li>If the app is in Development mode, add your Spotify login under User management so the Web API accepts your account</li>
+                <li>
+                  Copy the <strong>Client ID of the app you just created</strong> (yours), not another product’s ID.
+                  When you click Connect, the Spotify page must show <strong>that app’s name</strong>. If it says “Stream Deck,”
+                  “Google,” etc., the Client ID is wrong — paste the ID from your app’s Settings on the dashboard.
+                </li>
                 <li>Click "Connect"</li>
               </ol>
             </div>
           )}
+
+          <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-[11px] text-amber-100/95 leading-snug">
+            The Spotify permission screen must match <strong>your</strong> developer app (the name you gave it on the dashboard).
+            If Spotify asks you to approve <strong>Stream Deck</strong> or any app you did not create, clear the Client ID field,
+            create your own app on the dashboard, and paste <strong>its</strong> Client ID — otherwise playlists will always fail with 403.
+          </div>
 
           {/* Client ID input */}
           <div className="flex flex-col gap-1.5">
@@ -253,6 +268,40 @@ export default function SettingsPage() {
               <img src={userAvatar} alt={user || ''} className="w-7 h-7 rounded-full" />
             )}
           </div>
+
+          {connected && (
+            <div className="text-[10px] leading-snug space-y-2">
+              <p className="text-text-secondary">
+                Spotify’s “Agree” page often only mentions <em>public</em> playlists; the real list is in the browser tab
+                after login (stays open) and below. You need <code className="text-text-primary">playlist-read-private</code>{' '}
+                for “Your playlists.”
+              </p>
+              {spotifyGrantedScopes ? (
+                <>
+                  <textarea
+                    readOnly
+                    value={spotifyGrantedScopes}
+                    rows={4}
+                    className="w-full resize-y min-h-[4.5rem] bg-bg-primary border border-border rounded-lg px-2 py-1.5 text-[10px] font-mono text-text-primary"
+                    aria-label="OAuth scopes from last login"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void navigator.clipboard.writeText(spotifyGrantedScopes).then(() => {
+                        addToast('Scopes copied', 'success');
+                      });
+                    }}
+                    className="text-[10px] text-accent hover:underline"
+                  >
+                    Copy scopes to clipboard
+                  </button>
+                </>
+              ) : (
+                <p className="text-text-muted text-[10px]">Scopes aren’t loaded yet — switch away and back to Settings, or reconnect.</p>
+              )}
+            </div>
+          )}
 
           {connected && (
             <div className="rounded-lg border border-border bg-bg-elevated/50 px-4 py-3 space-y-2">

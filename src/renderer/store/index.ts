@@ -56,6 +56,14 @@ export interface StepTransition {
 
 export type AutomationStep = (
   | { type: 'track'; spotifyUri: string; name: string; artist: string; albumArt: string; durationMs: number }
+  | {
+      type: 'playlist';
+      spotifyPlaylistUri: string;
+      name: string;
+      albumArt: string;
+      durationMs: number;
+      trackCount: number;
+    }
   | { type: 'jingle'; jingleId: number; name: string; filePath: string; durationMs: number }
   | { type: 'pause'; label: string }
 ) & { id: string } & StepTransition;
@@ -129,6 +137,8 @@ interface SpotifySlice {
   webPlaybackPhase: WebPlaybackPhase;
   webPlaybackLastError: string | null;
   searchResults: SpotifySearchResult[];
+  /** OAuth `scope` string from last login (also persisted under spotifyLastGrantedScopesDisplay). */
+  spotifyGrantedScopes: string | null;
   setConnected: (connected: boolean) => void;
   setUser: (user: string | null) => void;
   setUserAvatar: (avatar: string | null) => void;
@@ -138,6 +148,7 @@ interface SpotifySlice {
   setSdkReady: (ready: boolean) => void;
   setWebPlaybackDiag: (phase: WebPlaybackPhase, lastError?: string | null) => void;
   setSearchResults: (results: SpotifySearchResult[]) => void;
+  setSpotifyGrantedScopes: (scopes: string | null) => void;
   disconnectSpotify: () => void;
 }
 
@@ -276,6 +287,7 @@ const createSpotifySlice: StateCreator<StoreState, [], [], SpotifySlice> = (set)
   webPlaybackPhase: 'idle',
   webPlaybackLastError: null,
   searchResults: [],
+  spotifyGrantedScopes: null,
   setConnected: (connected) => set({ connected }),
   setUser: (user) => set({ user }),
   setUserAvatar: (avatar) => set({ userAvatar: avatar }),
@@ -289,6 +301,7 @@ const createSpotifySlice: StateCreator<StoreState, [], [], SpotifySlice> = (set)
       webPlaybackLastError: lastError,
     }),
   setSearchResults: (results) => set({ searchResults: results }),
+  setSpotifyGrantedScopes: (spotifyGrantedScopes) => set({ spotifyGrantedScopes }),
   disconnectSpotify: () =>
     set({
       connected: false,
@@ -300,6 +313,7 @@ const createSpotifySlice: StateCreator<StoreState, [], [], SpotifySlice> = (set)
       webPlaybackPhase: 'idle',
       webPlaybackLastError: null,
       searchResults: [],
+      spotifyGrantedScopes: null,
     }),
 });
 

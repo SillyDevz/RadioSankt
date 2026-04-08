@@ -12,6 +12,7 @@ function formatDuration(ms: number): string {
 
 const fallbackIcons: Record<string, string> = {
   track: '\u{1F3B5}',
+  playlist: '\u{1F4DC}',
   jingle: '\u{1F399}',
   pause: '\u23F8',
 };
@@ -35,7 +36,14 @@ export default function StepCard({ step, isPlaying, isSelected, onSelect, onDele
   };
 
   const name = step.type === 'pause' ? step.label || 'Pause Point' : step.name;
-  const subtitle = step.type === 'track' ? step.artist : step.type === 'jingle' ? 'Jingle' : 'Automation pauses here';
+  const subtitle =
+    step.type === 'track'
+      ? step.artist
+      : step.type === 'playlist'
+        ? `Playlist · ${step.trackCount} tracks`
+        : step.type === 'jingle'
+          ? 'Jingle'
+          : 'Automation pauses here';
   const duration = step.type !== 'pause' ? formatDuration(step.durationMs) : '--:--';
 
   return (
@@ -83,7 +91,7 @@ export default function StepCard({ step, isPlaying, isSelected, onSelect, onDele
         </button>
       </Tooltip>
 
-      {step.type === 'track' && step.albumArt?.trim() ? (
+      {(step.type === 'track' || step.type === 'playlist') && step.albumArt?.trim() ? (
         <img
           src={step.albumArt}
           alt=""

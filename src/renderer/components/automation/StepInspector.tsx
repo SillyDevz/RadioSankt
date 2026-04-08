@@ -1,6 +1,13 @@
 import { useStore } from '@/store';
 import type { AutomationStep, TransitionIn, TransitionOut } from '@/store';
 
+function formatDuration(ms: number): string {
+  const s = Math.floor(ms / 1000);
+  const m = Math.floor(s / 60);
+  const sec = s % 60;
+  return `${m}:${sec.toString().padStart(2, '0')}`;
+}
+
 export default function StepInspector() {
   const steps = useStore((s) => s.automationSteps);
   const selectedStepIndex = useStore((s) => s.selectedStepIndex);
@@ -27,13 +34,24 @@ export default function StepInspector() {
       {/* Step info */}
       <div className="mb-4 pb-4 border-b border-border">
         <div className="text-xs text-text-muted mb-1">
-          {step.type === 'track' ? 'Spotify Track' : step.type === 'jingle' ? 'Jingle' : 'Pause Point'}
+          {step.type === 'track'
+            ? 'Spotify Track'
+            : step.type === 'playlist'
+              ? 'Spotify Playlist'
+              : step.type === 'jingle'
+                ? 'Jingle'
+                : 'Pause Point'}
         </div>
         <div className="text-sm text-text-primary font-medium truncate">
           {step.type === 'pause' ? step.label || 'Pause Point' : step.name}
         </div>
         {step.type === 'track' && (
           <div className="text-xs text-text-secondary truncate mt-0.5">{step.artist}</div>
+        )}
+        {step.type === 'playlist' && (
+          <div className="text-xs text-text-secondary mt-0.5">
+            {step.trackCount} tracks · {formatDuration(step.durationMs)} total (snapshot when added)
+          </div>
         )}
       </div>
 

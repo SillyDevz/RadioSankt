@@ -2,7 +2,7 @@ import { useEffect, useState, lazy, Suspense } from 'react';
 import { useStore } from '@/store';
 import type { Page, CoachMarkId, AccentColor, ThemeMode, QuickFireSlot, ShortcutBinding } from '@/store';
 import { ACCENT_COLORS } from '@/store';
-import { getProfile } from '@/services/spotify-api';
+import { clearSpotifyUserIdCache, getProfile } from '@/services/spotify-api';
 import Sidebar from './Sidebar';
 import MacTitleBarInset from './MacTitleBarInset';
 import NowPlayingBar from './NowPlayingBar';
@@ -78,6 +78,14 @@ function Layout() {
         if (token) {
           useStore.setState({ token, connected: true });
           try {
+            const saved = await api.getFromStore('spotifyLastGrantedScopesDisplay');
+            if (typeof saved === 'string' && saved.length > 0) {
+              useStore.setState({ spotifyGrantedScopes: saved });
+            }
+          } catch {
+            /* ignore */
+          }
+          try {
             const profile = await getProfile();
             useStore.setState({ user: profile.displayName, userAvatar: profile.avatar });
           } catch {
@@ -94,7 +102,16 @@ function Layout() {
     if (!api) return;
 
     const unsubComplete = api.onSpotifyAuthComplete(async (data) => {
-      useStore.setState({ token: data.accessToken, connected: true });
+      clearSpotifyUserIdCache();
+      const granted = typeof data.grantedScopes === 'string' && data.grantedScopes ? data.grantedScopes : null;
+      useStore.setState({
+        token: data.accessToken,
+        connected: true,
+        spotifyGrantedScopes: granted,
+      });
+      if (granted) {
+        void api.saveToStore('spotifyLastGrantedScopesDisplay', granted);
+      }
       useStore.getState().addToast('Connected to Spotify', 'success');
       try {
         const profile = await getProfile();
@@ -108,6 +125,16 @@ function Layout() {
       useStore.getState().addToast(`Spotify auth failed: ${error}`, 'error');
     });
 
+    const unsubScopeReset =
+      typeof api.onSpotifyScopeReset === 'function'
+        ? api.onSpotifyScopeReset((message) => {
+            clearSpotifyUserIdCache();
+            useStore.getState().disconnectSpotify();
+            void api.saveToStore('spotifyLastGrantedScopesDisplay', '');
+            useStore.getState().addToast(message, 'warning');
+          })
+        : () => {};
+
     const unsubRefresh = api.onSpotifyTokenRefreshed((data) => {
       useStore.setState({ token: data.accessToken });
     });
@@ -115,6 +142,7 @@ function Layout() {
     return () => {
       unsubComplete();
       unsubError();
+      unsubScopeReset();
       unsubRefresh();
     };
   }, []);

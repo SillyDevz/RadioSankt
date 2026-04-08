@@ -29,8 +29,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Spotify auth
   initiateSpotifyAuth: () => ipcRenderer.invoke('spotify-initiate-auth'),
-  onSpotifyAuthComplete: (cb: (data: { accessToken: string; expiresIn: number }) => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, data: { accessToken: string; expiresIn: number }) => cb(data);
+  onSpotifyAuthComplete: (
+    cb: (data: { accessToken: string; expiresIn: number; grantedScopes?: string }) => void,
+  ) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: { accessToken: string; expiresIn: number; grantedScopes?: string },
+    ) => cb(data);
     ipcRenderer.on('spotify-auth-complete', handler);
     return () => ipcRenderer.removeListener('spotify-auth-complete', handler);
   },
@@ -38,6 +43,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     const handler = (_event: Electron.IpcRendererEvent, error: string) => cb(error);
     ipcRenderer.on('spotify-auth-error', handler);
     return () => ipcRenderer.removeListener('spotify-auth-error', handler);
+  },
+  onSpotifyScopeReset: (cb: (message: string) => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, message: string) => cb(message);
+    ipcRenderer.on('spotify-scope-reset', handler);
+    return () => ipcRenderer.removeListener('spotify-scope-reset', handler);
   },
   getSpotifyToken: () => ipcRenderer.invoke('spotify-get-token'),
   refreshSpotifyToken: () => ipcRenderer.invoke('spotify-refresh-token'),
@@ -49,6 +59,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   disconnectSpotify: () => ipcRenderer.invoke('spotify-disconnect'),
   getSpotifyClientId: () => ipcRenderer.invoke('spotify-get-client-id'),
   saveSpotifyClientId: (id: string) => ipcRenderer.invoke('spotify-save-client-id', id),
+  getSpotifyLastGrantedScopes: () => ipcRenderer.invoke('spotify-get-last-granted-scopes'),
 
   // Shell
   openExternal: (url: string) => ipcRenderer.invoke('open-external', url),

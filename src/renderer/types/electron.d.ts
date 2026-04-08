@@ -27,14 +27,19 @@ interface ElectronAPI {
 
   // Spotify auth
   initiateSpotifyAuth: () => Promise<void>;
-  onSpotifyAuthComplete: (cb: (data: { accessToken: string; expiresIn: number }) => void) => () => void;
+  onSpotifyAuthComplete: (
+    cb: (data: { accessToken: string; expiresIn: number; grantedScopes?: string }) => void,
+  ) => () => void;
   onSpotifyAuthError: (cb: (error: string) => void) => () => void;
+  /** Present on current preload; may be missing if the desktop build is stale. */
+  onSpotifyScopeReset?: (cb: (message: string) => void) => () => void;
   getSpotifyToken: () => Promise<string | null>;
   refreshSpotifyToken: () => Promise<string | null>;
   onSpotifyTokenRefreshed: (cb: (data: { accessToken: string; expiresIn: number }) => void) => () => void;
   disconnectSpotify: () => Promise<void>;
   getSpotifyClientId: () => Promise<string | null>;
   saveSpotifyClientId: (id: string) => Promise<void>;
+  getSpotifyLastGrantedScopes: () => Promise<string | null>;
 
   // Shell
   openExternal: (url: string) => Promise<void>;

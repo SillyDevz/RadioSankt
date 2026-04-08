@@ -1,6 +1,6 @@
 import AudioEngine from './AudioEngine';
 import { useStore } from '@/store';
-import { playTrack } from '@/services/spotify-api';
+import { playTrack, playPlaylistContext } from '@/services/spotify-api';
 import type { AutomationStep } from '@/store';
 
 type AutomationEvent =
@@ -143,6 +143,8 @@ class AutomationEngine {
     try {
       if (step.type === 'track') {
         await this.playTrackStep(step);
+      } else if (step.type === 'playlist') {
+        await this.playPlaylistStep(step);
       } else if (step.type === 'jingle') {
         await this.playJingleStep(step);
       }
@@ -190,6 +192,30 @@ class AutomationEngine {
     }
 
     await playTrack(step.spotifyUri, deviceId);
+  }
+
+  private async playPlaylistStep(step: AutomationStep & { type: 'playlist' }): Promise<void> {
+    window.dispatchEvent(new CustomEvent('radio-sankt:prime-spotify-playback'));
+    let deviceId = this.getStore().deviceId;
+    if (!deviceId) {
+      deviceId = await waitForSpotifyDeviceId(15_000);
+    }
+    if (!deviceId) {
+      throw new Error(
+        'Web Playback is not connected (Spotify Premium required). Wait for “Spotify player ready” or reconnect Spotify in Settings.',
+      );
+    }
+
+    const audio = AudioEngine.get();
+    if (audio) {
+      if (step.transitionIn === 'fadeIn') {
+        audio.setVolume('A', 0);
+      } else {
+        audio.setVolume('A', this.getStore().volume);
+      }
+    }
+
+    await playPlaylistContext(step.spotifyPlaylistUri, deviceId);
   }
 
   private async playJingleStep(step: AutomationStep & { type: 'jingle' }): Promise<void> {

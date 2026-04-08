@@ -21,7 +21,7 @@ export default function EmptyState() {
 
         <h1 className="text-2xl font-bold text-text-primary">Your automation playlist is empty.</h1>
         <p className="text-text-secondary text-sm">
-          Add Spotify tracks and jingles to build your broadcast.
+          Add Spotify tracks, a playlist, or jingles to build your broadcast.
         </p>
 
         <div className="flex gap-3 mt-2">
@@ -29,7 +29,7 @@ export default function EmptyState() {
             onClick={() => setSpotifySearchOpen(true)}
             className="px-4 py-2 bg-accent hover:bg-accent-hover text-bg-primary font-medium rounded transition-colors text-sm"
           >
-            Add a Track
+            Add music
           </button>
           <Tooltip content="Pick a jingle from your library to add to the playlist" placement="bottom">
             <button

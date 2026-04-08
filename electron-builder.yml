@@ -1,5 +1,6 @@
 appId: com.radiosankt.app
 productName: Radio Sankt
+icon: public/icon.png
 electronDist: node_modules/electron/dist
 directories:
   output: release
@@ -7,6 +8,7 @@ files:
   - dist/**/*
   - package.json
 mac:
+  icon: public/icon.png
   category: public.app-category.music
   target:
     - dmg
