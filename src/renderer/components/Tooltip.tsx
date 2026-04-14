@@ -37,7 +37,11 @@ function Tooltip({ content, placement = 'top', shortcut, children, referenceClas
 
   return (
     <>
-      <span ref={refs.setReference} className={referenceClassName} {...getReferenceProps()}>
+      <span
+        ref={refs.setReference}
+        className={['inline-flex items-center justify-center', referenceClassName].filter(Boolean).join(' ')}
+        {...getReferenceProps()}
+      >
         {children}
       </span>
       <FloatingPortal>

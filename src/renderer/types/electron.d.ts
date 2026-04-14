@@ -10,7 +10,10 @@ interface ElectronAPI {
   platform: NodeJS.Platform;
 
   // Updates
-  checkForUpdates: () => Promise<void>;
+  checkForUpdates: () => Promise<
+    | { ok: true; isUpdateAvailable: boolean; remoteVersion: string | null }
+    | { ok: false; reason: 'development' | 'updater_inactive' | 'error'; message?: string }
+  >;
   onUpdateAvailable: (cb: () => void) => () => void;
   onUpdateDownloaded: (cb: () => void) => () => void;
   getAppVersion: () => Promise<string>;
@@ -59,6 +62,46 @@ interface ElectronAPI {
   loadPlaylist: (id: number) => Promise<{ id: number; name: string; steps: string; createdAt: string; updatedAt: string } | undefined>;
   listPlaylists: () => Promise<Array<{ id: number; name: string; stepCount: number; updatedAt: string }>>;
   deletePlaylist: (id: number) => Promise<void>;
+
+  listWeeklySlots?: () => Promise<
+    Array<{
+      id: number;
+      playlistId: number;
+      dayOfWeek: number;
+      startMinute: number;
+      durationMinutes: number;
+      maxDurationMs: number | null;
+      label: string | null;
+      createdAt: string;
+    }>
+  >;
+  addWeeklySlot?: (
+    playlistId: number,
+    dayOfWeek: number,
+    startMinute: number,
+    durationMinutes: number,
+    maxDurationMs: number | null,
+    label: string | null,
+  ) => Promise<{
+    id: number;
+    playlistId: number;
+    dayOfWeek: number;
+    startMinute: number;
+    durationMinutes: number;
+    maxDurationMs: number | null;
+    label: string | null;
+    createdAt: string;
+  }>;
+  updateWeeklySlot?: (
+    id: number,
+    playlistId: number,
+    dayOfWeek: number,
+    startMinute: number,
+    durationMinutes: number,
+    maxDurationMs: number | null,
+    label: string | null,
+  ) => Promise<void>;
+  deleteWeeklySlot?: (id: number) => Promise<void>;
 }
 
 // Spotify Web Playback SDK types

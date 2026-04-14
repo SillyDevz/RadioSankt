@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useStore } from '@/store';
 import type { AccentColor, ThemeMode, WebPlaybackPhase } from '@/store';
 import { ACCENT_COLORS } from '@/store';
@@ -44,7 +44,6 @@ export default function SettingsPage() {
   const crossfadeMs = useStore((s) => s.crossfadeMs);
   const duckLevel = useStore((s) => s.duckLevel);
   const autoUpdate = useStore((s) => s.autoUpdate);
-  const githubRepo = useStore((s) => s.githubRepo);
   const shortcuts = useStore((s) => s.shortcuts);
   const setTheme = useStore((s) => s.setTheme);
   const setAccentColor = useStore((s) => s.setAccentColor);
@@ -53,14 +52,15 @@ export default function SettingsPage() {
   const setCrossfadeMs = useStore((s) => s.setCrossfadeMs);
   const setDuckLevel = useStore((s) => s.setDuckLevel);
   const setAutoUpdate = useStore((s) => s.setAutoUpdate);
-  const setGithubRepo = useStore((s) => s.setGithubRepo);
   const updateShortcut = useStore((s) => s.updateShortcut);
 
   const [clientIdInput, setClientIdInput] = useState('');
   const [showHelp, setShowHelp] = useState(false);
-  const [githubRepoInput, setGithubRepoInput] = useState(githubRepo);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const checkUpdateInFlight = useRef(false);
   const [rebindingId, setRebindingId] = useState<string | null>(null);
   const spotifyGrantedScopes = useStore((s) => s.spotifyGrantedScopes);
+  const setCurrentPage = useStore((s) => s.setCurrentPage);
 
   // Load version
   useEffect(() => {
@@ -124,6 +124,43 @@ export default function SettingsPage() {
     await window.electronAPI?.initiateSpotifyAuth();
   };
 
+  const handleCheckForUpdates = async () => {
+    const api = window.electronAPI;
+    if (!api?.checkForUpdates || checkUpdateInFlight.current) return;
+    checkUpdateInFlight.current = true;
+    setCheckingUpdate(true);
+    try {
+      const r = await api.checkForUpdates();
+      if (r == null || typeof r !== 'object' || typeof (r as { ok?: unknown }).ok !== 'boolean') {
+        addToast('Update check returned nothing valid. Fully quit and reopen the app so main and UI stay in sync.', 'warning');
+        return;
+      }
+      if (!r.ok) {
+        if (r.reason === 'development') {
+          addToast('Updates are only checked in the installed app, not in development.', 'info');
+        } else if (r.reason === 'error') {
+          addToast(r.message || 'Could not check for updates', 'error');
+        } else {
+          addToast('Update check is unavailable.', 'warning');
+        }
+        return;
+      }
+      if (!r.isUpdateAvailable) {
+        addToast(
+          r.remoteVersion
+            ? `You’re up to date. Latest release on the update server is v${r.remoteVersion}.`
+            : 'You’re up to date.',
+          'success',
+        );
+      }
+    } catch (e) {
+      addToast(e instanceof Error ? e.message : 'Could not check for updates', 'error');
+    } finally {
+      checkUpdateInFlight.current = false;
+      setCheckingUpdate(false);
+    }
+  };
+
   const handleDisconnect = async () => {
     await window.electronAPI?.disconnectSpotify();
     await window.electronAPI?.saveToStore('spotifyLastGrantedScopesDisplay', '');
@@ -146,9 +183,21 @@ export default function SettingsPage() {
   return (
     <div className="max-w-[640px] mx-auto py-8 flex flex-col gap-6 animate-page-enter">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold text-text-primary">Settings</h1>
-        <span className="text-xs text-text-muted bg-bg-elevated px-2 py-1 rounded">v{version}</span>
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3 min-w-0">
+          <button
+            type="button"
+            onClick={() => setCurrentPage('studio')}
+            className="shrink-0 p-2 rounded-lg text-text-secondary hover:text-text-primary hover:bg-bg-elevated transition-colors"
+            aria-label="Back to studio"
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M19 12H5M12 19l-7-7 7-7" />
+            </svg>
+          </button>
+          <h1 className="text-xl font-semibold text-text-primary truncate">Settings</h1>
+        </div>
+        <span className="text-xs text-text-muted bg-bg-elevated px-2 py-1 rounded shrink-0">v{version}</span>
       </div>
 
       {/* ── Spotify ─────────────────────────────────────────────────── */}
@@ -444,10 +493,12 @@ export default function SettingsPage() {
               <span className="text-xs text-text-muted bg-bg-elevated px-2 py-0.5 rounded">v{version}</span>
             </div>
             <button
-              onClick={() => window.electronAPI?.checkForUpdates()}
-              className="px-3 py-1.5 bg-bg-elevated border border-border rounded-lg text-xs text-text-secondary hover:text-text-primary hover:border-text-muted transition-colors"
+              type="button"
+              onClick={() => void handleCheckForUpdates()}
+              disabled={checkingUpdate}
+              className="px-3 py-1.5 bg-bg-elevated border border-border rounded-lg text-xs text-text-secondary hover:text-text-primary hover:border-text-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              Check for updates
+              {checkingUpdate ? 'Checking…' : 'Check for updates'}
             </button>
           </div>
 
@@ -461,27 +512,6 @@ export default function SettingsPage() {
             >
               <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform ${autoUpdate ? 'left-[22px]' : 'left-0.5'}`} />
             </button>
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs text-text-secondary" htmlFor="github-repo">GitHub repository (owner/repo)</label>
-            <div className="flex gap-2">
-              <input
-                id="github-repo"
-                type="text"
-                value={githubRepoInput}
-                onChange={(e) => setGithubRepoInput(e.target.value)}
-                placeholder="owner/repo"
-                className="flex-1 bg-bg-elevated border border-border rounded-lg px-3 py-2 text-sm text-text-primary placeholder:text-text-muted outline-none focus:border-accent transition-colors"
-              />
-              <button
-                onClick={() => { setGithubRepo(githubRepoInput.trim()); addToast('Repository saved', 'success'); }}
-                disabled={!githubRepoInput.trim() || githubRepoInput.trim() === githubRepo}
-                className="px-3 py-2 bg-bg-elevated border border-border rounded-lg text-sm text-text-secondary hover:text-text-primary hover:border-text-muted transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-              >
-                Save
-              </button>
-            </div>
           </div>
         </div>
       </section>

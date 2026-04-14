@@ -1,30 +1,30 @@
-import { useEffect, useState, lazy, Suspense } from 'react';
+import { useEffect, useState, useRef, lazy, Suspense } from 'react';
 import { useStore } from '@/store';
 import type { Page, CoachMarkId, AccentColor, ThemeMode, QuickFireSlot, ShortcutBinding } from '@/store';
 import { ACCENT_COLORS } from '@/store';
 import { clearSpotifyUserIdCache, getProfile } from '@/services/spotify-api';
-import Sidebar from './Sidebar';
 import MacTitleBarInset from './MacTitleBarInset';
 import NowPlayingBar from './NowPlayingBar';
-import SpotifySearch from './SpotifySearch';
 import ToastContainer from './Toast';
 import OnboardingWizard from './OnboardingWizard';
-import HelpPanel from './HelpPanel';
 import type { ComponentType } from 'react';
 import { useAutoUpdate } from '@/hooks/useAutoUpdate';
 import { useKeyboardShortcuts } from '@/hooks/useKeyboardShortcuts';
+import {
+  hydrateAutomationSession,
+  initAutomationSessionPersistence,
+  loadAutomationSession,
+  resetWeeklyScheduleFireKeys,
+  runScheduleTick,
+} from '@/services/automation-session';
 
-const LibraryPage = lazy(() => import('@/pages/LibraryPage'));
-const AutomationPage = lazy(() => import('@/pages/AutomationPage'));
-const LivePage = lazy(() => import('@/pages/LivePage'));
-const JinglesPage = lazy(() => import('@/pages/JinglesPage'));
+const Workspace = lazy(() => import('@/components/workspace/Workspace'));
+const ProgramSchedulePage = lazy(() => import('@/pages/ProgramSchedulePage'));
 const SettingsPage = lazy(() => import('@/pages/SettingsPage'));
 
 const pages: Record<Page, ComponentType> = {
-  library: LibraryPage,
-  automation: AutomationPage,
-  live: LivePage,
-  jingles: JinglesPage,
+  studio: Workspace,
+  program: ProgramSchedulePage,
   settings: SettingsPage,
 };
 
@@ -41,17 +41,26 @@ function Layout() {
   const hasCompletedOnboarding = useStore((s) => s.hasCompletedOnboarding);
   const theme = useStore((s) => s.theme);
   const accentColor = useStore((s) => s.accentColor);
+  const followProgramSchedule = useStore((s) => s.followProgramSchedule);
   const PageComponent = pages[currentPage];
   const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const prevFollowScheduleRef = useRef<boolean | null>(null);
   useAutoUpdate();
   useKeyboardShortcuts();
 
-  // Load persisted settings from electron-store on mount
+  // Persisted settings + last automation queue (session)
   useEffect(() => {
+    const unsubPersist = initAutomationSessionPersistence();
     const api = window.electronAPI;
+
+    const loadAutomation = () =>
+      loadAutomationSession().then((s) => {
+        if (s) hydrateAutomationSession(s);
+      });
+
     if (!api) {
-      setSettingsLoaded(true);
-      return;
+      void loadAutomation().finally(() => setSettingsLoaded(true));
+      return () => unsubPersist();
     }
 
     Promise.all([
@@ -68,9 +77,11 @@ function Layout() {
       api.getFromStore('crossfadeMs').then((val) => { if (typeof val === 'number') useStore.setState({ crossfadeMs: val }); }),
       api.getFromStore('duckLevel').then((val) => { if (typeof val === 'number') useStore.setState({ duckLevel: val }); }),
       api.getFromStore('autoUpdate').then((val) => { if (typeof val === 'boolean') useStore.setState({ autoUpdate: val }); }),
-      api.getFromStore('githubRepo').then((val) => { if (typeof val === 'string') useStore.setState({ githubRepo: val }); }),
+      api.getFromStore('followProgramSchedule').then((val) => {
+        if (typeof val === 'boolean') useStore.setState({ followProgramSchedule: val });
+      }),
       api.getFromStore('shortcuts').then((val) => { if (Array.isArray(val)) useStore.setState({ shortcuts: val as ShortcutBinding[] }); }),
-      api.getFromStore('quickFireSlots').then((val) => { if (Array.isArray(val) && val.length === 12) useStore.setState({ quickFireSlots: val as QuickFireSlot[] }); }),
+      api.getFromStore('workspaceLayout').then((val) => { if (Array.isArray(val)) useStore.setState({ workspaceLayout: val as any }); }),
       api.getSpotifyClientId().then((id) => {
         if (id) useStore.setState({ clientId: id });
       }),
@@ -93,8 +104,33 @@ function Layout() {
           }
         }
       }),
+      loadAutomation(),
     ]).finally(() => setSettingsLoaded(true));
+
+    return () => unsubPersist();
   }, []);
+
+  useEffect(() => {
+    if (!settingsLoaded) return;
+    prevFollowScheduleRef.current = useStore.getState().followProgramSchedule;
+  }, [settingsLoaded]);
+
+  useEffect(() => {
+    if (!window.electronAPI || !settingsLoaded) return;
+    const id = window.setInterval(() => void runScheduleTick(), 5000);
+    void runScheduleTick();
+    return () => clearInterval(id);
+  }, [settingsLoaded]);
+
+  useEffect(() => {
+    if (!window.electronAPI || !settingsLoaded) return;
+    const prev = prevFollowScheduleRef.current;
+    prevFollowScheduleRef.current = followProgramSchedule;
+    if (followProgramSchedule && prev === false) {
+      resetWeeklyScheduleFireKeys();
+      void runScheduleTick();
+    }
+  }, [followProgramSchedule, settingsLoaded]);
 
   // Centralized Spotify auth event listeners
   useEffect(() => {
@@ -183,7 +219,6 @@ function Layout() {
           <div className="flex flex-1 flex-col min-h-0 overflow-hidden">
             {showMacTitleInset && <MacTitleBarInset />}
             <div className="flex flex-1 min-h-0 overflow-hidden">
-            <Sidebar />
             <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-6">
               <Suspense fallback={<div className="flex items-center justify-center min-h-[40vh]"><span className="text-text-muted text-sm">Loading...</span></div>}>
                 <div key={currentPage} className="animate-page-enter min-h-0 h-full">
@@ -194,9 +229,7 @@ function Layout() {
             </div>
           </div>
           <NowPlayingBar />
-          <SpotifySearch />
           <ToastContainer />
-          <HelpPanel />
         </>
       )}
     </div>

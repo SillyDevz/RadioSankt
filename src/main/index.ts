@@ -14,6 +14,10 @@ import {
   loadPlaylist,
   listPlaylists,
   deletePlaylist,
+  listWeeklySlots,
+  addWeeklySlot,
+  updateWeeklySlot,
+  deleteWeeklySlot,
 } from './database';
 import {
   initiateAuth,
@@ -130,10 +134,30 @@ function setupAutoUpdater(): void {
 
 // IPC handlers
 function registerIpcHandlers(): void {
-  ipcMain.handle('check-for-updates', () => {
-    if (!app.isPackaged) return null;
-    return autoUpdater.checkForUpdates();
-  });
+  ipcMain.handle(
+    'check-for-updates',
+    async (): Promise<
+      | { ok: true; isUpdateAvailable: boolean; remoteVersion: string | null }
+      | { ok: false; reason: 'development' | 'updater_inactive' | 'error'; message?: string }
+    > => {
+      if (!app.isPackaged) return { ok: false, reason: 'development' };
+      try {
+        const result = await autoUpdater.checkForUpdates();
+        if (result == null) return { ok: false, reason: 'updater_inactive' };
+        return {
+          ok: true,
+          isUpdateAvailable: result.isUpdateAvailable,
+          remoteVersion: result.updateInfo?.version ?? null,
+        };
+      } catch (e) {
+        return {
+          ok: false,
+          reason: 'error',
+          message: e instanceof Error ? e.message : String(e),
+        };
+      }
+    },
+  );
 
   ipcMain.handle('quit-and-install', () => {
     autoUpdater.quitAndInstall();
@@ -259,6 +283,39 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle('delete-playlist', (_event, id: number) => {
     deletePlaylist(id);
+  });
+
+  ipcMain.handle('weekly-slots-list', () => listWeeklySlots());
+
+  ipcMain.handle(
+    'weekly-slots-add',
+    (
+      _event,
+      playlistId: number,
+      dayOfWeek: number,
+      startMinute: number,
+      durationMinutes: number,
+      maxDurationMs: number | null,
+      label: string | null,
+    ) => addWeeklySlot(playlistId, dayOfWeek, startMinute, durationMinutes, maxDurationMs, label),
+  );
+
+  ipcMain.handle(
+    'weekly-slots-update',
+    (
+      _event,
+      id: number,
+      playlistId: number,
+      dayOfWeek: number,
+      startMinute: number,
+      durationMinutes: number,
+      maxDurationMs: number | null,
+      label: string | null,
+    ) => updateWeeklySlot(id, playlistId, dayOfWeek, startMinute, durationMinutes, maxDurationMs, label),
+  );
+
+  ipcMain.handle('weekly-slots-delete', (_event, id: number) => {
+    deleteWeeklySlot(id);
   });
 }
 

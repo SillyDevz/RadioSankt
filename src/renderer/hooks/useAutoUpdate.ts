@@ -19,8 +19,6 @@ export function useAutoUpdate() {
       });
     });
 
-    api.checkForUpdates();
-
     return () => {
       cleanupAvailable();
       cleanupDownloaded();

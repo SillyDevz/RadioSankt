@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useStore } from '@/store';
 
 interface ToastAction {
@@ -58,7 +59,7 @@ function ToastItem({ toast }: { toast: Toast }) {
 
   return (
     <div
-      className={`px-4 py-3 rounded shadow-lg flex items-center gap-3 min-w-[300px] max-w-[400px] text-sm border-l-4 ${border} bg-bg-elevated`}
+      className={`pointer-events-auto px-4 py-3 rounded shadow-lg flex items-center gap-3 min-w-[300px] max-w-[400px] text-sm border-l-4 ${border} bg-bg-elevated`}
       style={{
         animation: 'toast-slide-in 0.25s ease-out',
       }}
@@ -89,7 +90,7 @@ function ToastItem({ toast }: { toast: Toast }) {
 function ToastContainer() {
   const toasts = useStore((s) => s.toasts);
 
-  return (
+  const stack = (
     <>
       <style>{`
         @keyframes toast-slide-in {
@@ -97,13 +98,17 @@ function ToastContainer() {
           to { opacity: 1; transform: translateX(0); }
         }
       `}</style>
-      <div className="fixed bottom-20 right-4 z-50 flex flex-col gap-2">
+      {/* 5.5rem = h-now-playing (88px); +12px gap above play bar */}
+      <div className="pointer-events-none fixed bottom-[calc(5.5rem+0.75rem)] right-4 z-[9999] flex flex-col gap-2">
         {toasts.map((toast) => (
           <ToastItem key={toast.id} toast={toast} />
         ))}
       </div>
     </>
   );
+
+  if (typeof document === 'undefined') return null;
+  return createPortal(stack, document.body);
 }
 
 export default ToastContainer;

@@ -157,7 +157,25 @@ export async function getProfile(): Promise<SpotifyProfile> {
   };
 }
 
+/** Move active playback to the Web Playback SDK device (required when another device was last active). */
+export async function transferPlaybackToDevice(deviceId: string): Promise<void> {
+  const res = await apiFetch('/me/player', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ device_ids: [deviceId], play: false }),
+  });
+  if (!res.ok && res.status !== 204) {
+    const body = await res.text();
+    throw new Error(`Transfer failed ${res.status}: ${body}`);
+  }
+}
+
 export async function playTrack(uri: string, deviceId: string): Promise<void> {
+  try {
+    await transferPlaybackToDevice(deviceId);
+  } catch (err) {
+    console.warn('[Spotify] transfer before play (ignored):', err);
+  }
   const res = await apiFetch(`/me/player/play?device_id=${encodeURIComponent(deviceId)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -170,6 +188,11 @@ export async function playTrack(uri: string, deviceId: string): Promise<void> {
 }
 
 export async function playPlaylistContext(contextUri: string, deviceId: string): Promise<void> {
+  try {
+    await transferPlaybackToDevice(deviceId);
+  } catch (err) {
+    console.warn('[Spotify] transfer before play (ignored):', err);
+  }
   const res = await apiFetch(`/me/player/play?device_id=${encodeURIComponent(deviceId)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },

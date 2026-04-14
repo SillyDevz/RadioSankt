@@ -39,6 +39,8 @@ class AutomationEngine {
   private nextStepTimer: ReturnType<typeof setTimeout> | null = null;
   private countdownTimer: ReturnType<typeof setInterval> | null = null;
   private currentStepStartTime = 0;
+  /** While Spotify-backed step is playing but SDK not yet `isPlaying`, freeze step clock (countdown + elapsed). */
+  private countdownHaltStartedAt: number | null = null;
 
   static getInstance(): AutomationEngine {
     if (!AutomationEngine.instance) {
@@ -72,8 +74,7 @@ class AutomationEngine {
     if (steps.length === 0) return;
 
     if (store.automationStatus === 'paused') {
-      // Resume from paused position
-      await this.executeStep(store.currentStepIndex);
+      await this.resumeFromPausedTransport();
       return;
     }
 
@@ -101,13 +102,9 @@ class AutomationEngine {
     window.dispatchEvent(new CustomEvent('radio-sankt:prime-spotify-playback'));
 
     const steps = this.getSteps();
+    if (steps.length === 0) return;
     const next = store.currentStepIndex + 1;
-    if (next >= steps.length) {
-      this.emit({ type: 'finished' });
-      await this.stopInternal(false);
-      return;
-    }
-    await this.playFromStep(next);
+    await this.playFromStep(next >= steps.length ? 0 : next);
   }
 
   async skipBackward(): Promise<void> {
@@ -116,8 +113,10 @@ class AutomationEngine {
 
     window.dispatchEvent(new CustomEvent('radio-sankt:prime-spotify-playback'));
 
+    const steps = this.getSteps();
+    if (steps.length === 0) return;
     const prev = store.currentStepIndex - 1;
-    await this.playFromStep(prev < 0 ? 0 : prev);
+    await this.playFromStep(prev < 0 ? steps.length - 1 : prev);
   }
 
   async executeStep(index: number): Promise<void> {
@@ -126,7 +125,7 @@ class AutomationEngine {
 
     if (index >= steps.length) {
       this.emit({ type: 'finished' });
-      this.stopInternal(false);
+      this.stopInternal();
       return;
     }
 
@@ -219,8 +218,8 @@ class AutomationEngine {
   }
 
   private async playJingleStep(step: AutomationStep & { type: 'jingle' }): Promise<void> {
-    const audio = AudioEngine.get();
-    if (!audio) throw new Error('Audio engine not ready');
+    const audio = AudioEngine.getOrInit();
+    audio.resumeContextIfNeeded();
 
     if (step.duckMusic) {
       await audio.duck('A', step.duckLevel, 300);
@@ -251,31 +250,70 @@ class AutomationEngine {
       const nextIndex = store.currentStepIndex + 1;
       await this.executeStep(nextIndex);
     } else if (store.automationStatus === 'paused') {
-      await this.executeStep(store.currentStepIndex);
+      await this.resumeFromPausedTransport();
     }
   }
 
-  private scheduleNextStep(step: AutomationStep, currentIndex: number): void {
-    this.clearNextStepTimer();
+  /** After transport pause: resume Spotify + timers without re-seeking the step (avoids restart). */
+  private async resumeFromPausedTransport(): Promise<void> {
+    const store = this.getStore();
+    const steps = this.getSteps();
+    const index = store.currentStepIndex;
+    const step = steps[index];
+    if (!step) return;
 
-    const durationMs = step.type === 'pause' ? 0 : (step as { durationMs: number }).durationMs;
-    if (!durationMs) return;
+    if (step.type === 'pause') {
+      await this.executeStep(index);
+      return;
+    }
 
-    const nextStep = this.getSteps()[currentIndex + 1];
+    if (step.type === 'jingle') {
+      await this.executeStep(index);
+      return;
+    }
+
+    const durationMs = (step as { durationMs: number }).durationMs;
+    const remainingMs = store.stepTimeRemaining;
+    if (remainingMs <= 0 || remainingMs > durationMs + 2000) {
+      window.dispatchEvent(new CustomEvent('radio-sankt:spotify-resume-sdk'));
+      await this.executeStep(index);
+      return;
+    }
+
+    store.setAutomationStatus('playing');
+    this.emit({ type: 'stepChanged', index });
+
+    window.dispatchEvent(new CustomEvent('radio-sankt:spotify-resume-sdk'));
+
+    const audio = AudioEngine.get();
+    if (audio) {
+      if (step.transitionIn === 'fadeIn') {
+        await audio.fadeIn('A', FADE_DURATION, store.volume);
+      } else {
+        audio.setVolume('A', store.volume);
+      }
+    }
+
+    const elapsedMs = durationMs - remainingMs;
+    this.currentStepStartTime = Date.now() - elapsedMs;
+    this.startCountdown(step, remainingMs);
+
+    const nextStep = steps[index + 1];
     const overlapMs = nextStep?.transitionIn === 'crossfade' ? nextStep.overlapMs : 0;
-    const delay = Math.max(durationMs - overlapMs, 500);
+    const delay = Math.max(remainingMs - overlapMs, 500);
+    this.scheduleAdvanceFromStep(step, index, delay);
+  }
 
+  private scheduleAdvanceFromStep(step: AutomationStep, currentIndex: number, delayMs: number): void {
+    this.clearNextStepTimer();
+    const nextStep = this.getSteps()[currentIndex + 1];
     this.nextStepTimer = setTimeout(async () => {
       try {
         const audio = AudioEngine.get();
-
-        // Apply transition out on current step
         if (step.transitionOut === 'fadeOut' && audio) {
           const channel = step.type === 'jingle' ? 'B' : 'A';
           audio.fadeOut(channel, FADE_DURATION);
         }
-
-        // If next step is crossfade, start it overlapping
         if (nextStep?.transitionIn === 'crossfade' && audio) {
           const fromChannel = step.type === 'jingle' ? 'B' : 'A';
           const toChannel = nextStep.type === 'jingle' ? 'B' : 'A';
@@ -283,13 +321,22 @@ class AutomationEngine {
             audio.crossfade(fromChannel, toChannel, FADE_DURATION);
           }
         }
-
         await this.executeStep(currentIndex + 1);
       } catch (err) {
         this.emit({ type: 'error', message: `Step transition failed: ${err}` });
         this.scheduleNextStepImmediate(currentIndex);
       }
-    }, delay);
+    }, delayMs);
+  }
+
+  private scheduleNextStep(step: AutomationStep, currentIndex: number): void {
+    const durationMs = step.type === 'pause' ? 0 : (step as { durationMs: number }).durationMs;
+    if (!durationMs) return;
+
+    const nextStep = this.getSteps()[currentIndex + 1];
+    const overlapMs = nextStep?.transitionIn === 'crossfade' ? nextStep.overlapMs : 0;
+    const delay = Math.max(durationMs - overlapMs, 500);
+    this.scheduleAdvanceFromStep(step, currentIndex, delay);
   }
 
   private scheduleNextStepImmediate(currentIndex: number): void {
@@ -301,18 +348,39 @@ class AutomationEngine {
     }, 200);
   }
 
-  private startCountdown(step: AutomationStep): void {
+  private startCountdown(step: AutomationStep, initialRemainingMs?: number): void {
     this.clearCountdown();
     if (step.type === 'pause') return;
 
     const durationMs = (step as { durationMs: number }).durationMs;
     const store = this.getStore();
-    store.setStepTimeRemaining(durationMs);
+    const shown =
+      initialRemainingMs != null
+        ? Math.min(durationMs, Math.max(0, initialRemainingMs))
+        : durationMs;
+    store.setStepTimeRemaining(shown);
 
     this.countdownTimer = setInterval(() => {
+      const st = useStore.getState();
+      const cur = st.automationSteps[st.currentStepIndex];
+      const spotifyBacked = cur && (cur.type === 'track' || cur.type === 'playlist');
+
+      if (st.automationStatus !== 'playing') {
+        this.countdownHaltStartedAt = null;
+        return;
+      }
+      if (spotifyBacked && !st.isPlaying) {
+        if (this.countdownHaltStartedAt == null) this.countdownHaltStartedAt = Date.now();
+        return;
+      }
+      if (this.countdownHaltStartedAt != null) {
+        this.currentStepStartTime += Date.now() - this.countdownHaltStartedAt;
+        this.countdownHaltStartedAt = null;
+      }
+
       const elapsed = Date.now() - this.currentStepStartTime;
       const remaining = Math.max(durationMs - elapsed, 0);
-      useStore.getState().setStepTimeRemaining(remaining);
+      st.setStepTimeRemaining(remaining);
 
       if (remaining <= 0) {
         this.clearCountdown();
@@ -325,6 +393,7 @@ class AutomationEngine {
       clearInterval(this.countdownTimer);
       this.countdownTimer = null;
     }
+    this.countdownHaltStartedAt = null;
   }
 
   private clearNextStepTimer(): void {
@@ -334,7 +403,7 @@ class AutomationEngine {
     }
   }
 
-  async pause(): Promise<void> {
+  async pause(options?: { skipFade?: boolean }): Promise<void> {
     const store = this.getStore();
     if (store.automationStatus !== 'playing') return;
 
@@ -342,18 +411,20 @@ class AutomationEngine {
     this.clearCountdown();
 
     const audio = AudioEngine.get();
-    if (audio) {
-      await audio.fadeOut('A', FADE_DURATION);
+    const fadeMs = useStore.getState().fadeOutMs;
+    if (audio && !options?.skipFade) {
+      await audio.fadeOut('A', fadeMs);
     }
 
     store.setAutomationStatus('paused');
+    window.dispatchEvent(new CustomEvent('radio-sankt:spotify-pause-sdk'));
   }
 
   async stop(): Promise<void> {
-    await this.stopInternal(true);
+    await this.stopInternal();
   }
 
-  private async stopInternal(resetPosition: boolean): Promise<void> {
+  private async stopInternal(): Promise<void> {
     this.clearNextStepTimer();
     this.clearCountdown();
 
@@ -365,10 +436,13 @@ class AutomationEngine {
 
     const store = this.getStore();
     store.setAutomationStatus('stopped');
+    store.setCurrentStepIndex(0);
     store.setStepTimeRemaining(0);
-    if (resetPosition) {
-      store.setCurrentStepIndex(0);
-    }
+    store.setCurrentTrack(null);
+    store.setPosition(0);
+    store.setDuration(0);
+    store.setIsPlaying(false);
+    window.dispatchEvent(new CustomEvent('radio-sankt:spotify-pause-sdk'));
   }
 }
 

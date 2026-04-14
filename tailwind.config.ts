@@ -27,12 +27,14 @@ const config: Config = {
         sans: ['Inter', 'system-ui', 'sans-serif'],
       },
       spacing: {
-        sidebar: '64px',
-        'sidebar-expanded': '220px',
-        'now-playing': '64px',
+        'now-playing': '88px',
       },
       borderRadius: {
-        DEFAULT: '8px',
+        DEFAULT: '12px',
+        md: '12px',
+        lg: '16px',
+        xl: '20px',
+        '2xl': '24px',
       },
     },
   },

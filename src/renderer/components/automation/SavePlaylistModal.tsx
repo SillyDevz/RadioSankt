@@ -46,7 +46,7 @@ export default function SavePlaylistModal() {
       >
         <div className="px-4 py-3 border-b border-border">
           <h2 className="text-sm font-semibold text-text-primary">
-            {currentPlaylistId ? 'Update Playlist' : 'Save Playlist'}
+            {currentPlaylistId ? 'Update saved set' : 'Save automation set'}
           </h2>
         </div>
 
@@ -60,7 +60,10 @@ export default function SavePlaylistModal() {
             onKeyDown={(e) => e.key === 'Enter' && handleSave()}
             className="w-full bg-bg-elevated border border-border rounded px-3 py-2 text-sm text-text-primary outline-none focus:border-accent"
           />
-          <div className="text-xs text-text-muted">{steps.length} steps</div>
+          <div className="text-xs text-text-muted">
+            {steps.length} steps
+            {currentPlaylistId ? ' · Load set restores the last saved version until you Update.' : ''}
+          </div>
           <div className="flex justify-end gap-2">
             <button
               onClick={() => { setOpen(false); setName(''); }}

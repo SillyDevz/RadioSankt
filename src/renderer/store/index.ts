@@ -2,7 +2,16 @@ import { create, StateCreator } from 'zustand';
 
 // ── Types ──────────────────────────────────────────────────────────────
 
-export type Page = 'library' | 'automation' | 'live' | 'jingles' | 'settings';
+export type Page = 'studio' | 'program' | 'settings';
+
+export type WidgetId = 'automationQueue' | 'stepInspector' | 'cartWall' | 'search' | 'jingleManager';
+
+export interface WidgetLayout {
+  id: WidgetId;
+  visible: boolean;
+  width?: number;
+  height?: number;
+}
 
 export type ToastVariant = 'info' | 'success' | 'warning' | 'error';
 
@@ -112,18 +121,17 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
   { id: 'continue', label: 'Continue at pause', key: 'C', modifiers: [] },
   { id: 'search', label: 'Open Spotify search', key: 'K', modifiers: ['Meta'] },
   { id: 'live', label: 'Toggle live mode', key: 'L', modifiers: [] },
-  { id: 'help', label: 'Open help panel', key: 'F1', modifiers: [] },
 ];
 
 // ── Slice interfaces ───────────────────────────────────────────────────
 
 interface UISlice {
   currentPage: Page;
-  sidebarExpanded: boolean;
   spotifySearchOpen: boolean;
+  workspaceLayout: WidgetLayout[];
   setCurrentPage: (page: Page) => void;
-  setSidebarExpanded: (expanded: boolean) => void;
   setSpotifySearchOpen: (open: boolean) => void;
+  setWorkspaceLayout: (layout: WidgetLayout[]) => void;
 }
 
 interface SpotifySlice {
@@ -175,7 +183,7 @@ interface AutomationSlice {
   currentPlaylistName: string | null;
   stepTimeRemaining: number;
   savedPlaylists: SavedPlaylist[];
-  jinglePickerOpen: boolean;
+  jingleManagerOpen: boolean;
   savePlaylistModalOpen: boolean;
   loadPlaylistModalOpen: boolean;
 
@@ -192,7 +200,7 @@ interface AutomationSlice {
   setCurrentPlaylistName: (name: string | null) => void;
   setStepTimeRemaining: (ms: number) => void;
   setSavedPlaylists: (playlists: SavedPlaylist[]) => void;
-  setJinglePickerOpen: (open: boolean) => void;
+  setJingleManagerOpen: (open: boolean) => void;
   setSavePlaylistModalOpen: (open: boolean) => void;
   setLoadPlaylistModalOpen: (open: boolean) => void;
 }
@@ -218,14 +226,10 @@ export type CoachMarkId = 'automation-drag' | 'automation-pause' | 'live-golive'
 interface LiveSlice {
   isLive: boolean;
   quickFireSlots: QuickFireSlot[];
-  playingSlotId: string | null;
-  playingSlotProgress: number;
   setIsLive: (live: boolean) => void;
   setQuickFireSlots: (slots: QuickFireSlot[]) => void;
   updateQuickFireSlot: (id: string, updates: Partial<QuickFireSlot>) => void;
   clearQuickFireSlot: (id: string) => void;
-  setPlayingSlotId: (id: string | null) => void;
-  setPlayingSlotProgress: (progress: number) => void;
 }
 
 interface SettingsSlice {
@@ -236,7 +240,8 @@ interface SettingsSlice {
   crossfadeMs: number;
   duckLevel: number;
   autoUpdate: boolean;
-  githubRepo: string;
+  /** When true, automation loads and plays the set for each weekly block at its start time (app must stay open). */
+  followProgramSchedule: boolean;
   shortcuts: ShortcutBinding[];
   setTheme: (theme: ThemeMode) => void;
   setAccentColor: (color: AccentColor) => void;
@@ -245,7 +250,7 @@ interface SettingsSlice {
   setCrossfadeMs: (ms: number) => void;
   setDuckLevel: (level: number) => void;
   setAutoUpdate: (auto: boolean) => void;
-  setGithubRepo: (repo: string) => void;
+  setFollowProgramSchedule: (on: boolean) => void;
   setShortcuts: (shortcuts: ShortcutBinding[]) => void;
   updateShortcut: (id: string, key: string, modifiers: string[]) => void;
 }
@@ -253,11 +258,9 @@ interface SettingsSlice {
 interface OnboardingSlice {
   hasCompletedOnboarding: boolean;
   onboardingStep: number;
-  helpPanelOpen: boolean;
   seenCoachMarks: Record<CoachMarkId, boolean>;
   setHasCompletedOnboarding: (done: boolean) => void;
   setOnboardingStep: (step: number) => void;
-  setHelpPanelOpen: (open: boolean) => void;
   markCoachMarkSeen: (id: CoachMarkId) => void;
 }
 
@@ -268,12 +271,20 @@ type StoreState = UISlice & SpotifySlice & PlayerSlice & AutomationSlice & Toast
 // ── Slice creators ─────────────────────────────────────────────────────
 
 const createUISlice: StateCreator<StoreState, [], [], UISlice> = (set) => ({
-  currentPage: 'library',
-  sidebarExpanded: true,
+  currentPage: 'studio',
   spotifySearchOpen: false,
+  workspaceLayout: [
+    { id: 'automationQueue', visible: true },
+    { id: 'stepInspector', visible: true },
+    { id: 'cartWall', visible: true },
+    { id: 'search', visible: true },
+  ],
   setCurrentPage: (page) => set({ currentPage: page }),
-  setSidebarExpanded: (expanded) => set({ sidebarExpanded: expanded }),
   setSpotifySearchOpen: (open) => set({ spotifySearchOpen: open }),
+  setWorkspaceLayout: (layout) => {
+    set({ workspaceLayout: layout });
+    window.electronAPI?.saveToStore('workspaceLayout', layout);
+  },
 });
 
 const createSpotifySlice: StateCreator<StoreState, [], [], SpotifySlice> = (set) => ({
@@ -339,7 +350,7 @@ const createAutomationSlice: StateCreator<StoreState, [], [], AutomationSlice> =
   currentPlaylistName: null,
   stepTimeRemaining: 0,
   savedPlaylists: [],
-  jinglePickerOpen: false,
+  jingleManagerOpen: false,
   savePlaylistModalOpen: false,
   loadPlaylistModalOpen: false,
 
@@ -403,7 +414,7 @@ const createAutomationSlice: StateCreator<StoreState, [], [], AutomationSlice> =
   setCurrentPlaylistName: (name) => set({ currentPlaylistName: name }),
   setStepTimeRemaining: (ms) => set({ stepTimeRemaining: ms }),
   setSavedPlaylists: (playlists) => set({ savedPlaylists: playlists }),
-  setJinglePickerOpen: (open) => set({ jinglePickerOpen: open }),
+  setJingleManagerOpen: (open) => set({ jingleManagerOpen: open }),
   setSavePlaylistModalOpen: (open) => set({ savePlaylistModalOpen: open }),
   setLoadPlaylistModalOpen: (open) => set({ loadPlaylistModalOpen: open }),
 });
@@ -439,7 +450,6 @@ const createJingleSlice: StateCreator<StoreState, [], [], JingleSlice> = (set) =
 const createOnboardingSlice: StateCreator<StoreState, [], [], OnboardingSlice> = (set) => ({
   hasCompletedOnboarding: false,
   onboardingStep: 0,
-  helpPanelOpen: false,
   seenCoachMarks: {
     'automation-drag': false,
     'automation-pause': false,
@@ -451,7 +461,6 @@ const createOnboardingSlice: StateCreator<StoreState, [], [], OnboardingSlice> =
     window.electronAPI?.saveToStore('hasCompletedOnboarding', done);
   },
   setOnboardingStep: (step) => set({ onboardingStep: step }),
-  setHelpPanelOpen: (open) => set({ helpPanelOpen: open }),
   markCoachMarkSeen: (id) =>
     set((state) => {
       const updated = { ...state.seenCoachMarks, [id]: true };
@@ -474,8 +483,6 @@ function createDefaultQuickFireSlots(): QuickFireSlot[] {
 const createLiveSlice: StateCreator<StoreState, [], [], LiveSlice> = (set) => ({
   isLive: false,
   quickFireSlots: createDefaultQuickFireSlots(),
-  playingSlotId: null,
-  playingSlotProgress: 0,
   setIsLive: (live) => set({ isLive: live }),
   setQuickFireSlots: (slots) => set({ quickFireSlots: slots }),
   updateQuickFireSlot: (id, updates) =>
@@ -494,8 +501,6 @@ const createLiveSlice: StateCreator<StoreState, [], [], LiveSlice> = (set) => ({
       window.electronAPI?.saveToStore('quickFireSlots', slots);
       return { quickFireSlots: slots };
     }),
-  setPlayingSlotId: (id) => set({ playingSlotId: id }),
-  setPlayingSlotProgress: (progress) => set({ playingSlotProgress: progress }),
 });
 
 const createSettingsSlice: StateCreator<StoreState, [], [], SettingsSlice> = (set) => ({
@@ -506,7 +511,7 @@ const createSettingsSlice: StateCreator<StoreState, [], [], SettingsSlice> = (se
   crossfadeMs: 2000,
   duckLevel: 20,
   autoUpdate: true,
-  githubRepo: 'radiosankt/radiosankt',
+  followProgramSchedule: true,
   shortcuts: [...DEFAULT_SHORTCUTS],
   setTheme: (theme) => {
     set({ theme });
@@ -536,9 +541,9 @@ const createSettingsSlice: StateCreator<StoreState, [], [], SettingsSlice> = (se
     set({ autoUpdate: auto });
     window.electronAPI?.saveToStore('autoUpdate', auto);
   },
-  setGithubRepo: (repo) => {
-    set({ githubRepo: repo });
-    window.electronAPI?.saveToStore('githubRepo', repo);
+  setFollowProgramSchedule: (on) => {
+    set({ followProgramSchedule: on });
+    window.electronAPI?.saveToStore('followProgramSchedule', on);
   },
   setShortcuts: (shortcuts) => {
     set({ shortcuts });

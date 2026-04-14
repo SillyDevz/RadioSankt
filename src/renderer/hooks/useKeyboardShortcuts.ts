@@ -71,14 +71,6 @@ export function useKeyboardShortcuts() {
         return;
       }
 
-      const help = find('help');
-      if (help && matchesShortcut(e, help.key, help.modifiers)) {
-        e.preventDefault();
-        const state = useStore.getState();
-        state.setHelpPanelOpen(!state.helpPanelOpen);
-        return;
-      }
-
       // Legacy shortcuts for transport (Shift+P, Shift+N)
       if (e.shiftKey && e.key === 'P') {
         e.preventDefault();

@@ -5,6 +5,27 @@ import AutomationEngine from '@/engine/AutomationEngine';
 
 let sourceNode: MediaElementAudioSourceNode | null = null;
 
+let liveRampRaf: number | null = null;
+
+function cancelLiveRamp() {
+  if (liveRampRaf !== null) {
+    cancelAnimationFrame(liveRampRaf);
+    liveRampRaf = null;
+  }
+}
+
+function rampSpotifyPlayerVolume(player: SpotifyPlayer, from: number, to: number, durationMs: number) {
+  cancelLiveRamp();
+  const start = performance.now();
+  const tick = () => {
+    const t = durationMs <= 0 ? 1 : Math.min(1, (performance.now() - start) / durationMs);
+    const v = from + (to - from) * t;
+    player.setVolume(Math.min(1, Math.max(0, v))).catch(() => {});
+    liveRampRaf = t < 1 ? requestAnimationFrame(tick) : null;
+  };
+  liveRampRaf = requestAnimationFrame(tick);
+}
+
 /** Latest init from the token effect; called when sdk.scdn.co finishes loading. */
 let pendingSpotifyPlayerInit: (() => void) | null = null;
 
@@ -48,6 +69,35 @@ export function useSpotifyPlayer() {
       }).catch(() => {});
     }, 500);
   }, [clearPositionTracking, setPosition]);
+
+  /** Main transport: when a set is loaded, align with Spotify `isPlaying` so we never call `play()` while audio is still running (that re-executes the step and “restarts”). */
+  const togglePlayback = useCallback(async () => {
+    AudioEngine.get()?.resumeContextIfNeeded();
+    void playerRef.current?.activateElement().catch(() => {});
+    const player = playerRef.current;
+    const { automationStatus, automationSteps, isPlaying } = useStore.getState();
+
+    if (automationStatus === 'waitingAtPause') {
+      await AutomationEngine.getInstance().resume();
+      return;
+    }
+
+    if (!player || automationStatus === 'stopped' || automationSteps.length === 0) {
+      if (player) await player.togglePlay().catch(() => {});
+      return;
+    }
+
+    const engine = AutomationEngine.getInstance();
+
+    if (isPlaying) {
+      if (automationStatus === 'playing') await engine.pause();
+      else window.dispatchEvent(new CustomEvent('radio-sankt:spotify-pause-sdk'));
+      return;
+    }
+
+    if (automationStatus === 'paused') await engine.play();
+    else window.dispatchEvent(new CustomEvent('radio-sankt:spotify-resume-sdk'));
+  }, []);
 
   const connectWebAudio = useCallback((_player: SpotifyPlayer) => {
     let attempts = 0;
@@ -146,6 +196,13 @@ export function useSpotifyPlayer() {
       player.addListener('player_state_changed', (state: SpotifyPlaybackState | null) => {
         if (myGen !== webPlaybackSessionGen) return;
         if (!state) {
+          setIsPlaying(false);
+          clearPositionTracking();
+          return;
+        }
+
+        const st = useStore.getState();
+        if (state.paused && st.automationStatus === 'stopped') {
           setIsPlaying(false);
           clearPositionTracking();
           return;
@@ -250,6 +307,7 @@ export function useSpotifyPlayer() {
       webPlaybackSessionGen++;
       pendingSpotifyPlayerInit = null;
       clearPositionTracking();
+      cancelLiveRamp();
       if (playerRef.current) {
         playerRef.current.disconnect();
         playerRef.current = null;
@@ -265,19 +323,59 @@ export function useSpotifyPlayer() {
       playerRef.current?.activateElement().catch(() => {});
     };
 
+    const onLiveAudio = (e: Event) => {
+      const detail = (e as CustomEvent<{ goingLive?: boolean; fadeMs?: number }>).detail;
+      if (typeof detail?.fadeMs !== 'number' || typeof detail.goingLive !== 'boolean') return;
+      const { goingLive, fadeMs } = detail;
+      const player = playerRef.current;
+      const engine = AudioEngine.getOrInit();
+      const vol = useStore.getState().volume;
+      engine.resumeContextIfNeeded();
+      cancelLiveRamp();
+      if (goingLive) {
+        void engine.fadeOut('A', fadeMs);
+        if (!sourceNode && player) {
+          rampSpotifyPlayerVolume(player, vol, 0, fadeMs);
+        } else if (player) {
+          player.setVolume(vol).catch(() => {});
+        }
+      } else {
+        void engine.fadeIn('A', fadeMs, vol);
+        if (!sourceNode && player) {
+          rampSpotifyPlayerVolume(player, 0, vol, fadeMs);
+        } else if (player) {
+          player.setVolume(vol).catch(() => {});
+        }
+      }
+    };
+
     const onToggle = () => {
-      prime();
-      playerRef.current?.togglePlay().catch(() => {});
+      void togglePlayback();
+    };
+
+    const onSdkPause = () => {
+      void playerRef.current?.pause().catch(() => {});
+    };
+
+    const onSdkResume = () => {
+      void playerRef.current?.resume().catch(() => {});
     };
 
     window.addEventListener('radio-sankt:prime-spotify-playback', prime);
     window.addEventListener('radio-sankt:toggle-play', onToggle);
+    window.addEventListener('radio-sankt:spotify-pause-sdk', onSdkPause);
+    window.addEventListener('radio-sankt:spotify-resume-sdk', onSdkResume);
+    window.addEventListener('radio-sankt:live-audio', onLiveAudio as EventListener);
 
     return () => {
       window.removeEventListener('radio-sankt:prime-spotify-playback', prime);
       window.removeEventListener('radio-sankt:toggle-play', onToggle);
+      window.removeEventListener('radio-sankt:spotify-pause-sdk', onSdkPause);
+      window.removeEventListener('radio-sankt:spotify-resume-sdk', onSdkResume);
+      window.removeEventListener('radio-sankt:live-audio', onLiveAudio as EventListener);
+      cancelLiveRamp();
     };
-  }, []);
+  }, [togglePlayback]);
 
   // Sync volume to gain node
   useEffect(() => {
@@ -287,12 +385,6 @@ export function useSpotifyPlayer() {
     }
     playerRef.current?.setVolume(volume).catch(() => {});
   }, [volume]);
-
-  const togglePlay = useCallback(async () => {
-    const player = playerRef.current;
-    if (!player) return;
-    try { await player.togglePlay(); } catch { /* SDK disconnected */ }
-  }, []);
 
   const previousTrack = useCallback(async () => {
     if (useStore.getState().automationStatus !== 'stopped') {
@@ -351,7 +443,7 @@ export function useSpotifyPlayer() {
 
   return {
     player: playerRef.current,
-    togglePlay,
+    togglePlay: togglePlayback,
     previousTrack,
     nextTrack,
     seek,

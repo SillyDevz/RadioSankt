@@ -48,9 +48,12 @@ export default function LoadPlaylistModal() {
     try {
       await window.electronAPI.deletePlaylist(id);
       setSavedPlaylists(savedPlaylists.filter((p) => p.id !== id));
-      addToast('Playlist deleted', 'info');
+      if (useStore.getState().currentPlaylistId === id) {
+        useStore.setState({ currentPlaylistId: null, currentPlaylistName: null });
+      }
+      addToast('Set deleted', 'info');
     } catch {
-      addToast('Failed to delete playlist', 'error');
+      addToast('Failed to delete set', 'error');
     }
   };
 
@@ -71,7 +74,7 @@ export default function LoadPlaylistModal() {
         onClick={(e) => e.stopPropagation()}
       >
         <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-text-primary">Load Playlist</h2>
+          <h2 className="text-sm font-semibold text-text-primary">Automation sets</h2>
           <button onClick={() => setOpen(false)} className="text-text-muted hover:text-text-primary">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
               <path d="M18 6L6 18M6 6l12 12" />
@@ -82,7 +85,7 @@ export default function LoadPlaylistModal() {
         <div className="max-h-[400px] overflow-y-auto">
           {savedPlaylists.length === 0 && (
             <div className="py-8 text-center text-text-muted text-sm">
-              No saved playlists yet.
+              No saved sets yet. Use &quot;Save set&quot; to store one.
             </div>
           )}
 

@@ -10,6 +10,7 @@ export function getDatabase(): Database.Database {
   const dbPath = join(app.getPath('userData'), 'radio-sankt.db');
   db = new Database(dbPath);
   db.pragma('journal_mode = WAL');
+  db.pragma('foreign_keys = ON');
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS jingles (
@@ -30,6 +31,21 @@ export function getDatabase(): Database.Database {
       updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
     )
   `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS program_weekly_slots (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      playlistId INTEGER NOT NULL,
+      dayOfWeek INTEGER NOT NULL,
+      startMinute INTEGER NOT NULL,
+      durationMinutes INTEGER NOT NULL DEFAULT 60,
+      maxDurationMs INTEGER,
+      label TEXT,
+      createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+      FOREIGN KEY (playlistId) REFERENCES automation_playlists(id) ON DELETE CASCADE
+    )
+  `);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_weekly_dow_start ON program_weekly_slots(dayOfWeek, startMinute)`);
 
   return db;
 }
@@ -120,4 +136,58 @@ export function listPlaylists(): PlaylistSummary[] {
 export function deletePlaylist(id: number): void {
   const db = getDatabase();
   db.prepare('DELETE FROM automation_playlists WHERE id = ?').run(id);
+}
+
+// ── Weekly program slots (recurring) ───────────────────────────────────
+
+export interface WeeklySlotRow {
+  id: number;
+  playlistId: number;
+  dayOfWeek: number;
+  startMinute: number;
+  durationMinutes: number;
+  maxDurationMs: number | null;
+  label: string | null;
+  createdAt: string;
+}
+
+export function listWeeklySlots(): WeeklySlotRow[] {
+  const db = getDatabase();
+  return db.prepare('SELECT * FROM program_weekly_slots ORDER BY dayOfWeek, startMinute').all() as WeeklySlotRow[];
+}
+
+export function addWeeklySlot(
+  playlistId: number,
+  dayOfWeek: number,
+  startMinute: number,
+  durationMinutes: number,
+  maxDurationMs: number | null,
+  label: string | null,
+): WeeklySlotRow {
+  const db = getDatabase();
+  const stmt = db.prepare(
+    'INSERT INTO program_weekly_slots (playlistId, dayOfWeek, startMinute, durationMinutes, maxDurationMs, label) VALUES (?, ?, ?, ?, ?, ?)',
+  );
+  const result = stmt.run(playlistId, dayOfWeek, startMinute, durationMinutes, maxDurationMs, label);
+  return db.prepare('SELECT * FROM program_weekly_slots WHERE id = ?').get(result.lastInsertRowid) as WeeklySlotRow;
+}
+
+export function updateWeeklySlot(
+  id: number,
+  playlistId: number,
+  dayOfWeek: number,
+  startMinute: number,
+  durationMinutes: number,
+  maxDurationMs: number | null,
+  label: string | null,
+): void {
+  const db = getDatabase();
+  db.prepare(
+    'UPDATE program_weekly_slots SET playlistId = ?, dayOfWeek = ?, startMinute = ?, durationMinutes = ?, maxDurationMs = ?, label = ? WHERE id = ?',
+  ).run(playlistId, dayOfWeek, startMinute, durationMinutes, maxDurationMs, label, id);
+}
+
+export function deleteWeeklySlot(id: number): void {
+  const db = getDatabase();
+  db.prepare('DELETE FROM program_weekly_slots WHERE id = ?').run(id);
 }

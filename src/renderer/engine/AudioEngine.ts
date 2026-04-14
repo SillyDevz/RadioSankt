@@ -13,12 +13,15 @@ class AudioEngine {
 
   private preDuckVolume: Record<Channel, number> = { A: 1, B: 1 };
 
-  // Jingle playback state
+  // Jingle playback state (single voice — automation / preview)
   private jingleSource: AudioBufferSourceNode | null = null;
   private jingleBuffer: AudioBuffer | null = null;
   private jingleStartTime = 0;
   private jinglePlaying = false;
   private jingleOnEnded: (() => void) | null = null;
+
+  /** Cart-wall polyphony: multiple buffer sources into channel B */
+  private cartVoices = new Map<string, AudioBufferSourceNode>();
 
   private constructor(ctx: AudioContext) {
     this.ctx = ctx;
@@ -52,6 +55,10 @@ class AudioEngine {
     return AudioEngine.instance;
   }
 
+  static getOrInit(): AudioEngine {
+    return AudioEngine.instance ?? AudioEngine.init(new AudioContext());
+  }
+
   getContext(): AudioContext {
     return this.ctx;
   }
@@ -77,12 +84,12 @@ class AudioEngine {
 
   // ── Fades ───────────────────────────────────────────────────────────
 
-  fadeIn(channel: Channel, durationMs: number): Promise<void> {
+  fadeIn(channel: Channel, durationMs: number, targetGain = 1): Promise<void> {
     return new Promise((resolve) => {
       const gain = this.getGainNode(channel);
       const now = this.ctx.currentTime;
       gain.gain.setValueAtTime(0, now);
-      gain.gain.linearRampToValueAtTime(1, now + durationMs / 1000);
+      gain.gain.linearRampToValueAtTime(targetGain, now + durationMs / 1000);
       setTimeout(resolve, durationMs);
     });
   }
@@ -165,6 +172,23 @@ class AudioEngine {
     this.jingleSource.start();
   }
 
+  /** Extra cart voices on channel B; does not stop automation jingle or other cart voices. */
+  async playJingleVoice(filePath: string, onEnded?: () => void): Promise<{ id: string; durationMs: number }> {
+    const arrayBuffer = await window.electronAPI.readFileBuffer(filePath);
+    const buffer = await this.ctx.decodeAudioData(arrayBuffer);
+    const id = crypto.randomUUID();
+    const source = this.ctx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(this.gainB);
+    source.onended = () => {
+      this.cartVoices.delete(id);
+      onEnded?.();
+    };
+    this.cartVoices.set(id, source);
+    source.start();
+    return { id, durationMs: buffer.duration * 1000 };
+  }
+
   stopJingle(): void {
     if (this.jingleSource) {
       try {
@@ -174,6 +198,14 @@ class AudioEngine {
       }
       this.jingleSource = null;
     }
+    this.cartVoices.forEach((src) => {
+      try {
+        src.stop();
+      } catch {
+        /* already stopped */
+      }
+    });
+    this.cartVoices.clear();
     this.jinglePlaying = false;
     this.jingleOnEnded = null;
   }

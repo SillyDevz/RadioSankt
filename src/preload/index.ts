@@ -80,4 +80,25 @@ contextBridge.exposeInMainWorld('electronAPI', {
   loadPlaylist: (id: number) => ipcRenderer.invoke('load-playlist', id),
   listPlaylists: () => ipcRenderer.invoke('list-playlists'),
   deletePlaylist: (id: number) => ipcRenderer.invoke('delete-playlist', id),
+
+  listWeeklySlots: () => ipcRenderer.invoke('weekly-slots-list'),
+  addWeeklySlot: (
+    playlistId: number,
+    dayOfWeek: number,
+    startMinute: number,
+    durationMinutes: number,
+    maxDurationMs: number | null,
+    label: string | null,
+  ) => ipcRenderer.invoke('weekly-slots-add', playlistId, dayOfWeek, startMinute, durationMinutes, maxDurationMs, label),
+  updateWeeklySlot: (
+    id: number,
+    playlistId: number,
+    dayOfWeek: number,
+    startMinute: number,
+    durationMinutes: number,
+    maxDurationMs: number | null,
+    label: string | null,
+  ) =>
+    ipcRenderer.invoke('weekly-slots-update', id, playlistId, dayOfWeek, startMinute, durationMinutes, maxDurationMs, label),
+  deleteWeeklySlot: (id: number) => ipcRenderer.invoke('weekly-slots-delete', id),
 });

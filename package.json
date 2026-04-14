@@ -5,6 +5,7 @@
   "main": "dist/main/index.js",
   "scripts": {
     "postinstall": "node ./scripts/repair-electron-mac-framework.cjs",
+    "start": "npm run evs:sign-electron-dist && npm run electron:dev",
     "dev": "vite",
     "build": "tsc && vite build",
     "build:electron": "tsc -p tsconfig.main.json && tsc -p tsconfig.preload.json",

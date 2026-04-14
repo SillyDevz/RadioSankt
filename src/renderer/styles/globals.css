@@ -10,26 +10,26 @@
 /* ── Dark theme (default) ──────────────────────────────────────────── */
 :root,
 [data-theme='dark'] {
-  --bg-primary: #0f0f0f;
-  --bg-surface: #1a1a1a;
-  --bg-elevated: #242424;
+  --bg-primary: #0a0a0a;
+  --bg-surface: #141414;
+  --bg-elevated: #202020;
   --text-primary: #ffffff;
   --text-secondary: #a3a3a3;
   --text-muted: #525252;
-  --border: #2a2a2a;
+  --border: #262626;
   --accent: #1DB954;
   --accent-hover: #1ed760;
 }
 
 /* ── Light theme ───────────────────────────────────────────────────── */
 [data-theme='light'] {
-  --bg-primary: #f5f5f5;
+  --bg-primary: #fafafa;
   --bg-surface: #ffffff;
-  --bg-elevated: #e5e5e5;
-  --text-primary: #111111;
+  --bg-elevated: #f4f4f5;
+  --text-primary: #09090b;
   --text-secondary: #525252;
   --text-muted: #a3a3a3;
-  --border: #d4d4d4;
+  --border: #e4e4e7;
   --accent: #1DB954;
   --accent-hover: #1ed760;
 }
