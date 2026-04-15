@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useStore } from '@/store';
-import type { AccentColor, ThemeMode, WebPlaybackPhase } from '@/store';
+import type { AccentColor, SongTransitionMode, ThemeMode, WebPlaybackPhase } from '@/store';
 import { ACCENT_COLORS } from '@/store';
 import Tooltip from '@/components/Tooltip';
 import { openExternal } from '@/utils/openExternal';
@@ -25,6 +25,12 @@ const ACCENT_SWATCHES: { id: AccentColor; label: string }[] = [
   { id: 'red', label: 'Red' },
 ];
 
+const SONG_TRANSITIONS: { id: SongTransitionMode; label: string }[] = [
+  { id: 'immediate', label: 'Immediate' },
+  { id: 'fade', label: 'Fade' },
+  { id: 'crossfade', label: 'Crossfade' },
+];
+
 export default function SettingsPage() {
   const [version, setVersion] = useState('dev');
   const connected = useStore((s) => s.connected);
@@ -39,6 +45,7 @@ export default function SettingsPage() {
   // Settings state
   const theme = useStore((s) => s.theme);
   const accentColor = useStore((s) => s.accentColor);
+  const songTransitionMode = useStore((s) => s.songTransitionMode);
   const fadeInMs = useStore((s) => s.fadeInMs);
   const fadeOutMs = useStore((s) => s.fadeOutMs);
   const crossfadeMs = useStore((s) => s.crossfadeMs);
@@ -47,6 +54,7 @@ export default function SettingsPage() {
   const shortcuts = useStore((s) => s.shortcuts);
   const setTheme = useStore((s) => s.setTheme);
   const setAccentColor = useStore((s) => s.setAccentColor);
+  const setSongTransitionMode = useStore((s) => s.setSongTransitionMode);
   const setFadeInMs = useStore((s) => s.setFadeInMs);
   const setFadeOutMs = useStore((s) => s.setFadeOutMs);
   const setCrossfadeMs = useStore((s) => s.setCrossfadeMs);
@@ -399,6 +407,28 @@ export default function SettingsPage() {
           <span className="text-sm font-medium text-text-primary">Audio Defaults</span>
         </div>
         <div className="px-5 py-4 flex flex-col gap-4">
+          <div className="flex items-center justify-between gap-4">
+            <div className="flex items-center gap-1.5">
+              <span className="text-sm text-text-secondary">Song transition</span>
+              <Tooltip content="Applies to song and playlist steps in the queue" placement="top">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-text-muted cursor-help"><circle cx="12" cy="12" r="10" /><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" /><path d="M12 17h.01" /></svg>
+              </Tooltip>
+            </div>
+            <div className="flex bg-bg-elevated rounded-lg p-0.5">
+              {SONG_TRANSITIONS.map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => setSongTransitionMode(t.id)}
+                  className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                    songTransitionMode === t.id ? 'bg-accent text-white' : 'text-text-secondary hover:text-text-primary'
+                  }`}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          </div>
           <div className="grid grid-cols-2 gap-4">
             <div className="flex flex-col gap-1.5">
               <div className="flex items-center gap-1.5">

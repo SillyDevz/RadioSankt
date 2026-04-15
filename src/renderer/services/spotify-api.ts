@@ -170,6 +170,48 @@ export async function transferPlaybackToDevice(deviceId: string): Promise<void> 
   }
 }
 
+export type ActivePlaybackUris = { itemUri: string | null; contextUri: string | null };
+
+/** Active playback on whatever device Spotify is using (should match Web Playback when connected). */
+export async function getActivePlaybackUris(): Promise<ActivePlaybackUris | null> {
+  const res = await apiFetch('/me/player');
+  if (res.status === 204) return null;
+  if (!res.ok) return null;
+  try {
+    const data = (await res.json()) as { item?: { uri?: string }; context?: { uri?: string } };
+    return {
+      itemUri: typeof data.item?.uri === 'string' ? data.item.uri : null,
+      contextUri: typeof data.context?.uri === 'string' ? data.context.uri : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function waitForActiveTrackUri(expectedUri: string, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const snap = await getActivePlaybackUris();
+    if (snap?.itemUri === expectedUri) return;
+    await new Promise((r) => setTimeout(r, 280));
+  }
+  throw new Error(
+    'Spotify did not switch to the requested track (Web Playback offline, wrong device, or Premium issue).',
+  );
+}
+
+async function waitForActivePlaylistContext(expectedContextUri: string, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const snap = await getActivePlaybackUris();
+    if (snap?.contextUri === expectedContextUri) return;
+    await new Promise((r) => setTimeout(r, 280));
+  }
+  throw new Error(
+    'Spotify did not start the requested playlist (Web Playback offline, wrong device, or Premium issue).',
+  );
+}
+
 export async function playTrack(uri: string, deviceId: string): Promise<void> {
   try {
     await transferPlaybackToDevice(deviceId);
@@ -185,6 +227,7 @@ export async function playTrack(uri: string, deviceId: string): Promise<void> {
     const body = await res.text();
     throw new Error(`Play failed ${res.status}: ${body}`);
   }
+  await waitForActiveTrackUri(uri, 12_000);
 }
 
 export async function playPlaylistContext(contextUri: string, deviceId: string): Promise<void> {
@@ -202,6 +245,7 @@ export async function playPlaylistContext(contextUri: string, deviceId: string):
     const body = await res.text();
     throw new Error(`Play failed ${res.status}: ${body}`);
   }
+  await waitForActivePlaylistContext(contextUri, 12_000);
 }
 
 export interface SpotifyPlaylistSummary {

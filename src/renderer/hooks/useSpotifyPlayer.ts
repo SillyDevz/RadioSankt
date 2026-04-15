@@ -1,4 +1,5 @@
 import { useEffect, useRef, useCallback } from 'react';
+import { shallow } from 'zustand/shallow';
 import { useStore } from '@/store';
 import AudioEngine from '@/engine/AudioEngine';
 import AutomationEngine from '@/engine/AutomationEngine';
@@ -32,20 +33,40 @@ let pendingSpotifyPlayerInit: (() => void) | null = null;
 /** Bumped on effect cleanup so late SDK events from a torn-down player are ignored (e.g. React Strict Mode). */
 let webPlaybackSessionGen = 0;
 
+/** Detect large `position` jumps (user seek) vs same-track playback for automation resync. */
+let lastSpotifySeekSyncSample: { trackId: string; position: number } | null = null;
+
 function triggerSpotifyPlayerInit() {
   pendingSpotifyPlayerInit?.();
 }
 
 export function useSpotifyPlayer() {
-  const token = useStore((s) => s.token);
-  const volume = useStore((s) => s.volume);
-  const setDeviceId = useStore((s) => s.setDeviceId);
-  const setSdkReady = useStore((s) => s.setSdkReady);
-  const setIsPlaying = useStore((s) => s.setIsPlaying);
-  const setCurrentTrack = useStore((s) => s.setCurrentTrack);
-  const setPosition = useStore((s) => s.setPosition);
-  const setDuration = useStore((s) => s.setDuration);
-  const addToast = useStore((s) => s.addToast);
+  const {
+    token,
+    volume,
+    isLive,
+    setDeviceId,
+    setSdkReady,
+    setIsPlaying,
+    setCurrentTrack,
+    setPosition,
+    setDuration,
+    addToast,
+  } = useStore(
+    (s) => ({
+      token: s.token,
+      volume: s.volume,
+      isLive: s.isLive,
+      setDeviceId: s.setDeviceId,
+      setSdkReady: s.setSdkReady,
+      setIsPlaying: s.setIsPlaying,
+      setCurrentTrack: s.setCurrentTrack,
+      setPosition: s.setPosition,
+      setDuration: s.setDuration,
+      addToast: s.addToast,
+    }),
+    shallow,
+  );
 
   const playerRef = useRef<SpotifyPlayer | null>(null);
   const positionInterval = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -123,7 +144,8 @@ export function useSpotifyPlayer() {
 
         sourceNode = ctx.createMediaElementSource(audioEl);
         sourceNode.connect(engine.getGainNode('A'));
-        engine.setVolume('A', useStore.getState().volume);
+        const st = useStore.getState();
+        engine.setVolume('A', st.isLive ? 0 : st.volume);
         engine.resumeContextIfNeeded();
       } catch {
         // May fail if already connected - that's fine
@@ -184,7 +206,6 @@ export function useSpotifyPlayer() {
         setSdkReady(true);
         setWebPlaybackDiag('ready', null);
         connectWebAudio(player);
-        addToast('Spotify player ready', 'success');
       });
 
       player.addListener('not_ready', () => {
@@ -198,6 +219,7 @@ export function useSpotifyPlayer() {
         if (!state) {
           setIsPlaying(false);
           clearPositionTracking();
+          lastSpotifySeekSyncSample = null;
           return;
         }
 
@@ -205,10 +227,41 @@ export function useSpotifyPlayer() {
         if (state.paused && st.automationStatus === 'stopped') {
           setIsPlaying(false);
           clearPositionTracking();
+          lastSpotifySeekSyncSample = null;
           return;
         }
 
         const track = state.track_window.current_track;
+        const newPos = state.position;
+        const curStep = st.automationSteps[st.currentStepIndex];
+        const prevSample = lastSpotifySeekSyncSample;
+        const playbackMatchesStep =
+          !!curStep &&
+          ((curStep.type === 'track' && curStep.spotifyUri === track.uri) ||
+            (curStep.type === 'playlist' && curStep.spotifyPlaylistUri === state.context?.uri));
+        if (
+          playbackMatchesStep &&
+          st.automationStatus === 'playing' &&
+          !state.paused &&
+          curStep &&
+          (curStep.type === 'track' || curStep.type === 'playlist') &&
+          prevSample &&
+          prevSample.trackId === track.id &&
+          Math.abs(newPos - prevSample.position) > 2000
+        ) {
+          AutomationEngine.getInstance();
+          window.dispatchEvent(
+            new CustomEvent('radio-sankt:spotify-seek-sync', {
+              detail: {
+                positionMs: newPos,
+                playbackUri: track.uri,
+                contextUri: state.context?.uri,
+              },
+            }),
+          );
+        }
+        lastSpotifySeekSyncSample = { trackId: track.id, position: newPos };
+
         setCurrentTrack({
           id: track.id,
           title: track.name,
@@ -220,13 +273,14 @@ export function useSpotifyPlayer() {
         });
 
         setDuration(track.duration_ms);
-        setPosition(state.position);
+        setPosition(newPos);
         setIsPlaying(!state.paused);
 
         if (!state.paused) {
           startPositionTracking();
         } else {
           clearPositionTracking();
+          lastSpotifySeekSyncSample = null;
         }
       });
 
@@ -305,6 +359,7 @@ export function useSpotifyPlayer() {
 
     return () => {
       webPlaybackSessionGen++;
+      lastSpotifySeekSyncSample = null;
       pendingSpotifyPlayerInit = null;
       clearPositionTracking();
       cancelLiveRamp();
@@ -334,14 +389,12 @@ export function useSpotifyPlayer() {
       cancelLiveRamp();
       if (goingLive) {
         void engine.fadeOut('A', fadeMs);
-        if (!sourceNode && player) {
+        if (player && !sourceNode) {
           rampSpotifyPlayerVolume(player, vol, 0, fadeMs);
-        } else if (player) {
-          player.setVolume(vol).catch(() => {});
         }
       } else {
         void engine.fadeIn('A', fadeMs, vol);
-        if (!sourceNode && player) {
+        if (player && !sourceNode) {
           rampSpotifyPlayerVolume(player, 0, vol, fadeMs);
         } else if (player) {
           player.setVolume(vol).catch(() => {});
@@ -377,14 +430,18 @@ export function useSpotifyPlayer() {
     };
   }, [togglePlayback]);
 
-  // Sync volume to gain node
+  // Sync volume to gain node (channel A stays ducked while live; fade/live handler owns gain)
   useEffect(() => {
+    if (isLive) {
+      playerRef.current?.setVolume(volume).catch(() => {});
+      return;
+    }
     const engine = AudioEngine.get();
     if (engine) {
       engine.setVolume('A', volume);
     }
     playerRef.current?.setVolume(volume).catch(() => {});
-  }, [volume]);
+  }, [volume, isLive]);
 
   const previousTrack = useCallback(async () => {
     if (useStore.getState().automationStatus !== 'stopped') {
@@ -438,6 +495,26 @@ export function useSpotifyPlayer() {
     try {
       await player.seek(clamped);
       setPosition(clamped);
+      const st = useStore.getState();
+      const step = st.automationSteps[st.currentStepIndex];
+      const sdkState = await player.getCurrentState();
+      const uri = sdkState?.track_window?.current_track?.uri;
+      const ctx = sdkState?.context?.uri;
+      if (
+        st.automationStatus === 'playing' &&
+        sdkState &&
+        !sdkState.paused &&
+        step &&
+        ((step.type === 'track' && uri === step.spotifyUri) ||
+          (step.type === 'playlist' && ctx === step.spotifyPlaylistUri))
+      ) {
+        AutomationEngine.getInstance();
+        window.dispatchEvent(
+          new CustomEvent('radio-sankt:spotify-seek-sync', {
+            detail: { positionMs: clamped, playbackUri: uri, contextUri: ctx },
+          }),
+        );
+      }
     } catch { /* SDK disconnected */ }
   }, [setPosition]);
 

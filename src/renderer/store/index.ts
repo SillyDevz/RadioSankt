@@ -4,7 +4,7 @@ import { create, StateCreator } from 'zustand';
 
 export type Page = 'studio' | 'program' | 'settings';
 
-export type WidgetId = 'automationQueue' | 'stepInspector' | 'cartWall' | 'search' | 'jingleManager';
+export type WidgetId = 'automationQueue' | 'cartWall' | 'search' | 'jingleManager';
 
 export interface WidgetLayout {
   id: WidgetId;
@@ -54,6 +54,7 @@ export interface Toast {
 
 export type TransitionIn = 'immediate' | 'fadeIn' | 'crossfade';
 export type TransitionOut = 'immediate' | 'fadeOut';
+export type SongTransitionMode = 'immediate' | 'fade' | 'crossfade';
 
 export interface StepTransition {
   transitionIn: TransitionIn;
@@ -61,6 +62,15 @@ export interface StepTransition {
   overlapMs: number;
   duckMusic: boolean;
   duckLevel: number;
+}
+
+export function buildSongStepTransition(
+  mode: SongTransitionMode,
+  crossfadeMs: number,
+): Pick<StepTransition, 'transitionIn' | 'transitionOut' | 'overlapMs'> {
+  if (mode === 'fade') return { transitionIn: 'fadeIn', transitionOut: 'fadeOut', overlapMs: 0 };
+  if (mode === 'crossfade') return { transitionIn: 'crossfade', transitionOut: 'immediate', overlapMs: Math.max(0, crossfadeMs) };
+  return { transitionIn: 'immediate', transitionOut: 'immediate', overlapMs: 0 };
 }
 
 export type AutomationStep = (
@@ -74,6 +84,7 @@ export type AutomationStep = (
       trackCount: number;
     }
   | { type: 'jingle'; jingleId: number; name: string; filePath: string; durationMs: number }
+  | { type: 'ad'; adId: number; name: string; filePath: string; durationMs: number }
   | { type: 'pause'; label: string }
 ) & { id: string } & StepTransition;
 
@@ -84,6 +95,16 @@ export interface SavedPlaylist {
   name: string;
   stepCount: number;
   updatedAt: string;
+}
+
+export interface BreakRule {
+  id: string;
+  enabled: boolean;
+  everySongs: number;
+  itemsPerBreak: number;
+  selectedJingleIds: number[];
+  selectedAdIds: number[];
+  avoidRecent: number;
 }
 
 // ── Live + Settings types ─────────────────────────────────────────────
@@ -186,6 +207,7 @@ interface AutomationSlice {
   jingleManagerOpen: boolean;
   savePlaylistModalOpen: boolean;
   loadPlaylistModalOpen: boolean;
+  breakRules: BreakRule[];
 
   // Actions
   setAutomationSteps: (steps: AutomationStep[]) => void;
@@ -203,6 +225,8 @@ interface AutomationSlice {
   setJingleManagerOpen: (open: boolean) => void;
   setSavePlaylistModalOpen: (open: boolean) => void;
   setLoadPlaylistModalOpen: (open: boolean) => void;
+  setBreakRules: (rules: BreakRule[]) => void;
+  updateBreakRule: (id: string, updates: Partial<BreakRule>) => void;
 }
 
 interface ToastSlice {
@@ -221,6 +245,14 @@ interface JingleSlice {
   setPlayingJingleId: (id: number | null) => void;
 }
 
+interface AdSlice {
+  ads: JingleRecord[];
+  setAds: (ads: JingleRecord[]) => void;
+  addAd: (ad: JingleRecord) => void;
+  removeAd: (id: number) => void;
+  updateAdName: (id: number, name: string) => void;
+}
+
 export type CoachMarkId = 'automation-drag' | 'automation-pause' | 'live-golive' | 'jingles-add';
 
 interface LiveSlice {
@@ -235,6 +267,7 @@ interface LiveSlice {
 interface SettingsSlice {
   theme: ThemeMode;
   accentColor: AccentColor;
+  songTransitionMode: SongTransitionMode;
   fadeInMs: number;
   fadeOutMs: number;
   crossfadeMs: number;
@@ -245,6 +278,7 @@ interface SettingsSlice {
   shortcuts: ShortcutBinding[];
   setTheme: (theme: ThemeMode) => void;
   setAccentColor: (color: AccentColor) => void;
+  setSongTransitionMode: (mode: SongTransitionMode) => void;
   setFadeInMs: (ms: number) => void;
   setFadeOutMs: (ms: number) => void;
   setCrossfadeMs: (ms: number) => void;
@@ -266,7 +300,7 @@ interface OnboardingSlice {
 
 // ── Combined store type ────────────────────────────────────────────────
 
-type StoreState = UISlice & SpotifySlice & PlayerSlice & AutomationSlice & ToastSlice & JingleSlice & OnboardingSlice & LiveSlice & SettingsSlice;
+type StoreState = UISlice & SpotifySlice & PlayerSlice & AutomationSlice & ToastSlice & JingleSlice & AdSlice & OnboardingSlice & LiveSlice & SettingsSlice;
 
 // ── Slice creators ─────────────────────────────────────────────────────
 
@@ -275,7 +309,6 @@ const createUISlice: StateCreator<StoreState, [], [], UISlice> = (set) => ({
   spotifySearchOpen: false,
   workspaceLayout: [
     { id: 'automationQueue', visible: true },
-    { id: 'stepInspector', visible: true },
     { id: 'cartWall', visible: true },
     { id: 'search', visible: true },
   ],
@@ -353,6 +386,17 @@ const createAutomationSlice: StateCreator<StoreState, [], [], AutomationSlice> =
   jingleManagerOpen: false,
   savePlaylistModalOpen: false,
   loadPlaylistModalOpen: false,
+  breakRules: [
+    {
+      id: 'main',
+      enabled: false,
+      everySongs: 4,
+      itemsPerBreak: 2,
+      selectedJingleIds: [],
+      selectedAdIds: [],
+      avoidRecent: 2,
+    },
+  ],
 
   setAutomationSteps: (steps) => set({ automationSteps: steps }),
   addAutomationStep: (step) => set((s) => ({ automationSteps: [...s.automationSteps, step] })),
@@ -417,6 +461,11 @@ const createAutomationSlice: StateCreator<StoreState, [], [], AutomationSlice> =
   setJingleManagerOpen: (open) => set({ jingleManagerOpen: open }),
   setSavePlaylistModalOpen: (open) => set({ savePlaylistModalOpen: open }),
   setLoadPlaylistModalOpen: (open) => set({ loadPlaylistModalOpen: open }),
+  setBreakRules: (breakRules) => set({ breakRules }),
+  updateBreakRule: (id, updates) =>
+    set((state) => ({
+      breakRules: state.breakRules.map((r) => (r.id === id ? { ...r, ...updates } : r)),
+    })),
 });
 
 const createToastSlice: StateCreator<StoreState, [], [], ToastSlice> = (set) => ({
@@ -445,6 +494,17 @@ const createJingleSlice: StateCreator<StoreState, [], [], JingleSlice> = (set) =
       jingles: state.jingles.map((j) => (j.id === id ? { ...j, name } : j)),
     })),
   setPlayingJingleId: (id) => set({ playingJingleId: id }),
+});
+
+const createAdSlice: StateCreator<StoreState, [], [], AdSlice> = (set) => ({
+  ads: [],
+  setAds: (ads) => set({ ads }),
+  addAd: (ad) => set((state) => ({ ads: [ad, ...state.ads] })),
+  removeAd: (id) => set((state) => ({ ads: state.ads.filter((a) => a.id !== id) })),
+  updateAdName: (id, name) =>
+    set((state) => ({
+      ads: state.ads.map((a) => (a.id === id ? { ...a, name } : a)),
+    })),
 });
 
 const createOnboardingSlice: StateCreator<StoreState, [], [], OnboardingSlice> = (set) => ({
@@ -506,6 +566,7 @@ const createLiveSlice: StateCreator<StoreState, [], [], LiveSlice> = (set) => ({
 const createSettingsSlice: StateCreator<StoreState, [], [], SettingsSlice> = (set) => ({
   theme: 'dark',
   accentColor: 'green',
+  songTransitionMode: 'immediate',
   fadeInMs: 1500,
   fadeOutMs: 1500,
   crossfadeMs: 2000,
@@ -521,6 +582,17 @@ const createSettingsSlice: StateCreator<StoreState, [], [], SettingsSlice> = (se
     set({ accentColor: color });
     window.electronAPI?.saveToStore('accentColor', color);
   },
+  setSongTransitionMode: (mode) => {
+    set((state) => ({
+      songTransitionMode: mode,
+      automationSteps: state.automationSteps.map((step) =>
+        step.type === 'track' || step.type === 'playlist'
+          ? { ...step, ...buildSongStepTransition(mode, state.crossfadeMs) }
+          : step,
+      ),
+    }));
+    window.electronAPI?.saveToStore('songTransitionMode', mode);
+  },
   setFadeInMs: (ms) => {
     set({ fadeInMs: ms });
     window.electronAPI?.saveToStore('fadeInMs', ms);
@@ -530,7 +602,17 @@ const createSettingsSlice: StateCreator<StoreState, [], [], SettingsSlice> = (se
     window.electronAPI?.saveToStore('fadeOutMs', ms);
   },
   setCrossfadeMs: (ms) => {
-    set({ crossfadeMs: ms });
+    set((state) => ({
+      crossfadeMs: ms,
+      automationSteps:
+        state.songTransitionMode === 'crossfade'
+          ? state.automationSteps.map((step) =>
+              step.type === 'track' || step.type === 'playlist'
+                ? { ...step, overlapMs: Math.max(0, ms) }
+                : step,
+            )
+          : state.automationSteps,
+    }));
     window.electronAPI?.saveToStore('crossfadeMs', ms);
   },
   setDuckLevel: (level) => {
@@ -568,6 +650,7 @@ export const useStore = create<StoreState>()((...a) => ({
   ...createAutomationSlice(...a),
   ...createToastSlice(...a),
   ...createJingleSlice(...a),
+  ...createAdSlice(...a),
   ...createOnboardingSlice(...a),
   ...createLiveSlice(...a),
   ...createSettingsSlice(...a),

@@ -23,6 +23,16 @@ export function getDatabase(): Database.Database {
   `);
 
   db.exec(`
+    CREATE TABLE IF NOT EXISTS ads (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      filePath TEXT NOT NULL,
+      durationMs INTEGER NOT NULL DEFAULT 0,
+      createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+    )
+  `);
+
+  db.exec(`
     CREATE TABLE IF NOT EXISTS automation_playlists (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
@@ -78,6 +88,36 @@ export function deleteJingle(id: number): void {
 export function renameJingle(id: number, name: string): void {
   const db = getDatabase();
   db.prepare('UPDATE jingles SET name = ? WHERE id = ?').run(name, id);
+}
+
+export interface AdRow {
+  id: number;
+  name: string;
+  filePath: string;
+  durationMs: number;
+  createdAt: string;
+}
+
+export function saveAd(name: string, filePath: string, durationMs: number): AdRow {
+  const db = getDatabase();
+  const stmt = db.prepare('INSERT INTO ads (name, filePath, durationMs) VALUES (?, ?, ?)');
+  const result = stmt.run(name, filePath, durationMs);
+  return db.prepare('SELECT * FROM ads WHERE id = ?').get(result.lastInsertRowid) as AdRow;
+}
+
+export function getAds(): AdRow[] {
+  const db = getDatabase();
+  return db.prepare('SELECT * FROM ads ORDER BY createdAt DESC').all() as AdRow[];
+}
+
+export function deleteAd(id: number): void {
+  const db = getDatabase();
+  db.prepare('DELETE FROM ads WHERE id = ?').run(id);
+}
+
+export function renameAd(id: number, name: string): void {
+  const db = getDatabase();
+  db.prepare('UPDATE ads SET name = ? WHERE id = ?').run(name, id);
 }
 
 // ── Automation Playlists ──────────────────────────────────────────────

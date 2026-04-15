@@ -1,5 +1,6 @@
 import { useStore } from '@/store';
 import type { AutomationStep } from '@/store';
+import type { BreakRule } from '@/store';
 import AutomationEngine from '@/engine/AutomationEngine';
 import { trimStepsToMaxMs } from '@/utils/automation-duration';
 
@@ -10,17 +11,34 @@ export interface AutomationSessionSnapshot {
   automationSteps: AutomationStep[];
   currentPlaylistId: number | null;
   currentPlaylistName: string | null;
+  breakRules?: BreakRule[];
 }
 
 function parseSnapshot(raw: unknown): AutomationSessionSnapshot | null {
   if (!raw || typeof raw !== 'object') return null;
   const o = raw as Record<string, unknown>;
   if (o.v !== 1 || !Array.isArray(o.automationSteps)) return null;
+  const normalizedBreakRules = Array.isArray(o.breakRules)
+    ? (o.breakRules as Array<Record<string, unknown>>).map((r, i) => ({
+        id: typeof r.id === 'string' && r.id ? r.id : `rule-${i}`,
+        enabled: r.enabled !== false,
+        everySongs: typeof r.everySongs === 'number' ? r.everySongs : 4,
+        itemsPerBreak: typeof r.itemsPerBreak === 'number' ? r.itemsPerBreak : 2,
+        selectedJingleIds: Array.isArray(r.selectedJingleIds)
+          ? r.selectedJingleIds.filter((v): v is number => typeof v === 'number')
+          : [],
+        selectedAdIds: Array.isArray(r.selectedAdIds)
+          ? r.selectedAdIds.filter((v): v is number => typeof v === 'number')
+          : [],
+        avoidRecent: typeof r.avoidRecent === 'number' ? r.avoidRecent : 2,
+      }))
+    : undefined;
   return {
     v: 1,
     automationSteps: o.automationSteps as AutomationStep[],
     currentPlaylistId: typeof o.currentPlaylistId === 'number' ? o.currentPlaylistId : null,
     currentPlaylistName: typeof o.currentPlaylistName === 'string' ? o.currentPlaylistName : null,
+    breakRules: normalizedBreakRules as BreakRule[] | undefined,
   };
 }
 
@@ -66,6 +84,7 @@ export function hydrateAutomationSession(s: AutomationSessionSnapshot): void {
     automationSteps: s.automationSteps,
     currentPlaylistId: s.currentPlaylistId,
     currentPlaylistName: s.currentPlaylistName,
+    ...(Array.isArray(s.breakRules) ? { breakRules: s.breakRules } : {}),
     selectedStepIndex: null,
     currentStepIndex: 0,
     automationStatus: 'stopped',
@@ -85,6 +104,7 @@ function snapshotFromState(): AutomationSessionSnapshot {
     automationSteps: s.automationSteps,
     currentPlaylistId: s.currentPlaylistId,
     currentPlaylistName: s.currentPlaylistName,
+    breakRules: s.breakRules,
   };
 }
 
@@ -112,6 +132,7 @@ export function initAutomationSessionPersistence(): () => void {
       state.automationSteps === prev.automationSteps &&
       state.currentPlaylistId === prev.currentPlaylistId &&
       state.currentPlaylistName === prev.currentPlaylistName
+      && state.breakRules === prev.breakRules
     ) {
       return;
     }

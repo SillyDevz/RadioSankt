@@ -124,9 +124,9 @@ export default function NowPlayingBar() {
   const source = playbackSource(currentTrack);
 
   return (
-    <div className="grid h-now-playing w-full grid-cols-[280px_minmax(0,1fr)_280px] items-center gap-x-4 bg-bg-surface border-t border-border px-6">
+    <div className="grid h-now-playing w-full grid-cols-[280px_minmax(0,1fr)_280px] items-stretch gap-x-4 bg-bg-surface border-t border-border px-6">
       {/* Left: Track info */}
-      <div className="flex min-w-0 items-center gap-4">
+      <div className="flex h-full min-h-0 min-w-0 items-center gap-4">
         {currentTrack.albumArt ? (
           <img
             src={currentTrack.albumArt}
@@ -151,88 +151,95 @@ export default function NowPlayingBar() {
         </Tooltip>
       </div>
 
-      {/* Center: transport + seek; grid keeps play mathematically centered vs prev/next */}
-      <div className="flex w-full min-w-0 justify-center">
-        <div className="flex w-full max-w-[640px] flex-col items-center justify-center gap-1.5 py-0.5">
-          <div className="grid w-full max-w-[280px] grid-cols-[1fr_auto_1fr] items-center gap-x-1">
-            <div className="flex justify-end">
+      {/* Center: seek pinned bottom; transport vertically centered in space above it */}
+      <div className="flex h-full min-h-0 min-w-0 justify-center">
+        <div className="flex h-full w-full max-w-[640px] flex-col items-center gap-1.5">
+          <div className="flex min-h-0 w-full flex-1 flex-col items-center justify-center pt-1.5">
+            <div className="flex h-10 w-full max-w-[280px] translate-y-[7.5px] items-center justify-center gap-x-1">
+              <div className="flex h-10 min-w-0 flex-1 items-center justify-end">
               <Tooltip
                 content={automationTransport ? 'Previous automation step' : 'Previous track'}
                 shortcut="Shift+P"
+                referenceClassName="size-10 shrink-0"
               >
                 <button
                   type="button"
                   onClick={previousTrack}
-                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-text-secondary transition-colors hover:bg-bg-elevated hover:text-text-primary"
+                  className="grid size-10 shrink-0 place-items-center rounded-full leading-none text-text-secondary transition-colors hover:bg-bg-elevated hover:text-text-primary"
                   aria-label="Previous track"
                 >
-                  <svg className="shrink-0" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                  <svg className="block shrink-0" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
                     <path d="M6 6h2v12H6zm3.5 6 8.5 6V6z" />
                   </svg>
                 </button>
               </Tooltip>
-            </div>
+              </div>
 
-            <Tooltip
-              content={
-                automationStatus === 'waitingAtPause'
-                  ? 'Continue automation'
-                  : hasAutomationQueue
-                    ? transportShowsPause
-                      ? 'Pause automation'
-                      : 'Resume automation'
-                    : isPlaying
-                      ? 'Pause'
-                      : 'Play'
-              }
-              shortcut="Space"
-            >
-              <button
-                type="button"
-                onClick={togglePlay}
-                className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-text-primary text-bg-primary shadow-md transition-transform hover:scale-105"
-                aria-label={
+              <div className="flex h-10 shrink-0 items-center justify-center">
+              <Tooltip
+                content={
                   automationStatus === 'waitingAtPause'
                     ? 'Continue automation'
-                    : transportShowsPause
-                      ? 'Pause'
-                      : 'Play'
+                    : hasAutomationQueue
+                      ? transportShowsPause
+                        ? 'Pause automation'
+                        : 'Resume automation'
+                      : isPlaying
+                        ? 'Pause'
+                        : 'Play'
                 }
+                shortcut="Space"
+                referenceClassName="size-10 shrink-0"
               >
-                {transportShowsPause ? (
-                  <svg className="shrink-0" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-                    <rect x="6" y="4" width="4" height="16" />
-                    <rect x="14" y="4" width="4" height="16" />
-                  </svg>
-                ) : (
-                  <svg className="shrink-0" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-                    <polygon points="6 3 20 12 6 21 6 3" />
-                  </svg>
-                )}
-              </button>
-            </Tooltip>
+                <button
+                  type="button"
+                  onClick={togglePlay}
+                  className="grid size-10 shrink-0 place-items-center rounded-full leading-none bg-text-primary text-bg-primary shadow-sm transition-transform hover:scale-105"
+                  aria-label={
+                    automationStatus === 'waitingAtPause'
+                      ? 'Continue automation'
+                      : transportShowsPause
+                        ? 'Pause'
+                        : 'Play'
+                  }
+                >
+                  {transportShowsPause ? (
+                    <svg className="block shrink-0" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                      <rect x="6" y="4" width="4" height="16" />
+                      <rect x="14" y="4" width="4" height="16" />
+                    </svg>
+                  ) : (
+                    <svg className="block shrink-0" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                      <polygon points="6 3 20 12 6 21 6 3" />
+                    </svg>
+                  )}
+                </button>
+              </Tooltip>
+              </div>
 
-            <div className="flex justify-start">
+              <div className="flex h-10 min-w-0 flex-1 items-center justify-start">
               <Tooltip
                 content={automationTransport ? 'Next automation step' : 'Next track'}
                 shortcut="Shift+N"
+                referenceClassName="size-10 shrink-0"
               >
                 <button
                   type="button"
                   onClick={nextTrack}
-                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-text-secondary transition-colors hover:bg-bg-elevated hover:text-text-primary"
+                  className="grid size-10 shrink-0 place-items-center rounded-full leading-none text-text-secondary transition-colors hover:bg-bg-elevated hover:text-text-primary"
                   aria-label="Next track"
                 >
-                  <svg className="shrink-0" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+                  <svg className="block shrink-0" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
                     <path d="M16 6h2v12h-2zm-3.5 6L4 6v12z" />
                   </svg>
                 </button>
               </Tooltip>
+              </div>
             </div>
           </div>
 
           {/* Seek bar */}
-          <div className="flex w-full min-h-8 items-center gap-2.5 leading-none">
+          <div className="flex w-full shrink-0 min-h-8 items-center gap-2.5 leading-none">
             <span className="flex h-8 shrink-0 items-center text-xs font-medium tabular-nums text-text-muted w-10 justify-end">
               {formatTime(position)}
             </span>
@@ -281,7 +288,7 @@ export default function NowPlayingBar() {
       </div>
 
       {/* Right: Volume, LIVE, then page nav */}
-      <div className="flex min-w-0 items-center justify-end gap-3 justify-self-end">
+      <div className="flex h-full min-h-0 min-w-0 items-center justify-end gap-3 justify-self-end">
         <Tooltip content="Master volume for Spotify playback" placement="top">
           <div className="flex items-center gap-2">
             <button

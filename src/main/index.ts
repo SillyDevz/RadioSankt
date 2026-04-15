@@ -8,6 +8,10 @@ import {
   getJingles,
   deleteJingle,
   renameJingle,
+  saveAd,
+  getAds,
+  deleteAd,
+  renameAd,
   getDatabase,
   savePlaylist,
   updatePlaylist,
@@ -262,6 +266,23 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle('rename-jingle', (_event, id: number, name: string) => {
     renameJingle(id, name);
+  });
+
+  // Ads
+  ipcMain.handle('save-ad', (_event, name: string, filePath: string, durationMs: number) => {
+    return saveAd(name, filePath, durationMs);
+  });
+
+  ipcMain.handle('get-ads', () => {
+    return getAds();
+  });
+
+  ipcMain.handle('delete-ad', (_event, id: number) => {
+    deleteAd(id);
+  });
+
+  ipcMain.handle('rename-ad', (_event, id: number, name: string) => {
+    renameAd(id, name);
   });
 
   // Automation Playlists

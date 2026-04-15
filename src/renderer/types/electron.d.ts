@@ -6,6 +6,14 @@ interface JingleRecord {
   createdAt: string;
 }
 
+interface AdRecord {
+  id: number;
+  name: string;
+  filePath: string;
+  durationMs: number;
+  createdAt: string;
+}
+
 interface ElectronAPI {
   platform: NodeJS.Platform;
 
@@ -55,6 +63,12 @@ interface ElectronAPI {
   getJingles: () => Promise<JingleRecord[]>;
   deleteJingle: (id: number) => Promise<void>;
   renameJingle: (id: number, name: string) => Promise<void>;
+
+  // Ads
+  saveAd: (name: string, filePath: string, durationMs: number) => Promise<AdRecord>;
+  getAds: () => Promise<AdRecord[]>;
+  deleteAd: (id: number) => Promise<void>;
+  renameAd: (id: number, name: string) => Promise<void>;
 
   // Automation Playlists
   savePlaylist: (name: string, steps: string) => Promise<{ id: number; name: string; steps: string; createdAt: string; updatedAt: string }>;

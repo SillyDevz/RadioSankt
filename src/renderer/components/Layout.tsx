@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, lazy, Suspense } from 'react';
 import { useStore } from '@/store';
-import type { Page, CoachMarkId, AccentColor, ThemeMode, QuickFireSlot, ShortcutBinding } from '@/store';
+import type { Page, CoachMarkId, AccentColor, ThemeMode, QuickFireSlot, ShortcutBinding, SongTransitionMode } from '@/store';
 import { ACCENT_COLORS } from '@/store';
 import { clearSpotifyUserIdCache, getProfile } from '@/services/spotify-api';
 import MacTitleBarInset from './MacTitleBarInset';
@@ -72,6 +72,11 @@ function Layout() {
       }),
       api.getFromStore('theme').then((val) => { if (val) useStore.setState({ theme: val as ThemeMode }); }),
       api.getFromStore('accentColor').then((val) => { if (val) useStore.setState({ accentColor: val as AccentColor }); }),
+      api.getFromStore('songTransitionMode').then((val) => {
+        if (val === 'immediate' || val === 'fade' || val === 'crossfade') {
+          useStore.setState({ songTransitionMode: val as SongTransitionMode });
+        }
+      }),
       api.getFromStore('fadeInMs').then((val) => { if (typeof val === 'number') useStore.setState({ fadeInMs: val }); }),
       api.getFromStore('fadeOutMs').then((val) => { if (typeof val === 'number') useStore.setState({ fadeOutMs: val }); }),
       api.getFromStore('crossfadeMs').then((val) => { if (typeof val === 'number') useStore.setState({ crossfadeMs: val }); }),

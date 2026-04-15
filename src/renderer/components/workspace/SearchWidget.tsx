@@ -8,7 +8,7 @@ import {
   getPlaylistTracks,
   type SpotifyPlaylistSummary,
 } from '@/services/spotify-api';
-import type { SpotifySearchResult } from '@/store';
+import { buildSongStepTransition, type SpotifySearchResult } from '@/store';
 import Tooltip from '@/components/Tooltip';
 import AudioEngine from '@/engine/AudioEngine';
 
@@ -19,24 +19,19 @@ function formatDuration(ms: number): string {
   return `${m}:${sec.toString().padStart(2, '0')}`;
 }
 
-const stepDefaults = {
-  transitionIn: 'immediate' as const,
-  transitionOut: 'immediate' as const,
-  overlapMs: 0,
-  duckMusic: false,
-  duckLevel: 0.2,
-};
-
 const PLAYLIST_PLACEHOLDER = '\u{1F4DC}';
 
 export default function SearchWidget() {
   const connected = useStore((s) => s.connected);
   const addToast = useStore((s) => s.addToast);
   const jingles = useStore((s) => s.jingles);
+  const ads = useStore((s) => s.ads);
+  const songTransitionMode = useStore((s) => s.songTransitionMode);
+  const crossfadeMs = useStore((s) => s.crossfadeMs);
 
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(false);
-  const [panel, setPanel] = useState<'spotify' | 'playlists' | 'jingles'>('spotify');
+  const [panel, setPanel] = useState<'spotify' | 'playlists' | 'jingles' | 'ads'>('spotify');
   
   // Spotify Search state
   const [searchResults, setSearchResults] = useState<SpotifySearchResult[]>([]);
@@ -51,6 +46,11 @@ export default function SearchWidget() {
   const [playlistTracksLoading, setPlaylistTracksLoading] = useState(false);
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    window.electronAPI.getJingles().then((rows) => useStore.getState().setJingles(rows));
+    window.electronAPI.getAds().then((rows) => useStore.getState().setAds(rows));
+  }, []);
 
   const resetPlaylistsState = useCallback(() => {
     setPlaylists([]);
@@ -152,7 +152,7 @@ export default function SearchWidget() {
     let devId = useStore.getState().deviceId || (await waitForDeviceId(15_000));
     if (!devId) {
       addToast(
-        'Web Playback is not connected — Spotify Premium is required. Wait for “Spotify player ready” or disconnect and reconnect Spotify in Settings.',
+        'Web Playback is not connected — Spotify Premium is required. Wait until the in-app player connects, or disconnect and reconnect Spotify in Settings.',
         'warning',
       );
       return;
@@ -171,7 +171,7 @@ export default function SearchWidget() {
     let devId = useStore.getState().deviceId || (await waitForDeviceId(15_000));
     if (!devId) {
       addToast(
-        'Web Playback is not connected — Spotify Premium is required. Wait for “Spotify player ready” or disconnect and reconnect Spotify in Settings.',
+        'Web Playback is not connected — Spotify Premium is required. Wait until the in-app player connects, or disconnect and reconnect Spotify in Settings.',
         'warning',
       );
       return;
@@ -195,7 +195,9 @@ export default function SearchWidget() {
       artist: result.artist,
       albumArt: result.albumArt,
       durationMs: result.durationMs,
-      ...stepDefaults,
+      ...buildSongStepTransition(songTransitionMode, crossfadeMs),
+      duckMusic: false,
+      duckLevel: 0.2,
     });
     addToast(`Added "${result.name}" to program`, 'success');
   };
@@ -209,9 +211,31 @@ export default function SearchWidget() {
       name: jingle.name,
       filePath: jingle.filePath,
       durationMs: jingle.durationMs,
-      ...stepDefaults,
+      transitionIn: 'immediate',
+      transitionOut: 'immediate',
+      overlapMs: 0,
+      duckMusic: false,
+      duckLevel: 0.2,
     });
     addToast(`Added jingle "${jingle.name}" to program`, 'success');
+  };
+
+  const handleAddAdToAutomation = (ad: { id: number; name: string; filePath: string; durationMs: number }) => {
+    const { addAutomationStep } = useStore.getState();
+    addAutomationStep({
+      id: crypto.randomUUID(),
+      type: 'ad',
+      adId: ad.id,
+      name: ad.name,
+      filePath: ad.filePath,
+      durationMs: ad.durationMs,
+      transitionIn: 'immediate',
+      transitionOut: 'immediate',
+      overlapMs: 0,
+      duckMusic: false,
+      duckLevel: 0.2,
+    });
+    addToast(`Added ad "${ad.name}" to program`, 'success');
   };
 
   const handleAddAllTracks = (tracks: SpotifySearchResult[]) => {
@@ -226,7 +250,9 @@ export default function SearchWidget() {
         artist: t.artist,
         albumArt: t.albumArt,
         durationMs: t.durationMs,
-        ...stepDefaults,
+        ...buildSongStepTransition(songTransitionMode, crossfadeMs),
+        duckMusic: false,
+        duckLevel: 0.2,
       });
     }
     addToast(`Added ${tracks.length} tracks to program`, 'success');
@@ -244,7 +270,9 @@ export default function SearchWidget() {
       albumArt: summary.imageUrl,
       durationMs,
       trackCount: tracks.length,
-      ...stepDefaults,
+      ...buildSongStepTransition(songTransitionMode, crossfadeMs),
+      duckMusic: false,
+      duckLevel: 0.2,
     });
     addToast(`Added playlist "${summary.name}" as one program step`, 'success');
   };
@@ -358,6 +386,7 @@ export default function SearchWidget() {
   );
 
   const filteredJingles = jingles.filter((j) => j.name.toLowerCase().includes(query.toLowerCase()));
+  const filteredAds = ads.filter((a) => a.name.toLowerCase().includes(query.toLowerCase()));
 
   return (
     <div className="flex flex-col h-full bg-bg-surface border border-border rounded-xl overflow-hidden shadow-sm">
@@ -381,6 +410,15 @@ export default function SearchWidget() {
         >
           Jingles
         </button>
+        <button
+          type="button"
+          onClick={() => { setPanel('ads'); resetPlaylistsState(); }}
+          className={`flex-1 px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+            panel === 'ads' ? 'bg-bg-surface text-text-primary shadow-sm' : 'text-text-muted hover:text-text-secondary hover:bg-bg-surface/50'
+          }`}
+        >
+          Ads
+        </button>
         {connected && (
           <button
             type="button"
@@ -400,7 +438,7 @@ export default function SearchWidget() {
       </div>
 
       {/* Search Input */}
-      {(panel === 'spotify' || panel === 'jingles') && (
+      {(panel === 'spotify' || panel === 'jingles' || panel === 'ads') && (
         <div className="flex items-center gap-3 px-4 py-3 border-b border-border shrink-0 bg-bg-surface">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-text-muted shrink-0">
             <circle cx="11" cy="11" r="8" />
@@ -410,13 +448,15 @@ export default function SearchWidget() {
             type="text"
             value={query}
             onChange={(e) => handleSearch(e.target.value)}
-            placeholder={panel === 'spotify' 
-              ? (connected ? 'Search Spotify...' : 'Connect Spotify first in Settings') 
-              : 'Search local jingles...'}
+            placeholder={panel === 'spotify'
+              ? (connected ? 'Search Spotify...' : 'Connect Spotify first in Settings')
+              : panel === 'ads'
+                ? 'Search local ads...'
+                : 'Search local jingles...'}
             disabled={panel === 'spotify' && !connected}
             className="flex-1 bg-transparent text-text-primary text-sm outline-none placeholder:text-text-muted disabled:opacity-50"
           />
-          {panel === 'jingles' && (
+          {(panel === 'jingles' || panel === 'ads') && (
             <button 
               onClick={() => useStore.getState().setJingleManagerOpen(true)}
               className="px-3 py-1.5 bg-bg-elevated hover:bg-border text-text-primary rounded-lg text-xs font-medium transition-colors shrink-0 shadow-sm"
@@ -512,6 +552,57 @@ export default function SearchWidget() {
               <div className="py-8 text-center text-text-muted text-sm">No jingles match your search</div>
             ) : (
               filteredJingles.map((jingle) => renderJingleRow(jingle))
+            )}
+          </div>
+        )}
+
+        {panel === 'ads' && (
+          <div className="py-1">
+            {ads.length === 0 ? (
+              <div className="py-12 flex flex-col items-center justify-center gap-3 text-text-muted">
+                <span className="text-sm">No ads added yet. Add them from the Manage menu.</span>
+                <button
+                  onClick={() => useStore.getState().setJingleManagerOpen(true)}
+                  className="mt-2 px-4 py-2 bg-accent hover:bg-accent-hover text-bg-primary font-medium rounded-lg transition-colors text-xs shadow-sm"
+                >
+                  Manage Library
+                </button>
+              </div>
+            ) : filteredAds.length === 0 ? (
+              <div className="py-8 text-center text-text-muted text-sm">No ads match your search</div>
+            ) : (
+              filteredAds.map((ad) => (
+                <div key={ad.id} className="flex items-center gap-3 px-4 py-2 hover:bg-bg-elevated transition-colors group cursor-default">
+                  <div className="w-10 h-10 rounded bg-bg-elevated shrink-0 flex items-center justify-center text-accent">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M3 11h18M8 7h8M8 15h8" />
+                    </svg>
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium text-text-primary truncate">{ad.name}</div>
+                    <div className="text-xs text-text-secondary truncate">Ad clip</div>
+                  </div>
+                  <span className="text-xs text-text-muted tabular-nums shrink-0">{formatDuration(ad.durationMs)}</span>
+                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                    <Tooltip content="Add to queue" placement="top">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleAddAdToAutomation(ad);
+                        }}
+                        className="p-1.5 rounded-md hover:bg-bg-primary text-text-secondary hover:text-text-primary transition-colors"
+                        aria-label="Add ad to program"
+                      >
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M12 5v14" />
+                          <path d="M5 12h14" />
+                        </svg>
+                      </button>
+                    </Tooltip>
+                  </div>
+                </div>
+              ))
             )}
           </div>
         )}

@@ -132,7 +132,7 @@ function SlotButton({ slot, isPlaying, progress, onPlay, onContextMenu, onAssign
               <path d="M12 5v14M5 12h14" />
             </svg>
           </div>
-          <span className="text-xs font-semibold text-text-secondary">Assign cart</span>
+          <span className="text-xs font-semibold text-text-secondary">Assign clip</span>
         </div>
       ) : (
         <div className="flex h-full flex-col justify-between">
@@ -199,41 +199,35 @@ export default function CartWallWidget() {
     const waitFade = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
     if (isLive) {
+      window.dispatchEvent(new CustomEvent('radio-sankt:prime-spotify-playback'));
+      if (automationStatus === 'paused') {
+        await engine.resume({ skipGainRecovery: true });
+      } else {
+        window.dispatchEvent(new CustomEvent('radio-sankt:spotify-resume-sdk'));
+      }
       window.dispatchEvent(
         new CustomEvent('radio-sankt:live-audio', { detail: { goingLive: false, fadeMs: fadeInMs } }),
       );
       await waitFade(fadeInMs);
-      window.dispatchEvent(new CustomEvent('radio-sankt:prime-spotify-playback'));
-      if (automationStatus === 'paused') {
-        await engine.resume();
-      }
       setIsLive(false);
       addToast('Back to automation', 'info');
     } else {
+      setIsLive(true);
       window.dispatchEvent(
         new CustomEvent('radio-sankt:live-audio', { detail: { goingLive: true, fadeMs: fadeOutMs } }),
       );
       await waitFade(fadeOutMs);
       if (automationStatus === 'playing') {
         await engine.pause({ skipFade: true });
+      } else {
+        window.dispatchEvent(new CustomEvent('radio-sankt:spotify-pause-sdk'));
       }
-      setIsLive(true);
       addToast('You are LIVE', 'success');
     }
   }, [isLive, automationStatus, fadeInMs, fadeOutMs, setIsLive, addToast]);
 
   const handlePlaySlot = useCallback(async (slot: QuickFireSlot) => {
     if (!slot.jinglePath) return;
-    const engine = AutomationEngine.getInstance();
-
-    if (isLive) {
-      window.dispatchEvent(
-        new CustomEvent('radio-sankt:live-audio', { detail: { goingLive: false, fadeMs: Math.min(fadeInMs, 400) } }),
-      );
-      if (automationStatus === 'paused') {
-        await engine.resume();
-      }
-    }
 
     const audio = AudioEngine.getOrInit();
     audio.resumeContextIfNeeded();
@@ -280,7 +274,7 @@ export default function CartWallWidget() {
       }
       addToast('Failed to play cart jingle', 'error');
     }
-  }, [isLive, automationStatus, fadeInMs, addToast]);
+  }, [addToast]);
 
   const handleContextMenu = (e: React.MouseEvent, slotId: string) => {
     e.preventDefault();
@@ -312,8 +306,8 @@ export default function CartWallWidget() {
       <div className="shrink-0 border-b border-border bg-bg-elevated/20 px-6 py-4">
         <div className="flex items-center justify-between gap-4">
           <div>
-            <h2 className="text-base font-bold text-text-primary">Cart Wall</h2>
-            <p className="text-xs text-text-muted">Quick-fire jingles for live moments</p>
+            <h2 className="text-base font-bold text-text-primary">Soundboard</h2>
+            <p className="text-xs text-text-muted">Quick-fire clips for live moments</p>
           </div>
         <Tooltip content={isLive ? 'End live mode and resume automation' : 'Pauses automation and fades out music so you can speak or play content live'} placement="bottom">
           <button

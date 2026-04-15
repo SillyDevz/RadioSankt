@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import {
   DndContext,
   closestCenter,
@@ -21,6 +21,8 @@ import EmptyState from '@/components/automation/EmptyState';
 import SavePlaylistModal from '@/components/automation/SavePlaylistModal';
 import LoadPlaylistModal from '@/components/automation/LoadPlaylistModal';
 
+const checkboxClassName = 'shrink-0 cursor-pointer rounded border-border w-3.5 h-3.5 accent-accent';
+
 function formatTime(ms: number): string {
   const totalSec = Math.max(0, Math.ceil(ms / 1000));
   const m = Math.floor(totalSec / 60);
@@ -34,50 +36,153 @@ function stepDurationMs(step: AutomationStep | undefined): number {
 }
 
 function QueueHeader() {
-  const addAutomationStep = useStore((s) => s.addAutomationStep);
   const setSavePlaylistModalOpen = useStore((s) => s.setSavePlaylistModalOpen);
   const setLoadPlaylistModalOpen = useStore((s) => s.setLoadPlaylistModalOpen);
-
-  const handleAddPause = () => {
-    addAutomationStep({
-      id: crypto.randomUUID(),
-      type: 'pause',
-      label: 'Pause Point',
-      transitionIn: 'immediate',
-      transitionOut: 'immediate',
-      overlapMs: 0,
-      duckMusic: false,
-      duckLevel: 0.2,
-    });
-  };
+  const breakRule = useStore((s) => s.breakRules[0]);
+  const updateBreakRule = useStore((s) => s.updateBreakRule);
+  const jingles = useStore((s) => s.jingles);
+  const ads = useStore((s) => s.ads);
+  const selectedJingleIds = breakRule?.selectedJingleIds ?? [];
+  const selectedAdIds = breakRule?.selectedAdIds ?? [];
+  const hasJingles = jingles.length > 0;
+  const hasAds = ads.length > 0;
+  const [showConfig, setShowConfig] = useState(false);
+  const [showJinglePool, setShowJinglePool] = useState(false);
+  const [showAdPool, setShowAdPool] = useState(false);
 
   return (
-    <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-bg-elevated/20 shrink-0">
-      <h2 className="text-base font-bold text-text-primary">Automation Queue</h2>
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={handleAddPause}
-          className="px-3 py-1.5 bg-bg-elevated hover:bg-border text-text-primary rounded-lg text-xs font-medium transition-colors"
-        >
-          Add Pause
-        </button>
-        <div className="w-px h-4 bg-border mx-1" />
-        <button
-          type="button"
-          onClick={() => setLoadPlaylistModalOpen(true)}
-          className="px-3 py-1.5 bg-bg-elevated hover:bg-border text-text-primary rounded-lg text-xs font-medium transition-colors"
-        >
-          Load set
-        </button>
-        <button
-          type="button"
-          onClick={() => setSavePlaylistModalOpen(true)}
-          className="px-3 py-1.5 bg-bg-elevated hover:bg-border text-text-primary rounded-lg text-xs font-medium transition-colors"
-        >
-          Save set
-        </button>
+    <div className="px-6 py-4 border-b border-border bg-bg-elevated/20 shrink-0 space-y-3">
+      <div className="flex items-center justify-between">
+        <h2 className="text-base font-bold text-text-primary">Automation Queue</h2>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setLoadPlaylistModalOpen(true)}
+            className="px-3 py-1.5 bg-bg-elevated hover:bg-border text-text-primary rounded-lg text-xs font-medium transition-colors"
+          >
+            Load set
+          </button>
+          <button
+            type="button"
+            onClick={() => setSavePlaylistModalOpen(true)}
+            className="px-3 py-1.5 bg-bg-elevated hover:bg-border text-text-primary rounded-lg text-xs font-medium transition-colors"
+          >
+            Save set
+          </button>
+        </div>
       </div>
+      {breakRule && (
+        <>
+          <div className="space-y-1 text-xs">
+            <div className="flex items-center justify-between gap-3">
+              <label className="flex min-w-0 cursor-pointer select-none items-center gap-2 text-text-secondary">
+                <input
+                  type="checkbox"
+                  className={checkboxClassName}
+                  checked={breakRule.enabled}
+                  onChange={(e) => updateBreakRule(breakRule.id, { enabled: e.target.checked })}
+                />
+                <span className="shrink-0">Dynamic breaks</span>
+              </label>
+              <button
+                type="button"
+                onClick={() => setShowConfig((v) => !v)}
+                className="shrink-0 rounded px-2 py-1 text-text-muted hover:bg-bg-elevated hover:text-text-primary"
+              >
+                {showConfig ? 'Hide' : 'Configure'}
+              </button>
+            </div>
+            <p className="text-text-muted pl-[calc(0.875rem+0.5rem)] leading-snug">
+              Every {breakRule.everySongs} songs, <span className="lowercase">play</span> {breakRule.itemsPerBreak} clips,{' '}
+              <span className="lowercase">avoid</span> repeating last {breakRule.avoidRecent}
+            </p>
+          </div>
+          {showConfig && (
+            <div className="flex flex-wrap items-center gap-2 text-xs pt-1">
+              <span className="text-text-muted">Every</span>
+              <input type="number" min={1} value={breakRule.everySongs} onChange={(e) => updateBreakRule(breakRule.id, { everySongs: Math.max(1, Number(e.target.value) || 1) })} className="w-14 bg-bg-elevated border border-border rounded px-2 py-1 text-text-primary" />
+              <span className="text-text-muted">
+                songs, <span className="lowercase">play</span>
+              </span>
+              <input type="number" min={1} value={breakRule.itemsPerBreak} onChange={(e) => updateBreakRule(breakRule.id, { itemsPerBreak: Math.max(1, Number(e.target.value) || 1) })} className="w-14 bg-bg-elevated border border-border rounded px-2 py-1 text-text-primary" />
+              <span className="text-text-muted">
+                clips, <span className="lowercase">avoid</span> repeating last
+              </span>
+              <input type="number" min={0} value={breakRule.avoidRecent} onChange={(e) => updateBreakRule(breakRule.id, { avoidRecent: Math.max(0, Number(e.target.value) || 0) })} className="w-14 bg-bg-elevated border border-border rounded px-2 py-1 text-text-primary" />
+              <button
+                type="button"
+                onClick={() => hasJingles && setShowJinglePool((v) => !v)}
+                disabled={!hasJingles}
+                className="px-2 py-1 rounded bg-bg-elevated border border-border text-text-secondary hover:text-text-primary disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Jingle pool ({selectedJingleIds.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => hasAds && setShowAdPool((v) => !v)}
+                disabled={!hasAds}
+                className="px-2 py-1 rounded bg-bg-elevated border border-border text-text-secondary hover:text-text-primary disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Ad pool ({selectedAdIds.length})
+              </button>
+              {breakRule.enabled && selectedJingleIds.length + selectedAdIds.length === 0 && (
+                <span className="text-amber-400">Pick at least one clip in the pools</span>
+              )}
+              {breakRule.enabled && !hasJingles && !hasAds && (
+                <span className="text-text-muted">No clips in the library yet — add jingles or ads from Search, then Manage.</span>
+              )}
+            </div>
+          )}
+        </>
+      )}
+      {breakRule && showConfig && showJinglePool && hasJingles && (
+        <div className="max-h-36 overflow-y-auto rounded border border-border p-2 grid grid-cols-2 gap-1 text-xs">
+          {jingles.map((j) => {
+            const checked = selectedJingleIds.includes(j.id);
+            return (
+              <label key={j.id} className="flex cursor-pointer select-none items-center gap-2 text-text-secondary">
+                <input
+                  type="checkbox"
+                  className={checkboxClassName}
+                  checked={checked}
+                  onChange={(e) =>
+                    updateBreakRule(breakRule.id, {
+                      selectedJingleIds: e.target.checked
+                        ? [...selectedJingleIds, j.id]
+                        : selectedJingleIds.filter((id) => id !== j.id),
+                    })
+                  }
+                />
+                <span className="truncate">{j.name}</span>
+              </label>
+            );
+          })}
+        </div>
+      )}
+      {breakRule && showConfig && showAdPool && hasAds && (
+        <div className="max-h-36 overflow-y-auto rounded border border-border p-2 grid grid-cols-2 gap-1 text-xs">
+          {ads.map((a) => {
+            const checked = selectedAdIds.includes(a.id);
+            return (
+              <label key={a.id} className="flex cursor-pointer select-none items-center gap-2 text-text-secondary">
+                <input
+                  type="checkbox"
+                  className={checkboxClassName}
+                  checked={checked}
+                  onChange={(e) =>
+                    updateBreakRule(breakRule.id, {
+                      selectedAdIds: e.target.checked
+                        ? [...selectedAdIds, a.id]
+                        : selectedAdIds.filter((id) => id !== a.id),
+                    })
+                  }
+                />
+                <span className="truncate">{a.name}</span>
+              </label>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

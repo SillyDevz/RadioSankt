@@ -17,7 +17,7 @@ export default function EmptyState() {
 
         <h1 className="text-xl font-bold text-text-primary">Your automation playlist is empty</h1>
         <p className="text-text-secondary text-sm">
-          Use Search to add tracks or jingles, or Load set to open a saved automation. The queue is restored after restart.
+          Use Search to add tracks, jingles, or ads, or Load set to open a saved automation. The queue is restored after restart.
         </p>
       </div>
     </div>

@@ -14,6 +14,7 @@ const fallbackIcons: Record<string, string> = {
   track: '\u{1F3B5}',
   playlist: '\u{1F4DC}',
   jingle: '\u{1F399}',
+  ad: '\u{1F4E2}',
   pause: '\u23F8',
 };
 
@@ -43,6 +44,8 @@ export default function StepCard({ step, isPlaying, isSelected, onSelect, onDele
         ? `Playlist · ${step.trackCount} tracks`
         : step.type === 'jingle'
           ? 'Jingle'
+          : step.type === 'ad'
+            ? 'Ad break'
           : 'Automation pauses here';
   const duration = step.type !== 'pause' ? formatDuration(step.durationMs) : '--:--';
 

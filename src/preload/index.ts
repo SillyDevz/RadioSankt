@@ -74,6 +74,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   deleteJingle: (id: number) => ipcRenderer.invoke('delete-jingle', id),
   renameJingle: (id: number, name: string) => ipcRenderer.invoke('rename-jingle', id, name),
 
+  // Ads
+  saveAd: (name: string, filePath: string, durationMs: number) =>
+    ipcRenderer.invoke('save-ad', name, filePath, durationMs),
+  getAds: () => ipcRenderer.invoke('get-ads'),
+  deleteAd: (id: number) => ipcRenderer.invoke('delete-ad', id),
+  renameAd: (id: number, name: string) => ipcRenderer.invoke('rename-ad', id, name),
+
   // Automation Playlists
   savePlaylist: (name: string, steps: string) => ipcRenderer.invoke('save-playlist', name, steps),
   updatePlaylist: (id: number, name: string, steps: string) => ipcRenderer.invoke('update-playlist', id, name, steps),
