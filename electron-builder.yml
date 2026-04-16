@@ -7,9 +7,6 @@ directories:
 files:
   - dist/**/*
   - package.json
-extraResources:
-  - from: node_modules/electron/dist/WidevineCdm
-    to: WidevineCdm
 afterPack: scripts/electron-builder-after-pack.cjs
 afterSign: scripts/electron-builder-after-sign.cjs
 mac:

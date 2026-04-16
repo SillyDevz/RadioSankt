@@ -1,8 +1,8 @@
 import { app, BrowserWindow, ipcMain, dialog, shell, components, session } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import Store from 'electron-store';
-import { join, resolve, normalize, dirname, sep } from 'path';
-import { existsSync, promises as fs, appendFileSync, readFileSync, readdirSync, Dirent } from 'fs';
+import { join, resolve, normalize } from 'path';
+import { existsSync, promises as fs, appendFileSync, readdirSync, statSync } from 'fs';
 import {
   saveJingle,
   getJingles,
@@ -115,165 +115,66 @@ function appendWidevineDebugLog(message: string): void {
   }
 }
 
-function configureWidevineFrom(manifestPath: string, adapterPath: string, sourceLabel: string): boolean {
-  if (!existsSync(manifestPath) || !existsSync(adapterPath)) {
-    appendWidevineDebugLog(
-      `[Widevine] candidate missing (${sourceLabel}) manifest=${manifestPath} adapter=${adapterPath}`,
-    );
-    return false;
-  }
+/** ECS ships its own Widevine via Component Updater. A stale CDM cached under userData
+ *  (e.g. leftover from a previous Electron line) yields "CreateCdmFunc not available"
+ *  on Windows. This one-time quarantine forces the Component Updater to pull a fresh CDM. */
+const WIDEVINE_QUARANTINE_FLAG = 'WidevineCdm.quarantine.v1.done';
 
-  try {
-    const manifestRaw = readFileSync(manifestPath, 'utf-8');
-    const manifest = JSON.parse(manifestRaw) as { version?: string };
-    const version = manifest.version?.trim();
-    if (!version) {
-      appendWidevineDebugLog(`[Widevine] candidate invalid (${sourceLabel}) manifest has no version`);
-      return false;
-    }
-
-    app.commandLine.appendSwitch('widevine-cdm-path', adapterPath);
-    app.commandLine.appendSwitch('widevine-cdm-version', version);
-    console.log('[Widevine] using bundled CDM:', { sourceLabel, adapterPath, version });
-    appendWidevineDebugLog(
-      `[Widevine] configured (${sourceLabel}) path=${adapterPath} version=${version}`,
-    );
-    return true;
-  } catch (e) {
-    console.warn('[Widevine] Failed to configure CDM candidate:', sourceLabel, e);
-    appendWidevineDebugLog(
-      `[Widevine] candidate threw (${sourceLabel}) error=${e instanceof Error ? `${e.name}: ${e.message}` : String(e)}`,
-    );
-    return false;
-  }
-}
-
-function collectWidevineDllCandidates(rootDir: string, depth: number): string[] {
-  if (depth < 0 || !existsSync(rootDir)) return [];
-  let entries: Dirent[];
-  try {
-    entries = readdirSync(rootDir, { withFileTypes: true });
-  } catch {
-    return [];
-  }
-
-  const dlls: string[] = [];
-  for (const entry of entries) {
-    const full = join(rootDir, entry.name);
-    if (
-      entry.isFile() &&
-      (entry.name.toLowerCase() === 'widevinecdmadapter.dll' || entry.name.toLowerCase() === 'widevinecdm.dll')
-    ) {
-      dlls.push(full);
-      continue;
-    }
-    if (entry.isDirectory()) {
-      dlls.push(...collectWidevineDllCandidates(full, depth - 1));
-    }
-  }
-  return dlls;
-}
-
-function inferWidevineVersionFromDllPath(dllPath: string): string | null {
-  const parts = dllPath.split(/[/\\]+/);
-  for (const p of parts) {
-    if (/^\d+\.\d+\.\d+\.\d+$/.test(p)) return p;
-  }
-  return null;
-}
-
-function configureWidevineFromRoot(rootDir: string, sourceLabel: string): boolean {
-  const dllCandidates = collectWidevineDllCandidates(rootDir, 6);
-  if (dllCandidates.length === 0) {
-    appendWidevineDebugLog(`[Widevine] no Widevine DLL found under root (${sourceLabel}) root=${rootDir}`);
-    return false;
-  }
-
-  // Prefer adapter DLL when available, otherwise fall back to widevinecdm.dll layouts.
-  dllCandidates.sort((a, b) => {
-    const aIsAdapter = a.toLowerCase().endsWith('widevinecdmadapter.dll');
-    const bIsAdapter = b.toLowerCase().endsWith('widevinecdmadapter.dll');
-    return Number(bIsAdapter) - Number(aIsAdapter);
-  });
-
-  for (const adapterPath of dllCandidates) {
-    const normalized = adapterPath.replace(/\\/g, '/');
-    const platformMarker = '/_platform_specific/win_x64/';
-    const markerIdx = normalized.lastIndexOf(platformMarker);
-    if (markerIdx === -1) continue;
-    const baseDir = normalized.slice(0, markerIdx);
-    const manifestPath = `${baseDir}/manifest.json`.replace(/\//g, sep);
-    if (configureWidevineFrom(manifestPath, adapterPath, `${sourceLabel}:manifest-near-dll`)) {
-      return true;
-    }
-
-    const inferred = inferWidevineVersionFromDllPath(adapterPath);
-    if (inferred) {
-      app.commandLine.appendSwitch('widevine-cdm-path', adapterPath);
-      app.commandLine.appendSwitch('widevine-cdm-version', inferred);
-      console.log('[Widevine] using inferred CDM version:', { sourceLabel, adapterPath, inferred });
-      appendWidevineDebugLog(
-        `[Widevine] configured (${sourceLabel}:inferred-version) path=${adapterPath} version=${inferred}`,
-      );
-      return true;
-    }
-
-    appendWidevineDebugLog(`[Widevine] dll found but no manifest/version (${sourceLabel}) path=${adapterPath}`);
-  }
-
-  return false;
-}
-
-function configureBundledWidevineCdm(): void {
+function quarantineStaleWidevineDir(): void {
   if (process.platform !== 'win32') return;
 
-  // On some Windows installs, the default CDM resolution yields "CreateCdmFunc not available".
-  // Try known ECS/component locations in priority order and log each attempt.
-  const runtimeDir = dirname(process.execPath);
-  const candidates: Array<{
-    sourceLabel: string;
-    manifestPath: string;
-    adapterPath: string;
-    fallbackPath: string;
-    rootDir: string;
-  }> = [
-    {
-      sourceLabel: 'runtimeDir',
-      manifestPath: join(runtimeDir, 'WidevineCdm', 'manifest.json'),
-      adapterPath: join(runtimeDir, 'WidevineCdm', '_platform_specific', 'win_x64', 'widevinecdmadapter.dll'),
-      fallbackPath: join(runtimeDir, 'WidevineCdm', '_platform_specific', 'win_x64', 'widevinecdm.dll'),
-      rootDir: join(runtimeDir, 'WidevineCdm'),
-    },
-    {
-      sourceLabel: 'resourcesPath',
-      manifestPath: join(process.resourcesPath, 'WidevineCdm', 'manifest.json'),
-      adapterPath: join(process.resourcesPath, 'WidevineCdm', '_platform_specific', 'win_x64', 'widevinecdmadapter.dll'),
-      fallbackPath: join(process.resourcesPath, 'WidevineCdm', '_platform_specific', 'win_x64', 'widevinecdm.dll'),
-      rootDir: join(process.resourcesPath, 'WidevineCdm'),
-    },
-    {
-      sourceLabel: 'userData',
-      manifestPath: join(app.getPath('userData'), 'WidevineCdm', 'manifest.json'),
-      adapterPath: join(app.getPath('userData'), 'WidevineCdm', '_platform_specific', 'win_x64', 'widevinecdmadapter.dll'),
-      fallbackPath: join(app.getPath('userData'), 'WidevineCdm', '_platform_specific', 'win_x64', 'widevinecdm.dll'),
-      rootDir: join(app.getPath('userData'), 'WidevineCdm'),
-    },
-  ];
+  const userData = app.getPath('userData');
+  const flagPath = join(userData, WIDEVINE_QUARANTINE_FLAG);
+  const cdmRoot = join(userData, 'WidevineCdm');
 
-  for (const candidate of candidates) {
-    if (configureWidevineFrom(candidate.manifestPath, candidate.adapterPath, candidate.sourceLabel)) {
-      return;
-    }
-    if (configureWidevineFrom(candidate.manifestPath, candidate.fallbackPath, `${candidate.sourceLabel}:fallback-cdm`)) {
-      return;
-    }
-    if (configureWidevineFromRoot(candidate.rootDir, `${candidate.sourceLabel}:root-scan`)) {
-      return;
-    }
+  if (existsSync(flagPath)) {
+    appendWidevineDebugLog('[Widevine] quarantine already performed; skipping');
+    return;
   }
 
-  console.warn('[Widevine] No usable CDM candidate found; using default component updater path.');
-  appendWidevineDebugLog('[Widevine] no candidate configured; default updater path will be used');
+  if (!existsSync(cdmRoot)) {
+    appendWidevineDebugLog(`[Widevine] userData CDM dir absent: ${cdmRoot}`);
+    try {
+      appendFileSync(flagPath, `${new Date().toISOString()} no-cdm\n`, 'utf8');
+    } catch {
+      // Flag write failure is non-fatal.
+    }
+    return;
+  }
+
+  try {
+    const entries = readdirSync(cdmRoot);
+    const versionEntries = entries.filter((name) => {
+      try {
+        return statSync(join(cdmRoot, name)).isDirectory();
+      } catch {
+        return false;
+      }
+    });
+    appendWidevineDebugLog(
+      `[Widevine] userData CDM versions present: ${versionEntries.join(', ') || '(none)'}`,
+    );
+
+    const quarantineDir = join(userData, `WidevineCdm.stale.${Date.now()}`);
+    fs.rename(cdmRoot, quarantineDir).then(
+      () => {
+        appendWidevineDebugLog(`[Widevine] quarantined CDM dir: ${quarantineDir}`);
+        try {
+          appendFileSync(flagPath, `${new Date().toISOString()} quarantined=${quarantineDir}\n`, 'utf8');
+        } catch {
+          // Flag write failure is non-fatal.
+        }
+      },
+      (err) =>
+        appendWidevineDebugLog(
+          `[Widevine] quarantine rename failed: ${err instanceof Error ? err.message : String(err)}`,
+        ),
+    );
+  } catch (e) {
+    appendWidevineDebugLog(
+      `[Widevine] quarantine scan failed: ${e instanceof Error ? e.message : String(e)}`,
+    );
+  }
 }
 
 function createWindow(): void {
@@ -585,10 +486,9 @@ function formatWidevineFailure(e: unknown): string {
   return lines.join('\n');
 }
 
-configureBundledWidevineCdm();
-
 app.whenReady().then(async () => {
   allowPlaybackPermissions();
+  quarantineStaleWidevineDir();
   getDatabase();
   registerIpcHandlers();
 
@@ -596,11 +496,15 @@ app.whenReady().then(async () => {
   console.log('[Widevine] userData:', app.getPath('userData'));
   console.log('[Widevine] WIDEVINE_CDM_ID:', widevineId);
   console.log('[Widevine] component updates enabled:', components.updatesEnabled);
+  appendWidevineDebugLog(
+    `[Widevine] startup userData=${app.getPath('userData')} cdmId=${widevineId} updatesEnabled=${components.updatesEnabled}`,
+  );
 
   try {
     await components.whenReady([widevineId]);
     const st = components.status()[widevineId];
     console.log('[Widevine] component status:', st);
+    appendWidevineDebugLog(`[Widevine] components.status: ${JSON.stringify(st)}`);
     if (!st?.version) {
       throw new Error(
         `Widevine CDM has no version (status: ${JSON.stringify(st)}). Component Updater could not install DRM — often fixed by upgrading to a supported Castlabs Electron line (see package.json).`,
@@ -608,6 +512,9 @@ app.whenReady().then(async () => {
     }
   } catch (e) {
     console.error('[Widevine] CDM setup failed:', e);
+    appendWidevineDebugLog(
+      `[Widevine] CDM setup failed: ${e instanceof Error ? `${e.name}: ${e.message}` : String(e)}`,
+    );
     const detail = formatWidevineFailure(e);
     void dialog.showMessageBox({
       type: 'warning',
