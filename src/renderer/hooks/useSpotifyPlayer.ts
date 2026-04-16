@@ -3,10 +3,35 @@ import { shallow } from 'zustand/shallow';
 import { useStore } from '@/store';
 import AudioEngine from '@/engine/AudioEngine';
 import AutomationEngine from '@/engine/AutomationEngine';
+import {
+  getRemotePlaybackState,
+  listSpotifyDevices,
+  pickPreferredDevice,
+  remoteNext,
+  remotePause,
+  remotePrevious,
+  remoteResume,
+  remoteSeek,
+  remoteSetVolumePercent,
+  transferPlaybackToDevice,
+} from '@/services/spotify-api';
 
-let sourceNode: MediaElementAudioSourceNode | null = null;
+/**
+ * Spotify Connect remote-control mode.
+ *
+ * Radio Sankt does NOT play audio itself anymore. Instead it drives whichever Spotify
+ * device the user has active (desktop app, phone, speakers, etc.) via the Web API.
+ * This avoids Widevine/EME entirely — works on any OS where Spotify's native app runs.
+ *
+ * Mixing/ducking with jingles is done via Spotify's `setVolume` endpoint (ramp in JS),
+ * not via Web Audio gain nodes.
+ */
+
+const STATE_POLL_MS = 1500;
+const DEVICE_DISCOVERY_POLL_MS = 4000;
 
 let liveRampRaf: number | null = null;
+let lastSpotifySeekSyncSample: { trackId: string; position: number } | null = null;
 
 function cancelLiveRamp() {
   if (liveRampRaf !== null) {
@@ -15,29 +40,21 @@ function cancelLiveRamp() {
   }
 }
 
-function rampSpotifyPlayerVolume(player: SpotifyPlayer, from: number, to: number, durationMs: number) {
+function rampRemoteSpotifyVolume(deviceId: string, fromPct: number, toPct: number, durationMs: number) {
   cancelLiveRamp();
   const start = performance.now();
+  let lastSent = -1;
   const tick = () => {
     const t = durationMs <= 0 ? 1 : Math.min(1, (performance.now() - start) / durationMs);
-    const v = from + (to - from) * t;
-    player.setVolume(Math.min(1, Math.max(0, v))).catch(() => {});
+    const v = Math.round(fromPct + (toPct - fromPct) * t);
+    // Throttle: Spotify volume endpoint rate-limits; only send on meaningful change.
+    if (v !== lastSent) {
+      lastSent = v;
+      void remoteSetVolumePercent(v, deviceId).catch(() => {});
+    }
     liveRampRaf = t < 1 ? requestAnimationFrame(tick) : null;
   };
   liveRampRaf = requestAnimationFrame(tick);
-}
-
-/** Latest init from the token effect; called when sdk.scdn.co finishes loading. */
-let pendingSpotifyPlayerInit: (() => void) | null = null;
-
-/** Bumped on effect cleanup so late SDK events from a torn-down player are ignored (e.g. React Strict Mode). */
-let webPlaybackSessionGen = 0;
-
-/** Detect large `position` jumps (user seek) vs same-track playback for automation resync. */
-let lastSpotifySeekSyncSample: { trackId: string; position: number } | null = null;
-
-function triggerSpotifyPlayerInit() {
-  pendingSpotifyPlayerInit?.();
 }
 
 export function useSpotifyPlayer() {
@@ -45,6 +62,7 @@ export function useSpotifyPlayer() {
     token,
     volume,
     isLive,
+    deviceId,
     setDeviceId,
     setSdkReady,
     setIsPlaying,
@@ -57,6 +75,7 @@ export function useSpotifyPlayer() {
       token: s.token,
       volume: s.volume,
       isLive: s.isLive,
+      deviceId: s.deviceId,
       setDeviceId: s.setDeviceId,
       setSdkReady: s.setSdkReady,
       setIsPlaying: s.setIsPlaying,
@@ -68,34 +87,10 @@ export function useSpotifyPlayer() {
     shallow,
   );
 
-  const playerRef = useRef<SpotifyPlayer | null>(null);
-  const positionInterval = useRef<ReturnType<typeof setInterval> | null>(null);
+  const deviceIdRef = useRef<string | null>(deviceId);
+  deviceIdRef.current = deviceId;
 
-  const clearPositionTracking = useCallback(() => {
-    if (positionInterval.current) {
-      clearInterval(positionInterval.current);
-      positionInterval.current = null;
-    }
-  }, []);
-
-  const startPositionTracking = useCallback(() => {
-    clearPositionTracking();
-    positionInterval.current = setInterval(() => {
-      const player = playerRef.current;
-      if (!player) return;
-      player.getCurrentState().then((state) => {
-        if (state && !state.paused) {
-          setPosition(state.position);
-        }
-      }).catch(() => {});
-    }, 500);
-  }, [clearPositionTracking, setPosition]);
-
-  /** Main transport: when a set is loaded, align with Spotify `isPlaying` so we never call `play()` while audio is still running (that re-executes the step and “restarts”). */
   const togglePlayback = useCallback(async () => {
-    AudioEngine.get()?.resumeContextIfNeeded();
-    void playerRef.current?.activateElement().catch(() => {});
-    const player = playerRef.current;
     const { automationStatus, automationSteps, isPlaying } = useStore.getState();
 
     if (automationStatus === 'waitingAtPause') {
@@ -103,8 +98,15 @@ export function useSpotifyPlayer() {
       return;
     }
 
-    if (!player || automationStatus === 'stopped' || automationSteps.length === 0) {
-      if (player) await player.togglePlay().catch(() => {});
+    if (automationStatus === 'stopped' || automationSteps.length === 0) {
+      const devId = deviceIdRef.current;
+      if (!devId) return;
+      try {
+        if (isPlaying) await remotePause(devId);
+        else await remoteResume(devId);
+      } catch {
+        /* transport will refresh via state poll */
+      }
       return;
     }
 
@@ -120,308 +122,200 @@ export function useSpotifyPlayer() {
     else window.dispatchEvent(new CustomEvent('radio-sankt:spotify-resume-sdk'));
   }, []);
 
-  const connectWebAudio = useCallback((_player: SpotifyPlayer) => {
-    let attempts = 0;
-    const maxAttempts = 20; // 10 seconds total
-
-    const tryConnect = () => {
-      const audioEl = document.querySelector(`audio[data-testid="audio-element"]`) as HTMLAudioElement
-        || document.querySelector('audio') as HTMLAudioElement;
-
-      if (!audioEl) {
-        attempts++;
-        if (attempts < maxAttempts) {
-          setTimeout(tryConnect, 500);
-        }
-        return;
-      }
-
-      if (sourceNode) return; // Already connected
-
-      try {
-        const engine = AudioEngine.init(new AudioContext());
-        const ctx = engine.getContext();
-
-        sourceNode = ctx.createMediaElementSource(audioEl);
-        sourceNode.connect(engine.getGainNode('A'));
-        const st = useStore.getState();
-        engine.setVolume('A', st.isLive ? 0 : st.volume);
-        engine.resumeContextIfNeeded();
-      } catch {
-        // May fail if already connected - that's fine
-      }
-    };
-
-    tryConnect();
-  }, []);
-
-  useEffect(() => {
-    window.onSpotifyWebPlaybackSDKReady = triggerSpotifyPlayerInit;
-
-    if (!document.getElementById('spotify-sdk-script')) {
-      const script = document.createElement('script');
-      script.id = 'spotify-sdk-script';
-      script.src = 'https://sdk.scdn.co/spotify-player.js';
-      script.async = true;
-      document.body.appendChild(script);
-    }
-  }, []);
-
+  // ── Device discovery + state poll ─────────────────────────────────────
   useEffect(() => {
     const { setWebPlaybackDiag } = useStore.getState();
 
     if (!token) {
-      pendingSpotifyPlayerInit = null;
       setWebPlaybackDiag('idle', null);
+      setSdkReady(false);
+      setDeviceId(null);
+      setIsPlaying(false);
+      setCurrentTrack(null);
+      setPosition(0);
+      setDuration(0);
       return;
     }
 
-    const initPlayer = () => {
-      if (!window.Spotify) return;
-      const myGen = ++webPlaybackSessionGen;
-      setWebPlaybackDiag('initializing', null);
+    let cancelled = false;
+    let discoveryTimer: ReturnType<typeof setTimeout> | null = null;
+    let stateTimer: ReturnType<typeof setInterval> | null = null;
+    let noDeviceToastAt = 0;
 
-      if (playerRef.current) {
-        playerRef.current.disconnect();
-      }
-
-      const player = new window.Spotify.Player({
-        name: 'Radio Sankt',
-        getOAuthToken: (cb) => {
-          window.electronAPI.getSpotifyToken().then(async (t) => {
-            const refreshed = t || await window.electronAPI.refreshSpotifyToken();
-            const tok = refreshed || useStore.getState().token;
-            if (!tok) {
-              console.error('[Spotify Web Playback] No access token for SDK');
+    const pickDevice = async () => {
+      if (cancelled) return;
+      try {
+        const devices = await listSpotifyDevices();
+        if (cancelled) return;
+        const picked = pickPreferredDevice(devices);
+        if (picked) {
+          if (deviceIdRef.current !== picked.id) {
+            setDeviceId(picked.id);
+            setSdkReady(true);
+            setWebPlaybackDiag('ready', null);
+          }
+          // If the picked device isn't active yet, transfer to it silently.
+          if (!picked.is_active) {
+            try {
+              await transferPlaybackToDevice(picked.id);
+            } catch {
+              /* ignore; user may intervene */
             }
-            cb(tok || '');
-          }).catch(() => cb(useStore.getState().token || ''));
-        },
-        volume: volume,
-      });
+          }
+        } else {
+          setDeviceId(null);
+          setSdkReady(false);
+          const now = Date.now();
+          if (now - noDeviceToastAt > 30_000) {
+            noDeviceToastAt = now;
+            setWebPlaybackDiag(
+              'error',
+              'No Spotify device found — open the Spotify app on this computer (or any device) and try again.',
+            );
+          }
+        }
+      } catch (err) {
+        if (cancelled) return;
+        setWebPlaybackDiag('error', `device discovery: ${err instanceof Error ? err.message : String(err)}`);
+      } finally {
+        if (!cancelled) {
+          discoveryTimer = setTimeout(pickDevice, DEVICE_DISCOVERY_POLL_MS);
+        }
+      }
+    };
 
-      player.addListener('ready', ({ device_id }: { device_id: string }) => {
-        if (myGen !== webPlaybackSessionGen) return;
-        setDeviceId(device_id);
-        setSdkReady(true);
-        setWebPlaybackDiag('ready', null);
-        connectWebAudio(player);
-      });
-
-      player.addListener('not_ready', () => {
-        if (myGen !== webPlaybackSessionGen) return;
-        setSdkReady(false);
-        setDeviceId(null);
-      });
-
-      player.addListener('player_state_changed', (state: SpotifyPlaybackState | null) => {
-        if (myGen !== webPlaybackSessionGen) return;
+    const pollState = async () => {
+      if (cancelled) return;
+      try {
+        const state = await getRemotePlaybackState();
+        if (cancelled) return;
         if (!state) {
           setIsPlaying(false);
-          clearPositionTracking();
-          lastSpotifySeekSyncSample = null;
           return;
         }
 
-        const st = useStore.getState();
-        if (state.paused && st.automationStatus === 'stopped') {
-          setIsPlaying(false);
-          clearPositionTracking();
-          lastSpotifySeekSyncSample = null;
-          return;
+        setIsPlaying(state.isPlaying);
+
+        if (state.deviceId && state.deviceId !== deviceIdRef.current) {
+          setDeviceId(state.deviceId);
+          setSdkReady(true);
         }
 
-        const track = state.track_window.current_track;
-        const newPos = state.position;
-        const curStep = st.automationSteps[st.currentStepIndex];
-        const prevSample = lastSpotifySeekSyncSample;
-        const playbackMatchesStep =
-          !!curStep &&
-          ((curStep.type === 'track' && curStep.spotifyUri === track.uri) ||
-            (curStep.type === 'playlist' && curStep.spotifyPlaylistUri === state.context?.uri));
-        if (
-          playbackMatchesStep &&
-          st.automationStatus === 'playing' &&
-          !state.paused &&
-          curStep &&
-          (curStep.type === 'track' || curStep.type === 'playlist') &&
-          prevSample &&
-          prevSample.trackId === track.id &&
-          Math.abs(newPos - prevSample.position) > 2000
-        ) {
-          AutomationEngine.getInstance();
-          window.dispatchEvent(
-            new CustomEvent('radio-sankt:spotify-seek-sync', {
-              detail: {
-                positionMs: newPos,
-                playbackUri: track.uri,
-                contextUri: state.context?.uri,
-              },
-            }),
-          );
-        }
-        lastSpotifySeekSyncSample = { trackId: track.id, position: newPos };
+        if (state.track) {
+          setCurrentTrack({
+            id: state.track.id ?? state.track.uri,
+            title: state.track.name,
+            artist: state.track.artists,
+            album: state.track.albumName,
+            albumArt: state.track.albumArt,
+            duration: state.track.durationMs,
+            uri: state.track.uri,
+          });
+          setDuration(state.track.durationMs);
+          setPosition(state.progressMs);
 
-        setCurrentTrack({
-          id: track.id,
-          title: track.name,
-          artist: track.artists.map((a) => a.name).join(', '),
-          album: track.album.name,
-          albumArt: track.album.images[0]?.url,
-          duration: track.duration_ms,
-          uri: track.uri,
-        });
-
-        setDuration(track.duration_ms);
-        setPosition(newPos);
-        setIsPlaying(!state.paused);
-
-        if (!state.paused) {
-          startPositionTracking();
-        } else {
-          clearPositionTracking();
-          lastSpotifySeekSyncSample = null;
-        }
-      });
-
-      const reportSdkError = (label: string, message: string) => {
-        if (myGen !== webPlaybackSessionGen) return;
-        const full = `${label}: ${message}`;
-        console.error('[Spotify Web Playback]', full);
-        setWebPlaybackDiag('error', full);
-        addToast(full, 'error');
-      };
-
-      player.addListener('initialization_error', ({ message }: { message: string }) => {
-        reportSdkError('initialization_error', message);
-      });
-
-      player.addListener('authentication_error', ({ message }: { message: string }) => {
-        if (myGen !== webPlaybackSessionGen) return;
-        console.warn('[Spotify Web Playback] authentication_error — refreshing token and reconnecting', message);
-        window.electronAPI.refreshSpotifyToken().then(async (t) => {
-          if (myGen !== webPlaybackSessionGen) return;
-          if (t) useStore.setState({ token: t });
-          try {
-            player.disconnect();
-            const ok = await player.connect();
-            if (!ok) reportSdkError('authentication_error', message);
-          } catch {
-            reportSdkError('authentication_error', message);
+          const st = useStore.getState();
+          const curStep = st.automationSteps[st.currentStepIndex];
+          const playbackMatchesStep =
+            !!curStep &&
+            ((curStep.type === 'track' && curStep.spotifyUri === state.track.uri) ||
+              (curStep.type === 'playlist' && curStep.spotifyPlaylistUri === state.contextUri));
+          const prevSample = lastSpotifySeekSyncSample;
+          if (
+            playbackMatchesStep &&
+            st.automationStatus === 'playing' &&
+            state.isPlaying &&
+            state.track.id &&
+            prevSample &&
+            prevSample.trackId === state.track.id &&
+            Math.abs(state.progressMs - prevSample.position) > 2500
+          ) {
+            window.dispatchEvent(
+              new CustomEvent('radio-sankt:spotify-seek-sync', {
+                detail: {
+                  positionMs: state.progressMs,
+                  playbackUri: state.track.uri,
+                  contextUri: state.contextUri ?? undefined,
+                },
+              }),
+            );
           }
-        }).catch(() => reportSdkError('authentication_error', message));
-      });
-
-      player.addListener('account_error', ({ message }: { message: string }) => {
-        reportSdkError('account_error', message);
-      });
-
-      let lastPlaybackErrorToast = 0;
-      player.addListener('playback_error', (d: { message: string }) => {
-        if (myGen !== webPlaybackSessionGen) return;
-        console.warn('[Spotify Web Playback] playback_error', d);
-        setWebPlaybackDiag('error', d.message);
-        const now = Date.now();
-        if (now - lastPlaybackErrorToast > 20_000) {
-          lastPlaybackErrorToast = now;
-          addToast(`Playback interrupted: ${d.message}`, 'warning');
+          lastSpotifySeekSyncSample = state.track.id
+            ? { trackId: state.track.id, position: state.progressMs }
+            : null;
         }
-      });
-
-      setWebPlaybackDiag('connecting', null);
-      player
-        .connect()
-        .then((connected) => {
-          if (myGen !== webPlaybackSessionGen) return;
-          if (!connected) {
-            const msg =
-              'player.connect() returned false — Widevine/DRM blocked or unsigned Electron build. Run: npm run evs:sign-electron-dist, restart, then reconnect Spotify (see docs/widevine-and-evs.md).';
-            console.error('[Spotify Web Playback]', msg);
-            setWebPlaybackDiag('error', msg);
-            addToast(msg, 'error');
-          }
-        })
-        .catch((err: unknown) => {
-          if (myGen !== webPlaybackSessionGen) return;
-          const msg = `connect failed: ${err}`;
-          console.error('[Spotify Web Playback]', msg);
-          setWebPlaybackDiag('error', msg);
-          addToast(`Spotify ${msg}`, 'error');
-        });
-      playerRef.current = player;
+      } catch {
+        /* transient network errors are fine; next tick will retry */
+      }
     };
 
-    if (!window.Spotify) {
-      setWebPlaybackDiag('loading_sdk', null);
-    }
-    pendingSpotifyPlayerInit = initPlayer;
-    if (window.Spotify) initPlayer();
+    setWebPlaybackDiag('initializing', null);
+    void pickDevice();
+    stateTimer = setInterval(pollState, STATE_POLL_MS);
+    void pollState();
 
     return () => {
-      webPlaybackSessionGen++;
+      cancelled = true;
+      if (discoveryTimer) clearTimeout(discoveryTimer);
+      if (stateTimer) clearInterval(stateTimer);
+      cancelLiveRamp();
       lastSpotifySeekSyncSample = null;
-      pendingSpotifyPlayerInit = null;
-      clearPositionTracking();
-      cancelLiveRamp();
-      if (playerRef.current) {
-        playerRef.current.disconnect();
-        playerRef.current = null;
-      }
-      sourceNode = null;
     };
-  }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [
+    token,
+    setDeviceId,
+    setSdkReady,
+    setIsPlaying,
+    setCurrentTrack,
+    setPosition,
+    setDuration,
+  ]);
 
+  // ── Transport & automation event bus ───────────────────────────────────
   useEffect(() => {
-    const prime = () => {
-      const engine = AudioEngine.get();
-      engine?.resumeContextIfNeeded();
-      playerRef.current?.activateElement().catch(() => {});
-    };
-
-    const onLiveAudio = (e: Event) => {
-      const detail = (e as CustomEvent<{ goingLive?: boolean; fadeMs?: number }>).detail;
-      if (typeof detail?.fadeMs !== 'number' || typeof detail.goingLive !== 'boolean') return;
-      const { goingLive, fadeMs } = detail;
-      const player = playerRef.current;
-      const engine = AudioEngine.getOrInit();
-      const vol = useStore.getState().volume;
-      engine.resumeContextIfNeeded();
-      cancelLiveRamp();
-      if (goingLive) {
-        void engine.fadeOut('A', fadeMs);
-        if (player && !sourceNode) {
-          rampSpotifyPlayerVolume(player, vol, 0, fadeMs);
-        }
-      } else {
-        void engine.fadeIn('A', fadeMs, vol);
-        if (player && !sourceNode) {
-          rampSpotifyPlayerVolume(player, 0, vol, fadeMs);
-        } else if (player) {
-          player.setVolume(vol).catch(() => {});
-        }
-      }
-    };
-
     const onToggle = () => {
       void togglePlayback();
     };
 
     const onSdkPause = () => {
-      void playerRef.current?.pause().catch(() => {});
+      const devId = deviceIdRef.current;
+      if (!devId) return;
+      void remotePause(devId).catch(() => {});
     };
 
     const onSdkResume = () => {
-      void playerRef.current?.resume().catch(() => {});
+      const devId = deviceIdRef.current;
+      if (!devId) return;
+      void remoteResume(devId).catch(() => {});
     };
 
-    window.addEventListener('radio-sankt:prime-spotify-playback', prime);
+    const onLiveAudio = (e: Event) => {
+      const detail = (e as CustomEvent<{ goingLive?: boolean; fadeMs?: number }>).detail;
+      if (typeof detail?.fadeMs !== 'number' || typeof detail.goingLive !== 'boolean') return;
+      const devId = deviceIdRef.current;
+      const { volume: curVolume } = useStore.getState();
+      const vol = Math.max(0, Math.min(1, curVolume));
+      if (!devId) return;
+      if (detail.goingLive) {
+        rampRemoteSpotifyVolume(devId, Math.round(vol * 100), 0, detail.fadeMs);
+      } else {
+        rampRemoteSpotifyVolume(devId, 0, Math.round(vol * 100), detail.fadeMs);
+      }
+    };
+
+    const onPrime = () => {
+      const engine = AudioEngine.get();
+      engine?.resumeContextIfNeeded();
+    };
+
+    window.addEventListener('radio-sankt:prime-spotify-playback', onPrime);
     window.addEventListener('radio-sankt:toggle-play', onToggle);
     window.addEventListener('radio-sankt:spotify-pause-sdk', onSdkPause);
     window.addEventListener('radio-sankt:spotify-resume-sdk', onSdkResume);
     window.addEventListener('radio-sankt:live-audio', onLiveAudio as EventListener);
 
     return () => {
-      window.removeEventListener('radio-sankt:prime-spotify-playback', prime);
+      window.removeEventListener('radio-sankt:prime-spotify-playback', onPrime);
       window.removeEventListener('radio-sankt:toggle-play', onToggle);
       window.removeEventListener('radio-sankt:spotify-pause-sdk', onSdkPause);
       window.removeEventListener('radio-sankt:spotify-resume-sdk', onSdkResume);
@@ -430,27 +324,29 @@ export function useSpotifyPlayer() {
     };
   }, [togglePlayback]);
 
-  // Sync volume to gain node (channel A stays ducked while live; fade/live handler owns gain)
+  // ── Volume sync ─────────────────────────────────────────────────────────
   useEffect(() => {
-    if (isLive) {
-      playerRef.current?.setVolume(volume).catch(() => {});
-      return;
-    }
-    const engine = AudioEngine.get();
-    if (engine) {
-      engine.setVolume('A', volume);
-    }
-    playerRef.current?.setVolume(volume).catch(() => {});
+    const devId = deviceIdRef.current;
+    if (!devId) return;
+    // While live, Spotify channel should stay ducked to 0 unless the live handler raises it.
+    if (isLive) return;
+    const pct = Math.round(Math.max(0, Math.min(1, volume)) * 100);
+    void remoteSetVolumePercent(pct, devId).catch(() => {});
   }, [volume, isLive]);
 
+  // ── Transport imperative API ───────────────────────────────────────────
   const previousTrack = useCallback(async () => {
     if (useStore.getState().automationStatus !== 'stopped') {
       await AutomationEngine.getInstance().skipBackward();
       return;
     }
-    const player = playerRef.current;
-    if (!player) return;
-    try { await player.previousTrack(); } catch { /* SDK disconnected */ }
+    const devId = deviceIdRef.current;
+    if (!devId) return;
+    try {
+      await remotePrevious(devId);
+    } catch {
+      /* ignore */
+    }
   }, []);
 
   const nextTrack = useCallback(async () => {
@@ -458,22 +354,20 @@ export function useSpotifyPlayer() {
       await AutomationEngine.getInstance().skipForward();
       return;
     }
-    const player = playerRef.current;
-    if (!player) return;
-    try { await player.nextTrack(); } catch { /* SDK disconnected */ }
+    const devId = deviceIdRef.current;
+    if (!devId) return;
+    try {
+      await remoteNext(devId);
+    } catch {
+      /* ignore */
+    }
   }, []);
 
   useEffect(() => {
-    const prime = () => {
-      AudioEngine.get()?.resumeContextIfNeeded();
-      playerRef.current?.activateElement().catch(() => {});
-    };
     const onPrev = () => {
-      prime();
       void previousTrack();
     };
     const onNext = () => {
-      prime();
       void nextTrack();
     };
     window.addEventListener('radio-sankt:previous-track', onPrev);
@@ -484,42 +378,26 @@ export function useSpotifyPlayer() {
     };
   }, [previousTrack, nextTrack]);
 
-  const seek = useCallback(async (positionMs: number) => {
-    const player = playerRef.current;
-    if (!player) return;
-    const duration = useStore.getState().duration;
-    if (duration <= 0) return;
-    // Spotify rejects seeks at/ past full duration; leave a tiny margin so "jump to end" works for testing.
-    const maxSeek = Math.max(0, duration - 100);
-    const clamped = Math.min(Math.max(0, Math.round(positionMs)), maxSeek);
-    try {
-      await player.seek(clamped);
-      setPosition(clamped);
-      const st = useStore.getState();
-      const step = st.automationSteps[st.currentStepIndex];
-      const sdkState = await player.getCurrentState();
-      const uri = sdkState?.track_window?.current_track?.uri;
-      const ctx = sdkState?.context?.uri;
-      if (
-        st.automationStatus === 'playing' &&
-        sdkState &&
-        !sdkState.paused &&
-        step &&
-        ((step.type === 'track' && uri === step.spotifyUri) ||
-          (step.type === 'playlist' && ctx === step.spotifyPlaylistUri))
-      ) {
-        AutomationEngine.getInstance();
-        window.dispatchEvent(
-          new CustomEvent('radio-sankt:spotify-seek-sync', {
-            detail: { positionMs: clamped, playbackUri: uri, contextUri: ctx },
-          }),
-        );
+  const seek = useCallback(
+    async (positionMs: number) => {
+      const devId = deviceIdRef.current;
+      if (!devId) return;
+      const duration = useStore.getState().duration;
+      if (duration <= 0) return;
+      const maxSeek = Math.max(0, duration - 100);
+      const clamped = Math.min(Math.max(0, Math.round(positionMs)), maxSeek);
+      try {
+        await remoteSeek(clamped, devId);
+        setPosition(clamped);
+      } catch {
+        /* ignore */
       }
-    } catch { /* SDK disconnected */ }
-  }, [setPosition]);
+    },
+    [setPosition],
+  );
 
   return {
-    player: playerRef.current,
+    player: null,
     togglePlay: togglePlayback,
     previousTrack,
     nextTrack,

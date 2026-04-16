@@ -148,14 +148,14 @@ export default function SearchWidget() {
       tick();
     });
 
+  const NO_DEVICE_MESSAGE =
+    'No Spotify device available — open the Spotify app on this computer (or any signed-in device) and try again.';
+
   const handlePlayNow = async (uri: string) => {
     window.dispatchEvent(new CustomEvent('radio-sankt:prime-spotify-playback'));
     let devId = useStore.getState().deviceId || (await waitForDeviceId(15_000));
     if (!devId) {
-      addToast(
-        'Web Playback is not connected — Spotify Premium is required. Wait until the in-app player connects, or disconnect and reconnect Spotify in Settings.',
-        'warning',
-      );
+      addToast(NO_DEVICE_MESSAGE, 'warning');
       return;
     }
     try {
@@ -171,10 +171,7 @@ export default function SearchWidget() {
     window.dispatchEvent(new CustomEvent('radio-sankt:prime-spotify-playback'));
     let devId = useStore.getState().deviceId || (await waitForDeviceId(15_000));
     if (!devId) {
-      addToast(
-        'Web Playback is not connected — Spotify Premium is required. Wait until the in-app player connects, or disconnect and reconnect Spotify in Settings.',
-        'warning',
-      );
+      addToast(NO_DEVICE_MESSAGE, 'warning');
       return;
     }
     try {

@@ -157,7 +157,7 @@ export async function getProfile(): Promise<SpotifyProfile> {
   };
 }
 
-/** Move active playback to the Web Playback SDK device (required when another device was last active). */
+/** Move active playback to the chosen Spotify Connect device (required when another device was last active). */
 export async function transferPlaybackToDevice(deviceId: string): Promise<void> {
   const res = await apiFetch('/me/player', {
     method: 'PUT',
@@ -185,6 +185,179 @@ export async function getActivePlaybackUris(): Promise<ActivePlaybackUris | null
     };
   } catch {
     return null;
+  }
+}
+
+// ── Remote-control: devices & playback state ─────────────────────────
+
+export interface SpotifyDevice {
+  id: string;
+  name: string;
+  type: string;
+  is_active: boolean;
+  is_private_session: boolean;
+  is_restricted: boolean;
+  volume_percent: number | null;
+}
+
+export async function listSpotifyDevices(): Promise<SpotifyDevice[]> {
+  const res = await apiFetch('/me/player/devices');
+  if (!res.ok) return [];
+  try {
+    const data = (await res.json()) as { devices?: SpotifyDevice[] };
+    return Array.isArray(data.devices) ? data.devices : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Pick a preferred Spotify device. Priority:
+ *   1. Currently active device
+ *   2. A Spotify Desktop app on this computer (Computer type)
+ *   3. First available device
+ */
+export function pickPreferredDevice(devices: SpotifyDevice[]): SpotifyDevice | null {
+  if (devices.length === 0) return null;
+  const active = devices.find((d) => d.is_active && !d.is_restricted);
+  if (active) return active;
+  const computer = devices.find((d) => d.type === 'Computer' && !d.is_restricted);
+  if (computer) return computer;
+  const anyUsable = devices.find((d) => !d.is_restricted);
+  return anyUsable ?? null;
+}
+
+export interface SpotifyRemoteState {
+  isPlaying: boolean;
+  progressMs: number;
+  deviceId: string | null;
+  deviceName: string | null;
+  deviceVolumePercent: number | null;
+  itemUri: string | null;
+  contextUri: string | null;
+  track: {
+    id: string | null;
+    name: string;
+    artists: string;
+    albumName: string;
+    albumArt: string;
+    durationMs: number;
+    uri: string;
+  } | null;
+}
+
+export async function getRemotePlaybackState(): Promise<SpotifyRemoteState | null> {
+  const res = await apiFetch('/me/player?additional_types=track');
+  if (res.status === 204) return null;
+  if (!res.ok) return null;
+  try {
+    const data = (await res.json()) as {
+      is_playing?: boolean;
+      progress_ms?: number;
+      device?: { id?: string; name?: string; volume_percent?: number };
+      item?: {
+        id?: string;
+        uri?: string;
+        name?: string;
+        duration_ms?: number;
+        artists?: Array<{ name?: string }>;
+        album?: { name?: string; images?: Array<{ url?: string }> };
+      };
+      context?: { uri?: string };
+    };
+    const item = data.item;
+    return {
+      isPlaying: Boolean(data.is_playing),
+      progressMs: typeof data.progress_ms === 'number' ? data.progress_ms : 0,
+      deviceId: data.device?.id ?? null,
+      deviceName: data.device?.name ?? null,
+      deviceVolumePercent:
+        typeof data.device?.volume_percent === 'number' ? data.device.volume_percent : null,
+      itemUri: typeof item?.uri === 'string' ? item.uri : null,
+      contextUri: typeof data.context?.uri === 'string' ? data.context.uri : null,
+      track: item
+        ? {
+            id: item.id ?? null,
+            name: item.name ?? '',
+            artists: (item.artists ?? []).map((a) => a?.name ?? '').filter(Boolean).join(', '),
+            albumName: item.album?.name ?? '',
+            albumArt: item.album?.images?.[0]?.url ?? '',
+            durationMs: typeof item.duration_ms === 'number' ? item.duration_ms : 0,
+            uri: item.uri ?? '',
+          }
+        : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+// ── Remote-control: transport ─────────────────────────────────────────
+
+/** Resume playback on a device (optionally with specific content). */
+export async function remoteResume(deviceId: string): Promise<void> {
+  const res = await apiFetch(`/me/player/play?device_id=${encodeURIComponent(deviceId)}`, {
+    method: 'PUT',
+  });
+  if (!res.ok && res.status !== 204) {
+    const body = await res.text();
+    throw new Error(`Spotify resume ${res.status}: ${body}`);
+  }
+}
+
+export async function remotePause(deviceId: string): Promise<void> {
+  const res = await apiFetch(`/me/player/pause?device_id=${encodeURIComponent(deviceId)}`, {
+    method: 'PUT',
+  });
+  if (!res.ok && res.status !== 204) {
+    const body = await res.text();
+    throw new Error(`Spotify pause ${res.status}: ${body}`);
+  }
+}
+
+export async function remoteNext(deviceId: string): Promise<void> {
+  const res = await apiFetch(`/me/player/next?device_id=${encodeURIComponent(deviceId)}`, {
+    method: 'POST',
+  });
+  if (!res.ok && res.status !== 204) {
+    const body = await res.text();
+    throw new Error(`Spotify next ${res.status}: ${body}`);
+  }
+}
+
+export async function remotePrevious(deviceId: string): Promise<void> {
+  const res = await apiFetch(`/me/player/previous?device_id=${encodeURIComponent(deviceId)}`, {
+    method: 'POST',
+  });
+  if (!res.ok && res.status !== 204) {
+    const body = await res.text();
+    throw new Error(`Spotify previous ${res.status}: ${body}`);
+  }
+}
+
+export async function remoteSeek(positionMs: number, deviceId: string): Promise<void> {
+  const pos = Math.max(0, Math.round(positionMs));
+  const res = await apiFetch(
+    `/me/player/seek?position_ms=${pos}&device_id=${encodeURIComponent(deviceId)}`,
+    { method: 'PUT' },
+  );
+  if (!res.ok && res.status !== 204) {
+    const body = await res.text();
+    throw new Error(`Spotify seek ${res.status}: ${body}`);
+  }
+}
+
+/** Set volume 0-100 on the target device. Ignored silently if the device rejects volume. */
+export async function remoteSetVolumePercent(volumePercent: number, deviceId: string): Promise<void> {
+  const v = Math.max(0, Math.min(100, Math.round(volumePercent)));
+  const res = await apiFetch(
+    `/me/player/volume?volume_percent=${v}&device_id=${encodeURIComponent(deviceId)}`,
+    { method: 'PUT' },
+  );
+  if (!res.ok && res.status !== 204) {
+    // Some devices (e.g. restricted ones) return 403 for volume; don't throw for that case.
+    if (res.status === 403) return;
+    const body = await res.text();
+    throw new Error(`Spotify volume ${res.status}: ${body}`);
   }
 }
 

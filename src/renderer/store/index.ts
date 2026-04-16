@@ -34,7 +34,7 @@ export interface SpotifySearchResult {
   durationMs: number;
 }
 
-/** Lifecycle of the embedded Spotify Web Playback SDK (see Settings for diagnostics). */
+/** Lifecycle of the Spotify Connect remote-control link (see Settings for diagnostics). */
 export type WebPlaybackPhase =
   | 'idle'
   | 'loading_sdk'
