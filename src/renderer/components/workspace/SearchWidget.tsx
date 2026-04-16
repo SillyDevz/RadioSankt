@@ -12,6 +12,11 @@ import { buildSongStepTransition, type SpotifySearchResult } from '@/store';
 import Tooltip from '@/components/Tooltip';
 import AudioEngine from '@/engine/AudioEngine';
 import i18n from '@/i18n';
+import { basename, stripExtension } from '@/utils/path';
+
+function prettyAssetName(name: string): string {
+  return /[\\/]/.test(name) ? stripExtension(basename(name)) : name;
+}
 
 function formatDuration(ms: number): string {
   const s = Math.floor(ms / 1000);
@@ -363,7 +368,7 @@ export default function SearchWidget() {
         </svg>
       </div>
       <div className="flex-1 min-w-0">
-        <div className="text-sm font-medium text-text-primary truncate">{jingle.name}</div>
+        <div className="text-sm font-medium text-text-primary truncate">{prettyAssetName(jingle.name)}</div>
         <div className="text-xs text-text-secondary truncate">{i18n.t('workspace.search.localAudio', { defaultValue: 'Local Audio' })}</div>
       </div>
       <span className="text-xs text-text-muted tabular-nums shrink-0">{formatDuration(jingle.durationMs)}</span>
@@ -600,7 +605,7 @@ export default function SearchWidget() {
                     </svg>
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="text-sm font-medium text-text-primary truncate">{ad.name}</div>
+                    <div className="text-sm font-medium text-text-primary truncate">{prettyAssetName(ad.name)}</div>
                     <div className="text-xs text-text-secondary truncate">{i18n.t('workspace.search.adClip', { defaultValue: 'Ad clip' })}</div>
                   </div>
                   <span className="text-xs text-text-muted tabular-nums shrink-0">{formatDuration(ad.durationMs)}</span>

@@ -3,6 +3,7 @@ import { CSS } from '@dnd-kit/utilities';
 import type { AutomationStep } from '@/store';
 import Tooltip from '@/components/Tooltip';
 import i18n from '@/i18n';
+import { basename, stripExtension } from '@/utils/path';
 
 function formatDuration(ms: number): string {
   const s = Math.floor(ms / 1000);
@@ -37,7 +38,11 @@ export default function StepCard({ step, isPlaying, isSelected, onSelect, onDele
     opacity: isDragging ? 0.5 : 1,
   };
 
-  const name = step.type === 'pause' ? step.label || i18n.t('automation.step.pausePoint') : step.name;
+  const rawName = step.type === 'pause' ? step.label || i18n.t('automation.step.pausePoint') : step.name;
+  // Legacy records on Windows may have a full file path in `name`; show a clean filename.
+  const name = (step.type === 'jingle' || step.type === 'ad') && /[\\/]/.test(rawName)
+    ? stripExtension(basename(rawName))
+    : rawName;
   const subtitle =
     step.type === 'track'
       ? step.artist

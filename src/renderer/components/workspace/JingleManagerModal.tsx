@@ -4,6 +4,7 @@ import AudioEngine from '@/engine/AudioEngine';
 import Tooltip from '@/components/Tooltip';
 import CoachMark from '@/components/CoachMark';
 import i18n from '@/i18n';
+import { basename } from '@/utils/path';
 
 type LibraryKind = 'jingles' | 'ads';
 type AudioAsset = { id: number; name: string; filePath: string; durationMs: number };
@@ -46,8 +47,42 @@ export default function JingleManagerModal({
   const assets = shownKind === 'ads' ? ads : jingles;
 
   useEffect(() => {
-    window.electronAPI.getJingles().then(setJingles);
-    window.electronAPI.getAds().then(setAds);
+    /** Before the cross-platform basename fix, Windows installs saved full file paths
+     *  into the jingle/ad `name` column. Rewrite those to a friendly name on load. */
+    const looksLikePath = (n: string) => /[\\/]/.test(n);
+    const cleanup = (n: string) => basename(n).replace(/\.[^.]+$/, '') || n;
+
+    window.electronAPI.getJingles().then(async (rows) => {
+      const stale = rows.filter((r) => looksLikePath(r.name));
+      for (const r of stale) {
+        const fixed = cleanup(r.name);
+        if (fixed && fixed !== r.name) {
+          try {
+            await window.electronAPI.renameJingle(r.id, fixed);
+            r.name = fixed;
+          } catch {
+            /* ignore; UI will display the raw name until next try */
+          }
+        }
+      }
+      setJingles(rows);
+    });
+
+    window.electronAPI.getAds().then(async (rows) => {
+      const stale = rows.filter((r) => looksLikePath(r.name));
+      for (const r of stale) {
+        const fixed = cleanup(r.name);
+        if (fixed && fixed !== r.name) {
+          try {
+            await window.electronAPI.renameAd(r.id, fixed);
+            r.name = fixed;
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+      setAds(rows);
+    });
   }, [setAds, setJingles]);
 
   useEffect(() => {
@@ -72,11 +107,11 @@ export default function JingleManagerModal({
         const audioBuffer = await ctx.decodeAudioData(buffer);
         await ctx.close();
         const durationMs = Math.round(audioBuffer.duration * 1000);
-        const name = filePath.split('/').pop()?.replace(/\.[^.]+$/, '') || 'Untitled';
+        const name = basename(filePath).replace(/\.[^.]+$/, '') || 'Untitled';
         if (shownKind === 'ads') addAd(await window.electronAPI.saveAd(name, filePath, durationMs));
         else addJingle(await window.electronAPI.saveJingle(name, filePath, durationMs));
       } catch {
-        addToast(`Failed to add ${shownKind === 'ads' ? 'ad' : 'jingle'}: ${filePath.split('/').pop()}`, 'error');
+        addToast(`Failed to add ${shownKind === 'ads' ? 'ad' : 'jingle'}: ${basename(filePath)}`, 'error');
       }
     }
   };
