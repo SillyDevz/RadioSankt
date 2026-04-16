@@ -7,9 +7,15 @@ directories:
 files:
   - dist/**/*
   - package.json
+afterPack: scripts/electron-builder-after-pack.cjs
+afterSign: scripts/electron-builder-after-sign.cjs
 mac:
   icon: public/icon.png
   category: public.app-category.music
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
   target:
     - dmg
     - zip

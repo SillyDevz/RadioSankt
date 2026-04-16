@@ -19,14 +19,32 @@ jobs:
           node-version: 18
           cache: npm
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
       - run: npm ci
-      - run: npm run build
-      - run: npm run build:electron
+
+      - name: Install Castlabs EVS
+        run: python3 -m pip install --upgrade castlabs-evs
+
+      - name: Ensure macOS signing secrets are configured
+        env:
+          CASTLABS_ACCOUNT_NAME: ${{ secrets.CASTLABS_ACCOUNT_NAME }}
+          CASTLABS_ACCOUNT_PASSWORD: ${{ secrets.CASTLABS_ACCOUNT_PASSWORD }}
+        run: |
+          test -n "$CASTLABS_ACCOUNT_NAME" || { echo "Missing CASTLABS_ACCOUNT_NAME secret."; exit 1; }
+          test -n "$CASTLABS_ACCOUNT_PASSWORD" || { echo "Missing CASTLABS_ACCOUNT_PASSWORD secret."; exit 1; }
 
       - name: Package
-        run: npx electron-builder --mac --publish never
+        run: npm run electron:build:mac
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CASTLABS_ACCOUNT_NAME: ${{ secrets.CASTLABS_ACCOUNT_NAME }}
+          CASTLABS_ACCOUNT_PASSWORD: ${{ secrets.CASTLABS_ACCOUNT_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
 
       - uses: actions/upload-artifact@v4
         with:
@@ -45,15 +63,33 @@ jobs:
           node-version: 18
           cache: npm
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
       - run: npm ci
-      - run: npm run build
-      - run: npm run build:electron
+
+      - name: Install Castlabs EVS
+        shell: pwsh
+        run: python -m pip install --upgrade castlabs-evs
+
+      - name: Ensure Windows EVS secrets are configured
+        shell: pwsh
+        env:
+          CASTLABS_ACCOUNT_NAME: ${{ secrets.CASTLABS_ACCOUNT_NAME }}
+          CASTLABS_ACCOUNT_PASSWORD: ${{ secrets.CASTLABS_ACCOUNT_PASSWORD }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:CASTLABS_ACCOUNT_NAME) -or [string]::IsNullOrWhiteSpace($env:CASTLABS_ACCOUNT_PASSWORD)) {
+            throw "Missing CASTLABS_ACCOUNT_NAME or CASTLABS_ACCOUNT_PASSWORD secret. Refusing to build a Windows installer without EVS."
+          }
 
       - name: Package
-        run: npx electron-builder --win --publish never
+        run: npm run electron:build:win
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: false
+          CASTLABS_ACCOUNT_NAME: ${{ secrets.CASTLABS_ACCOUNT_NAME }}
+          CASTLABS_ACCOUNT_PASSWORD: ${{ secrets.CASTLABS_ACCOUNT_PASSWORD }}
 
       - uses: actions/upload-artifact@v4
         with:

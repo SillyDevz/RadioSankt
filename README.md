@@ -46,6 +46,7 @@ npm run electron:build
 ```
 
 Output goes to the `release/` directory. On macOS you get a `.dmg`, on Windows an `.exe` installer.
+Packaged builds run the repo's EVS hooks automatically; Apple signing/notarization is optional and only affects macOS trust prompts.
 
 ## Publishing a Release
 

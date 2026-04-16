@@ -55,10 +55,10 @@ npm run electron:dev
 |--------|---------|
 | `evs:sign-electron-dist` | `sign-pkg` on **`node_modules/electron/dist`** (for **`electron:dev`**) |
 | `evs:verify-electron-dist` | Verify VMP signature on **`node_modules/electron/dist`** |
-| `evs:sign-release` | Auto-pick **`release/…`** folder (`.app` or `win-unpacked`) and `sign-pkg` |
-| `electron:build:evs` | Default platform build + `evs:sign-release` |
-| `electron:build:mac:evs` | macOS build + `evs:sign-release` |
-| `electron:build:win:evs` | Windows build + `evs:sign-release` |
+| `evs:sign-release` | Manual fallback: sign an already-built **`release/…`** folder (`.app` or `win-unpacked`) |
+| `electron:build:evs` | Alias of the default packaged build; EVS now runs in electron-builder hooks |
+| `electron:build:mac:evs` | Alias of `electron:build:mac`; mac EVS runs before Apple signing |
+| `electron:build:win:evs` | Alias of `electron:build:win`; Windows EVS runs after code signing |
 
 **Linux:** EVS does not sign Linux the same way; see Castlabs docs for Widevine on Linux.
 
@@ -67,10 +67,10 @@ npm run electron:dev
 ## Packaged releases
 
 ```bash
-npm run electron:build:mac:evs    # or electron:build:win:evs
+npm run electron:build:mac    # or electron:build:win
 ```
 
-Or build first, then:
+Legacy/manual fallback:
 
 ```bash
 npm run evs:sign-release
@@ -81,7 +81,7 @@ npm run evs:sign-release
 - **macOS:** VMP signing **before** Apple code signing (if you use a real signing identity).
 - **Windows:** VMP signing **after** your code signing.
 
-If `electron-builder` is configured to code-sign automatically, you may need an **`afterPack`** / **`afterSign`** hook so VMP runs in the right phase.
+This repo runs EVS inside electron-builder hooks so packaged builds are signed in the correct phase automatically. Apple signing/notarization is optional and separate from Spotify DRM support.
 
 ---
 
@@ -100,7 +100,7 @@ This repo runs **`scripts/repair-electron-mac-framework.cjs`** on **`postinstall
 ## Sharing the app with others
 
 - **End users** install **your built, signed** `.dmg` / `.exe`. They do **not** need an EVS account.
-- **From source:** contributors must run **`evs:sign-electron-dist`** (dev) and/or **`evs:sign-release`** (packaged output) themselves—or use CI that runs EVS at build time.
+- **From source:** contributors must run **`evs:sign-electron-dist`** for dev. Packaged builds run EVS automatically via electron-builder hooks, or you can use **`evs:sign-release`** as a manual fallback on an existing build.
 - Re-sign when you ship a **new** Electron version or a **new** packaged layout.
 
 ---

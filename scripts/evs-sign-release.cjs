@@ -5,14 +5,15 @@
  */
 const fs = require('fs');
 const path = require('path');
-const { execSync } = require('child_process');
+const { execFileSync } = require('child_process');
 
 const root = path.join(__dirname, '..');
 const release = path.join(root, 'release');
+const python = process.platform === 'win32' ? 'python' : 'python3';
 
 function sign(dir) {
-  console.log(`[evs:sign-release] python3 -m castlabs_evs.vmp sign-pkg "${dir}"`);
-  execSync(`python3 -m castlabs_evs.vmp sign-pkg "${dir}"`, { stdio: 'inherit', cwd: root });
+  console.log(`[evs:sign-release] ${python} -m castlabs_evs.vmp sign-pkg "${dir}"`);
+  execFileSync(python, ['-m', 'castlabs_evs.vmp', 'sign-pkg', dir], { stdio: 'inherit', cwd: root });
 }
 
 if (!fs.existsSync(release)) {

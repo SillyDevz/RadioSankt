@@ -16,14 +16,15 @@
     "evs:verify-electron-dist": "python3 -m castlabs_evs.vmp verify-pkg node_modules/electron/dist",
     "evs:sign-release": "node ./scripts/evs-sign-release.cjs",
     "electron:build": "npm run build && npm run build:electron && npx @electron/rebuild && electron-builder",
-    "electron:build:evs": "npm run electron:build && npm run evs:sign-release",
+    "electron:build:evs": "npm run electron:build",
     "electron:build:win": "npm run build && npm run build:electron && npx @electron/rebuild && electron-builder --win",
-    "electron:build:win:evs": "npm run electron:build:win && npm run evs:sign-release",
+    "electron:build:win:evs": "npm run electron:build:win",
     "electron:build:mac": "npm run build && npm run build:electron && npx @electron/rebuild && electron-builder --mac",
-    "electron:build:mac:evs": "npm run electron:build:mac && npm run evs:sign-release",
+    "electron:build:mac:evs": "npm run electron:build:mac",
     "preview": "vite preview",
     "i18n:check": "node ./scripts/check-i18n.cjs",
-    "check:version-bump": "node ./scripts/check-version-bump.cjs"
+    "check:version-bump": "node ./scripts/check-version-bump.cjs",
+    "check:release-tag": "node ./scripts/check-release-tag.cjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -41,6 +42,7 @@
     "zustand": "^4.5.0"
   },
   "devDependencies": {
+    "@electron/notarize": "^2.2.1",
     "@electron/rebuild": "^3.7.1",
     "@types/better-sqlite3": "^7.6.13",
     "@types/react": "^18.2.0",
