@@ -152,7 +152,7 @@ export default function SearchWidget() {
     'No Spotify device available — open the Spotify app on this computer (or any signed-in device) and try again.';
 
   const handlePlayNow = async (track: SpotifySearchResult) => {
-    window.dispatchEvent(new CustomEvent('radio-sankt:prime-spotify-playback'));
+    window.dispatchEvent(new CustomEvent('radio-sankt:resume-audio-context'));
     let devId = useStore.getState().deviceId || (await waitForDeviceId(15_000));
     if (!devId) {
       addToast(NO_DEVICE_MESSAGE, 'warning');
@@ -180,7 +180,7 @@ export default function SearchWidget() {
   };
 
   const handlePlayPlaylistNow = async (summary: SpotifyPlaylistSummary) => {
-    window.dispatchEvent(new CustomEvent('radio-sankt:prime-spotify-playback'));
+    window.dispatchEvent(new CustomEvent('radio-sankt:resume-audio-context'));
     let devId = useStore.getState().deviceId || (await waitForDeviceId(15_000));
     if (!devId) {
       addToast(NO_DEVICE_MESSAGE, 'warning');

@@ -92,6 +92,7 @@ export function useSpotifyPlayer() {
     isLive,
     deviceId,
     setDeviceId,
+    setDeviceName,
     setSdkReady,
     setIsPlaying,
     setCurrentTrack,
@@ -104,6 +105,7 @@ export function useSpotifyPlayer() {
       isLive: s.isLive,
       deviceId: s.deviceId,
       setDeviceId: s.setDeviceId,
+      setDeviceName: s.setDeviceName,
       setSdkReady: s.setSdkReady,
       setIsPlaying: s.setIsPlaying,
       setCurrentTrack: s.setCurrentTrack,
@@ -140,12 +142,12 @@ export function useSpotifyPlayer() {
 
     if (isPlaying) {
       if (automationStatus === 'playing') await engine.pause();
-      else window.dispatchEvent(new CustomEvent('radio-sankt:spotify-pause-sdk'));
+      else window.dispatchEvent(new CustomEvent('radio-sankt:spotify-pause'));
       return;
     }
 
     if (automationStatus === 'paused') await engine.play();
-    else window.dispatchEvent(new CustomEvent('radio-sankt:spotify-resume-sdk'));
+    else window.dispatchEvent(new CustomEvent('radio-sankt:spotify-resume'));
   }, []);
 
   // ── Device discovery + state poll ─────────────────────────────────────
@@ -156,6 +158,7 @@ export function useSpotifyPlayer() {
       setWebPlaybackDiag('idle', null);
       setSdkReady(false);
       setDeviceId(null);
+      setDeviceName(null);
       setIsPlaying(false);
       setCurrentTrack(null);
       setPosition(0);
@@ -182,6 +185,7 @@ export function useSpotifyPlayer() {
           const deviceChanged = deviceIdRef.current !== picked.id;
           if (deviceChanged) {
             setDeviceId(picked.id);
+            setDeviceName(picked.name);
             setSdkReady(true);
             setWebPlaybackDiag('ready', null);
             cachedDiscoveredDeviceId = picked.id;
@@ -202,6 +206,7 @@ export function useSpotifyPlayer() {
         } else {
           if (deviceIdRef.current !== null) {
             setDeviceId(null);
+            setDeviceName(null);
             setSdkReady(false);
           }
           transferAttemptedFor = null;
@@ -238,6 +243,7 @@ export function useSpotifyPlayer() {
 
         if (state.deviceId && state.deviceId !== deviceIdRef.current) {
           setDeviceId(state.deviceId);
+          if (state.deviceName) setDeviceName(state.deviceName);
           setSdkReady(true);
         }
 
@@ -315,6 +321,7 @@ export function useSpotifyPlayer() {
   }, [
     token,
     setDeviceId,
+    setDeviceName,
     setSdkReady,
     setIsPlaying,
     setCurrentTrack,
@@ -360,22 +367,22 @@ export function useSpotifyPlayer() {
       }
     };
 
-    const onPrime = () => {
+    const onResumeAudioCtx = () => {
       const engine = AudioEngine.get();
       engine?.resumeContextIfNeeded();
     };
 
-    window.addEventListener('radio-sankt:prime-spotify-playback', onPrime);
+    window.addEventListener('radio-sankt:resume-audio-context', onResumeAudioCtx);
     window.addEventListener('radio-sankt:toggle-play', onToggle);
-    window.addEventListener('radio-sankt:spotify-pause-sdk', onSdkPause);
-    window.addEventListener('radio-sankt:spotify-resume-sdk', onSdkResume);
+    window.addEventListener('radio-sankt:spotify-pause', onSdkPause);
+    window.addEventListener('radio-sankt:spotify-resume', onSdkResume);
     window.addEventListener('radio-sankt:live-audio', onLiveAudio as EventListener);
 
     return () => {
-      window.removeEventListener('radio-sankt:prime-spotify-playback', onPrime);
+      window.removeEventListener('radio-sankt:resume-audio-context', onResumeAudioCtx);
       window.removeEventListener('radio-sankt:toggle-play', onToggle);
-      window.removeEventListener('radio-sankt:spotify-pause-sdk', onSdkPause);
-      window.removeEventListener('radio-sankt:spotify-resume-sdk', onSdkResume);
+      window.removeEventListener('radio-sankt:spotify-pause', onSdkPause);
+      window.removeEventListener('radio-sankt:spotify-resume', onSdkResume);
       window.removeEventListener('radio-sankt:live-audio', onLiveAudio as EventListener);
       cancelLiveRamp();
     };
@@ -385,7 +392,7 @@ export function useSpotifyPlayer() {
   useEffect(() => {
     const devId = deviceIdRef.current;
     if (!devId) return;
-    // While live, Spotify channel should stay ducked to 0 unless the live handler raises it.
+    // While live, Spotify device should stay silent; the live handler ramps volume on Live exit.
     if (isLive) return;
     const pct = Math.round(Math.max(0, Math.min(1, volume)) * 100);
     void remoteSetVolumePercent(pct, devId).catch(() => {});
