@@ -30,7 +30,9 @@ function main() {
     .map((x) => x.trim())
     .filter(Boolean);
 
-  if (tagsOnHead.includes(expectedTag)) return;
+  // Accept both `v1.2.3` and `V1.2.3` on HEAD — some past releases used capital V.
+  const matchesExpected = tagsOnHead.some((t) => t.toLowerCase() === expectedTag.toLowerCase());
+  if (matchesExpected) return;
 
   console.error(`\nMissing release tag for version ${headVersion}.`);
   console.error(`Version changed from ${upstreamVersion} to ${headVersion}, but HEAD is not tagged ${expectedTag}.`);

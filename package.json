@@ -1,6 +1,6 @@
 {
   "name": "radio-sankt",
-  "version": "0.1.1",
+  "version": "1.0.18",
   "description": "Radio Sankt",
   "main": "dist/main/index.js",
   "scripts": {
