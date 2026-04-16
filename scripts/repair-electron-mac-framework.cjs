@@ -57,6 +57,4 @@ for (const d of dirs) {
   }
 }
 
-console.log(
-  '\n[Radio Sankt] `electron:dev` uses node_modules/electron/dist — run npm run evs:sign-electron-dist after npm install for Spotify (not only release/).\n',
-);
+console.log('\n[Radio Sankt] postinstall: electron macOS framework symlinks checked.\n');
