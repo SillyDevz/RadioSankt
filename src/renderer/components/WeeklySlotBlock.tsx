@@ -1,4 +1,5 @@
 import type { PointerEvent as ReactPointerEvent } from 'react';
+import i18n from '@/i18n';
 
 export interface ProgramWeeklySlot {
   id: number;
@@ -82,7 +83,7 @@ export function WeeklySlotBlock({
             className="pointer-events-none mt-0.5 inline-flex w-fit max-w-full items-center rounded border border-warning/35 bg-warning/10 px-1.5 py-0.5 text-[10px] font-medium leading-tight text-warning"
             title={shortFillTitle}
           >
-            May repeat / not fill
+            {i18n.t('schedule.shortFillBadge', { defaultValue: 'May repeat / not fill' })}
           </span>
         ) : null}
         <span

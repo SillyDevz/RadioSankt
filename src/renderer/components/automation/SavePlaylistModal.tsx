@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useStore } from '@/store';
+import i18n from '@/i18n';
 
 export default function SavePlaylistModal() {
   const open = useStore((s) => s.savePlaylistModalOpen);
@@ -16,24 +17,24 @@ export default function SavePlaylistModal() {
   if (!open) return null;
 
   const handleSave = async () => {
-    const playlistName = name.trim() || currentPlaylistName || 'Untitled Playlist';
+    const playlistName = name.trim() || currentPlaylistName || i18n.t('automation.playlist.untitled', { defaultValue: 'Untitled Playlist' });
     const stepsJson = JSON.stringify(steps);
 
     try {
       if (currentPlaylistId) {
         await window.electronAPI.updatePlaylist(currentPlaylistId, playlistName, stepsJson);
         setCurrentPlaylistName(playlistName);
-        addToast(`Playlist "${playlistName}" updated`, 'success');
+        addToast(i18n.t('automation.playlist.updated', { name: playlistName, defaultValue: 'Playlist "{{name}}" updated' }), 'success');
       } else {
         const row = await window.electronAPI.savePlaylist(playlistName, stepsJson);
         setCurrentPlaylistId(row.id);
         setCurrentPlaylistName(playlistName);
-        addToast(`Playlist "${playlistName}" saved`, 'success');
+        addToast(i18n.t('automation.playlist.saved', { name: playlistName, defaultValue: 'Playlist "{{name}}" saved' }), 'success');
       }
       setName('');
       setOpen(false);
     } catch {
-      addToast('Failed to save playlist', 'error');
+      addToast(i18n.t('automation.playlist.saveFailed', { defaultValue: 'Failed to save playlist' }), 'error');
     }
   };
 
@@ -46,7 +47,9 @@ export default function SavePlaylistModal() {
       >
         <div className="px-4 py-3 border-b border-border">
           <h2 className="text-sm font-semibold text-text-primary">
-            {currentPlaylistId ? 'Update saved set' : 'Save automation set'}
+            {currentPlaylistId
+              ? i18n.t('automation.playlist.updateSavedSet', { defaultValue: 'Update saved set' })
+              : i18n.t('automation.playlist.saveAutomationSet', { defaultValue: 'Save automation set' })}
           </h2>
         </div>
 
@@ -55,27 +58,29 @@ export default function SavePlaylistModal() {
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder={currentPlaylistName || 'Playlist name'}
+            placeholder={currentPlaylistName || i18n.t('automation.playlist.namePlaceholder', { defaultValue: 'Playlist name' })}
             autoFocus
             onKeyDown={(e) => e.key === 'Enter' && handleSave()}
             className="w-full bg-bg-elevated border border-border rounded px-3 py-2 text-sm text-text-primary outline-none focus:border-accent"
           />
           <div className="text-xs text-text-muted">
-            {steps.length} steps
-            {currentPlaylistId ? ' · Load set restores the last saved version until you Update.' : ''}
+            {i18n.t('automation.playlist.stepsCount', { count: steps.length, defaultValue: '{{count}} steps' })}
+            {currentPlaylistId ? ` · ${i18n.t('automation.playlist.updateHint', { defaultValue: 'Load set restores the last saved version until you Update.' })}` : ''}
           </div>
           <div className="flex justify-end gap-2">
             <button
               onClick={() => { setOpen(false); setName(''); }}
               className="px-3 py-1.5 bg-bg-elevated hover:bg-border text-text-primary rounded text-xs transition-colors"
             >
-              Cancel
+              {i18n.t('common.cancel')}
             </button>
             <button
               onClick={handleSave}
               className="px-3 py-1.5 bg-accent hover:bg-accent-hover text-bg-primary font-medium rounded text-xs transition-colors"
             >
-              {currentPlaylistId ? 'Update' : 'Save'}
+              {currentPlaylistId
+                ? i18n.t('automation.playlist.update', { defaultValue: 'Update' })
+                : i18n.t('common.save')}
             </button>
           </div>
         </div>

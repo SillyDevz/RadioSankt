@@ -26,6 +26,8 @@ import {
   minStartForEnd,
   snapMinute,
 } from '@/utils/weekly-schedule-geometry';
+import { useTranslation } from 'react-i18next';
+import i18n from '@/i18n';
 
 const DISPLAY_START_MIN = 0;
 const DISPLAY_END_MIN = 24 * 60;
@@ -35,7 +37,15 @@ const HOUR_PX = 112;
 /** Floor only so 1–5m slots stay clickable; keep well below a quarter-hour (~HOUR_PX/4). */
 const SLOT_MIN_HEIGHT_PX = 16;
 
-const DOW = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const DOW_KEYS = [
+  'schedule.weekday.mon',
+  'schedule.weekday.tue',
+  'schedule.weekday.wed',
+  'schedule.weekday.thu',
+  'schedule.weekday.fri',
+  'schedule.weekday.sat',
+  'schedule.weekday.sun',
+] as const;
 
 /** Hour + half-hour guides; skip only the 00:00 hour line (header already marks the top). Keep 00:30 dashed. */
 function ScheduleDayGridLines() {
@@ -150,6 +160,8 @@ function slotShowsShortFill(slot: WeeklySlot, blockDurationMin: number, rawEstMs
 }
 
 export default function ProgramSchedulePage() {
+  const { t } = useTranslation();
+  const locale = i18n.language.startsWith('pt') ? 'pt-PT' : 'en-US';
   const addToast = useStore((s) => s.addToast);
   const setCurrentPage = useStore((s) => s.setCurrentPage);
   const followProgramSchedule = useStore((s) => s.followProgramSchedule);
@@ -200,7 +212,7 @@ export default function ProgramSchedulePage() {
       const list = await api.listPlaylists();
       pls = list.map((p) => ({ id: p.id, name: p.name }));
     } catch {
-      useStore.getState().addToast('Could not load saved sets.', 'error');
+      useStore.getState().addToast(i18n.t('schedule.couldNotLoadSets', { defaultValue: 'Could not load saved sets.' }), 'error');
     }
 
     setWeeklySlots(w);
@@ -243,11 +255,11 @@ export default function ProgramSchedulePage() {
       return {
         dow: i,
         date: d,
-        label: DOW[i],
+        label: t(DOW_KEYS[i], { defaultValue: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][i] }),
         dayNum: d.getDate(),
       };
     });
-  }, [monday, workWeekOnly]);
+  }, [locale, monday, t, workWeekOnly]);
 
   const gridHeightPx = ((DISPLAY_END_MIN - DISPLAY_START_MIN) / 60) * HOUR_PX;
 
@@ -408,7 +420,7 @@ export default function ProgramSchedulePage() {
           cur.previewDur === hitSlot.durationMinutes;
         if (same) return;
         if (hasWeeklyConflict(slots, cur.slotId, cur.previewDow, cur.previewStart, cur.previewDur)) {
-          addToast('Overlaps another block — not saved.', 'warning');
+          addToast(t('schedule.overlapNotSaved', { defaultValue: 'Overlaps another block - not saved.' }), 'warning');
           return;
         }
         try {
@@ -430,7 +442,7 @@ export default function ProgramSchedulePage() {
           resetWeeklyScheduleFireKeys();
           await refresh();
         } catch {
-          addToast('Could not update block.', 'error');
+          addToast(t('schedule.couldNotUpdate', { defaultValue: 'Could not update block.' }), 'error');
         }
       };
 
@@ -445,14 +457,14 @@ export default function ProgramSchedulePage() {
     return (
       <div className="h-full flex flex-col items-center justify-center gap-3 text-center px-6">
         <p className="text-text-secondary text-sm max-w-md">
-          Program schedule runs in the desktop app. Open Radio Sankt with Electron to plan weekly blocks.
+          {t('schedule.desktopOnly')}
         </p>
         <button
           type="button"
           onClick={() => setCurrentPage('studio')}
           className="px-4 py-2 rounded-lg bg-accent text-bg-primary text-sm font-medium"
         >
-          Back to studio
+          {t('schedule.backToStudio')}
         </button>
       </div>
     );
@@ -467,10 +479,12 @@ export default function ProgramSchedulePage() {
       )}
       <header className="shrink-0 flex flex-wrap items-center justify-between gap-4">
         <div className="min-w-0 space-y-1">
-          <h1 className="text-xl font-semibold tracking-tight text-text-primary">Program schedule</h1>
+          <h1 className="text-xl font-semibold tracking-tight text-text-primary">{t('schedule.title')}</h1>
           <p className="text-sm text-text-secondary max-w-xl leading-relaxed">
-            Weekly blocks repeat each week. Turn on “Follow schedule” so automation loads the set for the current
-            block (including if you open the app mid-block). The app must stay open.
+            {t('schedule.description', {
+              defaultValue:
+                'Weekly blocks repeat each week. Turn on "Follow schedule" so automation loads the set for the current block (including if you open the app mid-block). The app must stay open.',
+            })}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
@@ -481,7 +495,7 @@ export default function ProgramSchedulePage() {
               onChange={(e) => setFollowProgramSchedule(e.target.checked)}
               className="rounded border-border w-3.5 h-3.5 accent-accent"
             />
-            <span className="font-medium">Follow schedule</span>
+              <span className="font-medium">{t('schedule.follow')}</span>
           </label>
           <label className="flex items-center gap-2 text-sm text-text-secondary cursor-pointer select-none">
             <input
@@ -490,14 +504,14 @@ export default function ProgramSchedulePage() {
               onChange={(e) => setWorkWeekOnly(e.target.checked)}
               className="rounded border-border w-3.5 h-3.5 accent-accent"
             />
-            Mon–Fri only
+            {t('schedule.workweekOnly', { defaultValue: 'Mon-Fri only' })}
           </label>
           <div className="flex items-center rounded-lg border border-border bg-bg-elevated p-0.5">
             <button
               type="button"
               onClick={() => setWeekOffset((o) => o - 1)}
               className="px-2.5 py-1.5 text-sm text-text-secondary rounded-md hover:bg-bg-surface hover:text-text-primary transition-colors"
-              aria-label="Previous week"
+              aria-label={t('schedule.previousWeek')}
             >
               ‹
             </button>
@@ -506,13 +520,13 @@ export default function ProgramSchedulePage() {
               onClick={() => setWeekOffset(0)}
               className="px-3 py-1.5 text-xs font-medium text-text-primary rounded-md hover:bg-bg-surface transition-colors"
             >
-              This week
+              {t('schedule.thisWeek')}
             </button>
             <button
               type="button"
               onClick={() => setWeekOffset((o) => o + 1)}
               className="px-2.5 py-1.5 text-sm text-text-secondary rounded-md hover:bg-bg-surface hover:text-text-primary transition-colors"
-              aria-label="Next week"
+              aria-label={t('schedule.nextWeek')}
             >
               ›
             </button>
@@ -524,12 +538,12 @@ export default function ProgramSchedulePage() {
         <section className="flex-1 min-h-[440px] flex flex-col rounded-2xl border border-border bg-bg-surface overflow-hidden">
           <div className="shrink-0 px-4 py-3 border-b border-border/30 bg-bg-elevated/25 flex items-baseline justify-between gap-3">
             <span className="text-sm font-medium text-text-primary">
-              Week of{' '}
+              {t('schedule.weekOf')}{' '}
               <span className="text-text-secondary font-normal">
-                {monday.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}
+                {monday.toLocaleDateString(locale, { month: 'long', day: 'numeric', year: 'numeric' })}
               </span>
             </span>
-            <span className="text-xs text-text-muted hidden sm:inline">Click a 15-minute slot to add a block</span>
+            <span className="text-xs text-text-muted hidden sm:inline">{t('schedule.clickHint')}</span>
           </div>
           <div className="flex-1 min-h-0 overflow-auto">
             <div className="flex min-w-[800px]">
@@ -555,7 +569,7 @@ export default function ProgramSchedulePage() {
                     if (pre && pre.slotId === s.id) return pre.dow === col.dow;
                     return s.dayOfWeek === col.dow;
                   });
-                  const dateShort = col.date.toLocaleDateString(undefined, { month: 'short' });
+                  const dateShort = col.date.toLocaleDateString(locale, { month: 'short' });
                   return (
                     <div
                       key={col.dow}
@@ -749,7 +763,7 @@ function WeeklySlotModal({
     if (maxAirMin.trim() !== '') {
       const n = Number(maxAirMin);
       if (Number.isNaN(n) || n <= 0) {
-        addToast('Max airtime must be a positive number of minutes or empty.', 'warning');
+        addToast(i18n.t('schedule.maxAirtimeInvalid', { defaultValue: 'Max airtime must be a positive number of minutes or empty.' }), 'warning');
         return;
       }
       maxMs = Math.round(n * 60000);
@@ -785,12 +799,12 @@ function WeeklySlotModal({
           label.trim() || null,
         );
       }
-      addToast('Weekly slot saved.', 'success');
+      addToast(i18n.t('schedule.slotSaved', { defaultValue: 'Weekly slot saved.' }), 'success');
       invalidateWeeklySlotsCache();
       resetWeeklyScheduleFireKeys();
       onSaved();
     } catch {
-      addToast('Could not save slot.', 'error');
+      addToast(i18n.t('schedule.couldNotSaveSlot', { defaultValue: 'Could not save slot.' }), 'error');
     }
   };
 
@@ -806,12 +820,12 @@ function WeeklySlotModal({
     }
     try {
       await del(initial.id);
-      addToast('Removed.', 'info');
+      addToast(i18n.t('schedule.removed', { defaultValue: 'Removed.' }), 'info');
       invalidateWeeklySlotsCache();
       resetWeeklyScheduleFireKeys();
       onSaved();
     } catch {
-      addToast('Could not remove.', 'error');
+      addToast(i18n.t('schedule.couldNotRemove', { defaultValue: 'Could not remove.' }), 'error');
     }
   };
 
@@ -822,8 +836,12 @@ function WeeklySlotModal({
         className="relative w-full max-w-md bg-bg-surface border border-border rounded-xl shadow-2xl p-4 space-y-3"
         onClick={(e) => e.stopPropagation()}
       >
-        <h2 className="text-sm font-semibold">{initial.id == null ? 'New weekly slot' : 'Edit weekly slot'}</h2>
-        <label className="block text-[11px] text-text-muted">Saved set</label>
+        <h2 className="text-sm font-semibold">
+          {initial.id == null
+            ? i18n.t('schedule.modal.newWeeklySlot', { defaultValue: 'New weekly slot' })
+            : i18n.t('schedule.modal.editWeeklySlot', { defaultValue: 'Edit weekly slot' })}
+        </h2>
+        <label className="block text-[11px] text-text-muted">{i18n.t('schedule.modal.savedSet', { defaultValue: 'Saved set' })}</label>
         <select
           value={String(playlistId)}
           onChange={(e) => setPlaylistId(Number(e.target.value))}
@@ -837,27 +855,31 @@ function WeeklySlotModal({
         </select>
         {estimatedMs != null && (
           <p className="text-[11px] text-text-secondary">
-            Estimated length: <span className="text-text-primary font-medium">{formatMsHuman(estimatedMs)}</span> — use
-            max airtime to trim if the slot is shorter.
+            {i18n.t('schedule.modal.estimatedLength', {
+              length: formatMsHuman(estimatedMs),
+              defaultValue: 'Estimated length: {{length}} - use max airtime to trim if the slot is shorter.',
+            })}
           </p>
         )}
         <div className="grid grid-cols-2 gap-2">
           <div>
-            <label className="block text-[11px] text-text-muted mb-0.5">Day</label>
+            <label className="block text-[11px] text-text-muted mb-0.5">{i18n.t('schedule.modal.day', { defaultValue: 'Day' })}</label>
             <select
               value={dayOfWeek}
               onChange={(e) => setDayOfWeek(Number(e.target.value))}
               className="w-full bg-bg-elevated border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
             >
-              {DOW.map((d, i) => (
+              {DOW_KEYS.map((d, i) => (
                 <option key={d} value={i}>
-                  {d}
+                  {i18n.t(`schedule.weekdayFull.${d.split('.').pop()}`, {
+                    defaultValue: ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][i],
+                  })}
                 </option>
               ))}
             </select>
           </div>
           <div>
-            <label className="block text-[11px] text-text-muted mb-0.5">Start</label>
+            <label className="block text-[11px] text-text-muted mb-0.5">{i18n.t('schedule.modal.start', { defaultValue: 'Start' })}</label>
             <input
               type="time"
               value={formatMinAsClock(startMinute)}
@@ -868,7 +890,7 @@ function WeeklySlotModal({
         </div>
         <div className="grid grid-cols-2 gap-2">
           <div>
-            <label className="block text-[11px] text-text-muted mb-0.5">Block length (min)</label>
+            <label className="block text-[11px] text-text-muted mb-0.5">{i18n.t('schedule.modal.blockLength', { defaultValue: 'Block length (min)' })}</label>
             <input
               type="number"
               min={5}
@@ -879,11 +901,11 @@ function WeeklySlotModal({
             />
           </div>
           <div>
-            <label className="block text-[11px] text-text-muted mb-0.5">Max airtime (min, optional)</label>
+            <label className="block text-[11px] text-text-muted mb-0.5">{i18n.t('schedule.modal.maxAirtime', { defaultValue: 'Max airtime (min, optional)' })}</label>
             <input
               type="text"
               inputMode="numeric"
-              placeholder="Trim queue"
+              placeholder={i18n.t('schedule.modal.trimQueue', { defaultValue: 'Trim queue' })}
               value={maxAirMin}
               onChange={(e) => setMaxAirMin(e.target.value)}
               className="w-full bg-bg-elevated border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"
@@ -891,7 +913,7 @@ function WeeklySlotModal({
           </div>
         </div>
         <div>
-          <label className="block text-[11px] text-text-muted mb-0.5">Label (optional)</label>
+          <label className="block text-[11px] text-text-muted mb-0.5">{i18n.t('schedule.modal.labelOptional', { defaultValue: 'Label (optional)' })}</label>
           <input
             type="text"
             value={label}
@@ -902,7 +924,7 @@ function WeeklySlotModal({
         <div className="flex justify-between gap-2 pt-1">
           {initial.id != null ? (
             <button type="button" onClick={() => void remove()} className="text-xs text-danger hover:underline">
-              Delete slot
+              {i18n.t('schedule.modal.deleteSlot', { defaultValue: 'Delete slot' })}
             </button>
           ) : (
             <span />
@@ -913,7 +935,7 @@ function WeeklySlotModal({
               onClick={onClose}
               className="px-3 py-1.5 rounded-lg bg-bg-elevated text-xs text-text-primary hover:bg-border"
             >
-              Cancel
+              {i18n.t('common.cancel')}
             </button>
             <button
               type="button"
@@ -921,7 +943,7 @@ function WeeklySlotModal({
               disabled={playlists.length === 0}
               className="px-3 py-1.5 rounded-lg bg-accent text-bg-primary text-xs font-medium disabled:opacity-40"
             >
-              Save
+              {i18n.t('common.save')}
             </button>
           </div>
         </div>

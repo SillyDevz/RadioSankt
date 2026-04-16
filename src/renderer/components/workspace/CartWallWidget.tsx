@@ -4,6 +4,7 @@ import type { QuickFireSlot } from '@/store';
 import AudioEngine from '@/engine/AudioEngine';
 import AutomationEngine from '@/engine/AutomationEngine';
 import Tooltip from '@/components/Tooltip';
+import i18n from '@/i18n';
 
 import JingleManagerModal from './JingleManagerModal';
 
@@ -132,7 +133,7 @@ function SlotButton({ slot, isPlaying, progress, onPlay, onContextMenu, onAssign
               <path d="M12 5v14M5 12h14" />
             </svg>
           </div>
-          <span className="text-xs font-semibold text-text-secondary">Assign clip</span>
+          <span className="text-xs font-semibold text-text-secondary">{i18n.t('workspace.cart.assignClip', { defaultValue: 'Assign clip' })}</span>
         </div>
       ) : (
         <div className="flex h-full flex-col justify-between">
@@ -210,7 +211,7 @@ export default function CartWallWidget() {
       );
       await waitFade(fadeInMs);
       setIsLive(false);
-      addToast('Back to automation', 'info');
+      addToast(i18n.t('workspace.cart.backToAutomation', { defaultValue: 'Back to automation' }), 'info');
     } else {
       setIsLive(true);
       window.dispatchEvent(
@@ -222,7 +223,7 @@ export default function CartWallWidget() {
       } else {
         window.dispatchEvent(new CustomEvent('radio-sankt:spotify-pause-sdk'));
       }
-      addToast('You are LIVE', 'success');
+      addToast(i18n.t('workspace.cart.youAreLive', { defaultValue: 'You are LIVE' }), 'success');
     }
   }, [isLive, automationStatus, fadeInMs, fadeOutMs, setIsLive, addToast]);
 
@@ -272,7 +273,7 @@ export default function CartWallWidget() {
           return n;
         });
       }
-      addToast('Failed to play cart jingle', 'error');
+      addToast(i18n.t('workspace.cart.failedPlayJingle', { defaultValue: 'Failed to play cart jingle' }), 'error');
     }
   }, [addToast]);
 
@@ -306,8 +307,8 @@ export default function CartWallWidget() {
       <div className="shrink-0 border-b border-border bg-bg-elevated/20 px-6 py-4">
         <div className="flex items-center justify-between gap-4">
           <div>
-            <h2 className="text-base font-bold text-text-primary">Soundboard</h2>
-            <p className="text-xs text-text-muted">Quick-fire clips for live moments</p>
+            <h2 className="text-base font-bold text-text-primary">{i18n.t('workspace.cart.title', { defaultValue: 'Soundboard' })}</h2>
+            <p className="text-xs text-text-muted">{i18n.t('workspace.cart.subtitle', { defaultValue: 'Quick-fire clips for live moments' })}</p>
           </div>
         <Tooltip content={isLive ? 'End live mode and resume automation' : 'Pauses automation and fades out music so you can speak or play content live'} placement="bottom">
           <button
@@ -321,14 +322,14 @@ export default function CartWallWidget() {
             {isLive ? (
               <>
                 <div className="h-2 w-2 rounded-full bg-white animate-pulse-live" />
-                ON AIR
+                {i18n.t('workspace.cart.onAir', { defaultValue: 'ON AIR' })}
               </>
             ) : (
               <>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
                   <circle cx="12" cy="12" r="10" />
                 </svg>
-                GO LIVE
+                {i18n.t('workspace.cart.goLive', { defaultValue: 'GO LIVE' })}
               </>
             )}
           </button>
@@ -364,18 +365,18 @@ export default function CartWallWidget() {
       {renamingSlotId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setRenamingSlotId(null)}>
           <div className="bg-bg-surface border border-border rounded-2xl p-5 w-[320px] shadow-2xl animate-slide-up" onClick={(e) => e.stopPropagation()}>
-            <label className="text-sm font-medium text-text-primary mb-3 block">Rename slot</label>
+            <label className="text-sm font-medium text-text-primary mb-3 block">{i18n.t('workspace.cart.renameSlot', { defaultValue: 'Rename slot' })}</label>
             <input
               autoFocus
               value={renameValue}
               onChange={(e) => setRenameValue(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') handleRenameSubmit(); if (e.key === 'Escape') setRenamingSlotId(null); }}
               className="w-full bg-bg-elevated border border-border rounded-xl px-4 py-2.5 text-sm text-text-primary outline-none focus:border-accent transition-colors"
-              placeholder="Slot name"
+              placeholder={i18n.t('workspace.cart.slotName', { defaultValue: 'Slot name' })}
             />
             <div className="flex justify-end gap-3 mt-4">
-              <button onClick={() => setRenamingSlotId(null)} className="px-4 py-2 text-sm font-medium text-text-secondary hover:text-text-primary transition-colors">Cancel</button>
-              <button onClick={handleRenameSubmit} className="px-4 py-2 bg-accent text-bg-primary text-sm font-bold rounded-xl hover:bg-accent-hover transition-colors shadow-sm">Save</button>
+              <button onClick={() => setRenamingSlotId(null)} className="px-4 py-2 text-sm font-medium text-text-secondary hover:text-text-primary transition-colors">{i18n.t('common.cancel')}</button>
+              <button onClick={handleRenameSubmit} className="px-4 py-2 bg-accent text-bg-primary text-sm font-bold rounded-xl hover:bg-accent-hover transition-colors shadow-sm">{i18n.t('common.save')}</button>
             </div>
           </div>
         </div>

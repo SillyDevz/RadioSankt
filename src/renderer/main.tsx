@@ -4,6 +4,7 @@ import ReactDOM from 'react-dom/client';
 import Layout from './components/Layout';
 import ErrorBoundary from './components/ErrorBoundary';
 import './styles/globals.css';
+import './i18n';
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

@@ -3,6 +3,7 @@ import { useStore } from '@/store';
 import AudioEngine from '@/engine/AudioEngine';
 import Tooltip from '@/components/Tooltip';
 import CoachMark from '@/components/CoachMark';
+import i18n from '@/i18n';
 
 type LibraryKind = 'jingles' | 'ads';
 type AudioAsset = { id: number; name: string; filePath: string; durationMs: number };
@@ -136,19 +137,25 @@ export default function JingleManagerModal({
       <div className="flex flex-col w-full max-w-[800px] h-[80vh] bg-bg-surface border border-border rounded-2xl shadow-2xl overflow-hidden animate-slide-up" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-6 py-4 border-b border-border shrink-0 bg-bg-elevated/20">
           <div className="flex items-center gap-2">
-            <h2 className="text-lg font-bold text-text-primary">{mode === 'assign' ? 'Assign Soundboard Clip' : 'Soundboard Library'}</h2>
+            <h2 className="text-lg font-bold text-text-primary">
+              {mode === 'assign'
+                ? i18n.t('workspace.jingles.assignSoundboardClip', { defaultValue: 'Assign Soundboard Clip' })
+                : i18n.t('workspace.jingles.libraryTitle', { defaultValue: 'Soundboard Library' })}
+            </h2>
             {mode !== 'assign' && (
               <div className="flex rounded-lg bg-bg-elevated p-1">
-                <button type="button" onClick={() => setKind('jingles')} className={`px-3 py-1 text-xs rounded ${shownKind === 'jingles' ? 'bg-bg-surface text-text-primary' : 'text-text-muted'}`}>Jingles</button>
-                <button type="button" onClick={() => setKind('ads')} className={`px-3 py-1 text-xs rounded ${shownKind === 'ads' ? 'bg-bg-surface text-text-primary' : 'text-text-muted'}`}>Ads</button>
+                <button type="button" onClick={() => setKind('jingles')} className={`px-3 py-1 text-xs rounded ${shownKind === 'jingles' ? 'bg-bg-surface text-text-primary' : 'text-text-muted'}`}>{i18n.t('workspace.search.jinglesTab', { defaultValue: 'Jingles' })}</button>
+                <button type="button" onClick={() => setKind('ads')} className={`px-3 py-1 text-xs rounded ${shownKind === 'ads' ? 'bg-bg-surface text-text-primary' : 'text-text-muted'}`}>{i18n.t('workspace.search.adsTab', { defaultValue: 'Ads' })}</button>
               </div>
             )}
           </div>
           <div className="flex items-center gap-4">
-            <Tooltip content={`Add local files to your ${shownKind} library`} placement="bottom">
+            <Tooltip content={i18n.t('workspace.jingles.addLocalFiles', { kind: shownKind, defaultValue: 'Add local files to your {{kind}} library' })} placement="bottom">
               <button onClick={handleAddAsset} data-coachmark="jingles-add-btn" className="px-4 py-2 bg-accent hover:bg-accent-hover text-bg-primary font-medium rounded-lg transition-colors text-sm flex items-center gap-2 shadow-sm">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
-                {shownKind === 'ads' ? 'Add Ad' : 'Add Jingle'}
+                {shownKind === 'ads'
+                  ? i18n.t('workspace.jingles.addAd', { defaultValue: 'Add Ad' })
+                  : i18n.t('workspace.jingles.addJingle', { defaultValue: 'Add Jingle' })}
               </button>
             </Tooltip>
             <button onClick={handleClose} className="p-1.5 text-text-muted hover:text-text-primary hover:bg-bg-elevated rounded-lg transition-colors">
@@ -159,8 +166,12 @@ export default function JingleManagerModal({
         <div className="flex-1 min-h-0 overflow-y-auto p-6">
           {assets.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full gap-4 max-w-md mx-auto text-center opacity-80">
-              <h3 className="text-lg font-bold text-text-primary">No {shownKind} yet</h3>
-              <p className="text-text-secondary text-sm">{shownKind === 'ads' ? 'Ads are used by automation break rules.' : 'Jingles can be used in automation and live soundboard slots.'}</p>
+              <h3 className="text-lg font-bold text-text-primary">{i18n.t('workspace.jingles.noneYet', { kind: shownKind, defaultValue: 'No {{kind}} yet' })}</h3>
+              <p className="text-text-secondary text-sm">
+                {shownKind === 'ads'
+                  ? i18n.t('workspace.jingles.adsHelp', { defaultValue: 'Ads are used by automation break rules.' })
+                  : i18n.t('workspace.jingles.jinglesHelp', { defaultValue: 'Jingles can be used in automation and live soundboard slots.' })}
+              </p>
             </div>
           ) : (
             <div className="grid grid-cols-[repeat(auto-fill,minmax(200px,1fr))] gap-4">
@@ -176,16 +187,16 @@ export default function JingleManagerModal({
                       <span onDoubleClick={() => { setEditingId(asset.id); setEditName(asset.name); }} className="mt-8 text-sm font-medium text-text-primary text-center truncate cursor-text" title={asset.name}>{asset.name}</span>
                     )}
                     <div className="flex items-center justify-center gap-3 pt-2 border-t border-border/50">
-                      <Tooltip content={isPlaying ? 'Stop' : 'Play'} placement="bottom">
+                      <Tooltip content={isPlaying ? i18n.t('automation.queue.stop', { defaultValue: 'Stop' }) : i18n.t('nowPlaying.play', { defaultValue: 'Play' })} placement="bottom">
                         <button onClick={() => handlePlay(asset)} className={`w-10 h-10 flex items-center justify-center rounded-full transition-colors shadow-sm ${isPlaying ? 'bg-accent text-bg-primary' : 'bg-bg-surface text-text-secondary hover:text-text-primary hover:scale-105'}`} aria-label={isPlaying ? 'Stop clip' : 'Play clip'}>
                           {isPlaying ? <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" /><rect x="14" y="4" width="4" height="16" /></svg> : <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="6 3 20 12 6 21 6 3" /></svg>}
                         </button>
                       </Tooltip>
                       {mode === 'assign' ? (
-                        <button onClick={() => onSelect?.(asset)} className="px-4 py-1.5 bg-accent text-white text-xs font-bold rounded-lg hover:bg-accent-hover transition-colors shadow-sm">ASSIGN</button>
+                        <button onClick={() => onSelect?.(asset)} className="px-4 py-1.5 bg-accent text-white text-xs font-bold rounded-lg hover:bg-accent-hover transition-colors shadow-sm">{i18n.t('workspace.jingles.assign', { defaultValue: 'ASSIGN' })}</button>
                       ) : (
-                        <Tooltip content="Delete" placement="bottom">
-                          <button onClick={() => handleDelete(asset.id)} className="w-10 h-10 flex items-center justify-center rounded-full bg-bg-surface text-text-muted hover:text-danger hover:bg-danger/10 transition-colors opacity-0 group-hover:opacity-100" aria-label="Delete clip">
+                        <Tooltip content={i18n.t('common.delete')} placement="bottom">
+                          <button onClick={() => handleDelete(asset.id)} className="w-10 h-10 flex items-center justify-center rounded-full bg-bg-surface text-text-muted hover:text-danger hover:bg-danger/10 transition-colors opacity-0 group-hover:opacity-100" aria-label={i18n.t('workspace.jingles.deleteClip', { defaultValue: 'Delete clip' })}>
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" /></svg>
                           </button>
                         </Tooltip>

@@ -2,8 +2,10 @@ import { useRef, useCallback } from 'react';
 import { useStore, type Page, type Track } from '@/store';
 import { useSpotifyPlayer } from '@/hooks/useSpotifyPlayer';
 import Tooltip from './Tooltip';
+import { useTranslation } from 'react-i18next';
 
 function MainNav() {
+  const { t } = useTranslation();
   const currentPage = useStore((s) => s.currentPage);
   const setCurrentPage = useStore((s) => s.setCurrentPage);
   const Item = ({ page, label }: { page: Page; label: string }) => (
@@ -20,26 +22,26 @@ function MainNav() {
     </button>
   );
   return (
-    <div className="flex items-center gap-0.5 shrink-0" role="navigation" aria-label="Main">
-      <Item page="studio" label="Studio" />
-      <Item page="program" label="Program" />
-      <Item page="settings" label="Settings" />
+    <div className="flex items-center gap-0.5 shrink-0" role="navigation" aria-label={t('nav.main')}>
+      <Item page="studio" label={t('nav.studio')} />
+      <Item page="program" label={t('nav.program')} />
+      <Item page="settings" label={t('nav.settings')} />
     </div>
   );
 }
 
-function playbackSource(track: Track): { label: string; tooltip: string; className: string } {
+function playbackSource(track: Track, t: (key: string) => string): { label: string; tooltip: string; className: string } {
   if (track.uri?.startsWith('spotify:')) {
     return {
-      label: 'Spotify',
-      tooltip: 'Streaming from Spotify',
+      label: t('nowPlaying.source.spotify'),
+      tooltip: t('nowPlaying.source.spotifyTooltip'),
       className:
         'shrink-0 rounded px-1.5 py-0.5 text-[9px] font-semibold text-accent bg-accent/10',
     };
   }
   return {
-    label: 'Local',
-    tooltip: 'Playing a file from this computer (your library)',
+    label: t('nowPlaying.source.local'),
+    tooltip: t('nowPlaying.source.localTooltip'),
     className:
       'shrink-0 rounded border border-border bg-bg-elevated px-1.5 py-0.5 text-[9px] font-semibold text-text-secondary',
   };
@@ -53,6 +55,7 @@ function formatTime(ms: number): string {
 }
 
 export default function NowPlayingBar() {
+  const { t } = useTranslation();
   const currentTrack = useStore((s) => s.currentTrack);
   const isPlaying = useStore((s) => s.isPlaying);
   const volume = useStore((s) => s.volume);
@@ -113,7 +116,7 @@ export default function NowPlayingBar() {
     return (
       <div className="grid h-now-playing w-full grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-4 border-t border-border bg-bg-surface px-6">
         <span className="text-sm font-semibold text-text-primary truncate">Radio Sankt</span>
-        <span className="text-text-muted text-sm text-center justify-self-center">No track playing</span>
+        <span className="text-text-muted text-sm text-center justify-self-center">{t('nowPlaying.none')}</span>
         <div className="justify-self-end">
           <MainNav />
         </div>
@@ -121,7 +124,7 @@ export default function NowPlayingBar() {
     );
   }
 
-  const source = playbackSource(currentTrack);
+  const source = playbackSource(currentTrack, t);
 
   return (
     <div className="grid h-now-playing w-full grid-cols-[280px_minmax(0,1fr)_280px] items-stretch gap-x-4 bg-bg-surface border-t border-border px-6">
@@ -158,7 +161,7 @@ export default function NowPlayingBar() {
             <div className="flex h-10 w-full max-w-[280px] translate-y-[7.5px] items-center justify-center gap-x-1">
               <div className="flex h-10 min-w-0 flex-1 items-center justify-end">
               <Tooltip
-                content={automationTransport ? 'Previous automation step' : 'Previous track'}
+                content={automationTransport ? t('nowPlaying.prevStep') : t('nowPlaying.prevTrack')}
                 shortcut="Shift+P"
                 referenceClassName="size-10 shrink-0"
               >
@@ -166,7 +169,7 @@ export default function NowPlayingBar() {
                   type="button"
                   onClick={previousTrack}
                   className="grid size-10 shrink-0 place-items-center rounded-full leading-none text-text-secondary transition-colors hover:bg-bg-elevated hover:text-text-primary"
-                  aria-label="Previous track"
+                  aria-label={t('nowPlaying.prevTrack')}
                 >
                   <svg className="block shrink-0" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
                     <path d="M6 6h2v12H6zm3.5 6 8.5 6V6z" />
@@ -179,14 +182,14 @@ export default function NowPlayingBar() {
               <Tooltip
                 content={
                   automationStatus === 'waitingAtPause'
-                    ? 'Continue automation'
+                    ? t('nowPlaying.continueAutomation')
                     : hasAutomationQueue
                       ? transportShowsPause
-                        ? 'Pause automation'
-                        : 'Resume automation'
+                        ? t('nowPlaying.pauseAutomation')
+                        : t('nowPlaying.resumeAutomation')
                       : isPlaying
-                        ? 'Pause'
-                        : 'Play'
+                        ? t('nowPlaying.pause')
+                        : t('nowPlaying.play')
                 }
                 shortcut="Space"
                 referenceClassName="size-10 shrink-0"
@@ -197,10 +200,10 @@ export default function NowPlayingBar() {
                   className="grid size-10 shrink-0 place-items-center rounded-full leading-none bg-text-primary text-bg-primary shadow-sm transition-transform hover:scale-105"
                   aria-label={
                     automationStatus === 'waitingAtPause'
-                      ? 'Continue automation'
+                      ? t('nowPlaying.continueAutomation')
                       : transportShowsPause
-                        ? 'Pause'
-                        : 'Play'
+                        ? t('nowPlaying.pause')
+                        : t('nowPlaying.play')
                   }
                 >
                   {transportShowsPause ? (
@@ -219,7 +222,7 @@ export default function NowPlayingBar() {
 
               <div className="flex h-10 min-w-0 flex-1 items-center justify-start">
               <Tooltip
-                content={automationTransport ? 'Next automation step' : 'Next track'}
+                content={automationTransport ? t('nowPlaying.nextStep') : t('nowPlaying.nextTrack')}
                 shortcut="Shift+N"
                 referenceClassName="size-10 shrink-0"
               >
@@ -227,7 +230,7 @@ export default function NowPlayingBar() {
                   type="button"
                   onClick={nextTrack}
                   className="grid size-10 shrink-0 place-items-center rounded-full leading-none text-text-secondary transition-colors hover:bg-bg-elevated hover:text-text-primary"
-                  aria-label="Next track"
+                  aria-label={t('nowPlaying.nextTrack')}
                 >
                   <svg className="block shrink-0" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
                     <path d="M16 6h2v12h-2zm-3.5 6L4 6v12z" />
@@ -244,7 +247,7 @@ export default function NowPlayingBar() {
               {formatTime(position)}
             </span>
             <Tooltip
-              content="Click or drag; far right goes to the end (last ~0.1s — Spotify limit)"
+              content={t('nowPlaying.seekHelp')}
               placement="top"
               referenceClassName="min-w-0 flex-1 self-stretch"
             >
@@ -256,7 +259,7 @@ export default function NowPlayingBar() {
                 onPointerUp={onSeekPointerUp}
                 onPointerCancel={onSeekPointerUp}
                 role="slider"
-                aria-label="Seek"
+                aria-label={t('nowPlaying.seek')}
                 aria-valuenow={position}
                 aria-valuemin={0}
                 aria-valuemax={duration}
@@ -277,8 +280,8 @@ export default function NowPlayingBar() {
             <button
               type="button"
               className="flex h-8 w-10 shrink-0 cursor-pointer items-center justify-start border-0 bg-transparent p-0 text-left text-xs font-medium tabular-nums text-text-muted transition-colors hover:text-text-secondary"
-              title="Double-click: jump near end (for testing transitions)"
-              aria-label="Seek near end of track"
+              title={t('nowPlaying.seekNearEndTitle')}
+              aria-label={t('nowPlaying.seekNearEnd')}
               onDoubleClick={() => duration > 0 && seek(duration)}
             >
               {formatTime(duration)}
@@ -289,12 +292,12 @@ export default function NowPlayingBar() {
 
       {/* Right: Volume, LIVE, then page nav */}
       <div className="flex h-full min-h-0 min-w-0 items-center justify-end gap-3 justify-self-end">
-        <Tooltip content="Master volume for Spotify playback" placement="top">
+        <Tooltip content={t('nowPlaying.masterVolumeTooltip')} placement="top">
           <div className="flex items-center gap-2">
             <button
               onClick={() => setVolume(volume > 0 ? 0 : 0.8)}
               className="p-1 text-text-secondary hover:text-text-primary transition-colors"
-              aria-label={volume > 0 ? 'Mute' : 'Unmute'}
+              aria-label={volume > 0 ? t('nowPlaying.mute') : t('nowPlaying.unmute')}
             >
               {volume === 0 ? (
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -329,7 +332,7 @@ export default function NowPlayingBar() {
                 hover:[&::-webkit-slider-thumb]:bg-accent
                 [&::-moz-range-track]:h-1 [&::-moz-range-track]:rounded-full [&::-moz-range-track]:border-0 [&::-moz-range-track]:bg-bg-elevated
                 [&::-moz-range-thumb]:h-3 [&::-moz-range-thumb]:w-3 [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:bg-text-primary"
-              aria-label="Volume"
+              aria-label={t('nowPlaying.volume')}
             />
           </div>
         </Tooltip>

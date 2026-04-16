@@ -1,13 +1,16 @@
 import { useState, useEffect } from 'react';
 import { useStore } from '@/store';
 import { openExternal } from '@/utils/openExternal';
+import { useTranslation } from 'react-i18next';
 
-const STEPS = ['Welcome', 'Spotify', 'Jingles', 'Ready'];
+const STEPS = ['Language', 'Welcome', 'Spotify', 'Jingles', 'Ready'];
 
 export default function OnboardingWizard() {
+  const { t } = useTranslation();
   const step = useStore((s) => s.onboardingStep);
   const setStep = useStore((s) => s.setOnboardingStep);
   const setHasCompletedOnboarding = useStore((s) => s.setHasCompletedOnboarding);
+  const setLanguage = useStore((s) => s.setLanguage);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
@@ -30,10 +33,11 @@ export default function OnboardingWizard() {
 
         {/* Step content */}
         <div className="flex-1 overflow-y-auto px-10 py-6">
-          {step === 0 && <StepWelcome onNext={() => setStep(1)} />}
-          {step === 1 && <StepSpotify onNext={() => setStep(2)} onSkip={() => setStep(2)} />}
-          {step === 2 && <StepJingles onNext={() => setStep(3)} />}
-          {step === 3 && (
+          {step === 0 && <StepLanguage onNext={(lang) => { setLanguage(lang); setStep(1); }} />}
+          {step === 1 && <StepWelcome onNext={() => setStep(2)} />}
+          {step === 2 && <StepSpotify onNext={() => setStep(3)} onSkip={() => setStep(3)} />}
+          {step === 3 && <StepJingles onNext={() => setStep(4)} />}
+          {step === 4 && (
             <StepReady
               onFinish={() => {
                 setHasCompletedOnboarding(true);
@@ -46,9 +50,40 @@ export default function OnboardingWizard() {
   );
 }
 
+function StepLanguage({ onNext }: { onNext: (language: 'en' | 'pt') => void }) {
+  const { t, i18n } = useTranslation();
+  return (
+    <div className="flex flex-col items-center text-center gap-5">
+      <h1 className="text-2xl font-bold text-text-primary">{t('onboarding.language.title')}</h1>
+      <p className="text-text-secondary text-sm leading-relaxed max-w-md">{t('onboarding.language.body')}</p>
+      <div className="grid grid-cols-2 gap-3 w-full max-w-sm">
+        <button
+          onClick={() => {
+            void i18n.changeLanguage('en');
+            onNext('en');
+          }}
+          className="px-4 py-3 rounded-lg border border-border bg-bg-elevated hover:border-accent text-sm font-medium text-text-primary transition-colors"
+        >
+          🇺🇸 {t('onboarding.language.english')}
+        </button>
+        <button
+          onClick={() => {
+            void i18n.changeLanguage('pt');
+            onNext('pt');
+          }}
+          className="px-4 py-3 rounded-lg border border-border bg-bg-elevated hover:border-accent text-sm font-medium text-text-primary transition-colors"
+        >
+          🇵🇹 {t('onboarding.language.portuguese')}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Step 1: Welcome ─────────────────────────────────────────────────────
 
 function StepWelcome({ onNext }: { onNext: () => void }) {
+  const { t } = useTranslation();
   return (
     <div className="flex flex-col items-center text-center gap-5">
       {/* App icon */}
@@ -59,17 +94,16 @@ function StepWelcome({ onNext }: { onNext: () => void }) {
         </svg>
       </div>
 
-      <h1 className="text-2xl font-bold text-text-primary">Welcome to Radio Sankt</h1>
+      <h1 className="text-2xl font-bold text-text-primary">{t('onboarding.welcome.title')}</h1>
       <p className="text-text-secondary text-sm leading-relaxed max-w-md">
-        Build and broadcast your own radio station using your Spotify library. Automate your
-        playlist, add jingles, and go live — all from one place.
+        {t('onboarding.welcome.body')}
       </p>
 
       <button
         onClick={onNext}
         className="mt-4 px-6 py-2.5 bg-accent hover:bg-accent-hover text-bg-primary font-medium rounded-lg transition-colors text-sm"
       >
-        Get Started →
+        {t('onboarding.welcome.getStarted')}
       </button>
     </div>
   );
@@ -78,6 +112,7 @@ function StepWelcome({ onNext }: { onNext: () => void }) {
 // ── Step 2: Connect Spotify ─────────────────────────────────────────────
 
 function StepSpotify({ onNext, onSkip }: { onNext: () => void; onSkip: () => void }) {
+  const { t } = useTranslation();
   const setClientId = useStore((s) => s.setClientId);
   const connected = useStore((s) => s.connected);
   const user = useStore((s) => s.user);
@@ -99,8 +134,8 @@ function StepSpotify({ onNext, onSkip }: { onNext: () => void; onSkip: () => voi
       setConnecting(false);
       setError(
         authError
-          ? `Connection failed: ${authError}`
-          : 'Connection failed — double-check your Client ID and make sure the Redirect URI is set correctly.',
+          ? t('onboarding.spotify.connectionFailed', { error: authError })
+          : t('onboarding.spotify.connectionFailedGeneric'),
       );
     });
 
@@ -122,7 +157,7 @@ function StepSpotify({ onNext, onSkip }: { onNext: () => void; onSkip: () => voi
       await window.electronAPI.initiateSpotifyAuth();
     } catch (err) {
       setConnecting(false);
-      setError(`Failed to start Spotify auth: ${err instanceof Error ? err.message : String(err)}`);
+      setError(t('onboarding.spotify.startAuthFailed', { error: err instanceof Error ? err.message : String(err) }));
     }
   };
 
@@ -134,12 +169,11 @@ function StepSpotify({ onNext, onSkip }: { onNext: () => void; onSkip: () => voi
 
   return (
     <div className="flex flex-col gap-5">
-      <h1 className="text-xl font-bold text-text-primary text-center">Connect your Spotify account</h1>
+      <h1 className="text-xl font-bold text-text-primary text-center">{t('onboarding.spotify.title')}</h1>
 
       {!inElectron && (
         <div className="bg-amber-500/10 border border-amber-500/30 rounded-lg px-4 py-3 text-xs text-amber-200 leading-relaxed">
-          This screen is open in a normal browser tab, so Spotify login cannot run here (there is no Electron bridge).
-          Close this preview and start the desktop shell from the project folder:{' '}
+          {t('onboarding.spotify.browserWarning', { command: '' })}{' '}
           <code className="bg-bg-primary/80 px-1.5 py-0.5 rounded font-mono text-text-primary">npm run electron:dev</code>
         </div>
       )}
@@ -171,8 +205,7 @@ function StepSpotify({ onNext, onSkip }: { onNext: () => void; onSkip: () => voi
 
       {/* Explanation */}
       <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg px-4 py-3 text-xs text-blue-300 leading-relaxed">
-        This app uses the Spotify API to search and play music. You'll need a free Spotify Developer
-        account to get a Client ID — it takes about 2 minutes.
+        {t('onboarding.spotify.explain')}
       </div>
 
       {/* Numbered steps */}
@@ -180,7 +213,7 @@ function StepSpotify({ onNext, onSkip }: { onNext: () => void; onSkip: () => voi
         <li className="flex items-start gap-3">
           <span className="w-5 h-5 rounded-full bg-bg-elevated text-text-muted text-xs flex items-center justify-center shrink-0 mt-0.5">1</span>
           <span>
-            Go to{' '}
+            {t('onboarding.spotify.step1')}{' '}
             <button
               onClick={() => openExternal('https://developer.spotify.com/dashboard')}
               className="text-accent hover:underline"
@@ -191,16 +224,16 @@ function StepSpotify({ onNext, onSkip }: { onNext: () => void; onSkip: () => voi
         </li>
         <li className="flex items-start gap-3">
           <span className="w-5 h-5 rounded-full bg-bg-elevated text-text-muted text-xs flex items-center justify-center shrink-0 mt-0.5">2</span>
-          <span>Sign in and click "Create App"</span>
+          <span>{t('onboarding.spotify.step2')}</span>
         </li>
         <li className="flex items-start gap-3">
           <span className="w-5 h-5 rounded-full bg-bg-elevated text-text-muted text-xs flex items-center justify-center shrink-0 mt-0.5">3</span>
-          <span>Fill in any name/description</span>
+          <span>{t('onboarding.spotify.step3')}</span>
         </li>
         <li className="flex items-start gap-3">
           <span className="w-5 h-5 rounded-full bg-bg-elevated text-text-muted text-xs flex items-center justify-center shrink-0 mt-0.5">4</span>
           <div className="flex flex-col gap-1.5">
-            <span>In Redirect URIs, add:</span>
+            <span>{t('onboarding.spotify.step4')}</span>
             <div className="flex items-center gap-2">
               <code className="bg-bg-primary border border-border px-3 py-1.5 rounded text-xs text-text-muted font-mono">
                 http://127.0.0.1:8888/callback
@@ -209,14 +242,14 @@ function StepSpotify({ onNext, onSkip }: { onNext: () => void; onSkip: () => voi
                 onClick={handleCopy}
                 className="px-2 py-1.5 bg-bg-elevated border border-border rounded text-xs text-text-secondary hover:text-text-primary transition-colors"
               >
-                {copied ? '✓ Copied' : 'Copy'}
+                {copied ? `✓ ${t('onboarding.spotify.copied')}` : t('onboarding.spotify.copy')}
               </button>
             </div>
           </div>
         </li>
         <li className="flex items-start gap-3">
           <span className="w-5 h-5 rounded-full bg-bg-elevated text-text-muted text-xs flex items-center justify-center shrink-0 mt-0.5">5</span>
-          <span>Save, then copy your Client ID from the app dashboard</span>
+          <span>{t('onboarding.spotify.step5')}</span>
         </li>
       </ol>
 
@@ -226,7 +259,7 @@ function StepSpotify({ onNext, onSkip }: { onNext: () => void; onSkip: () => voi
           type="text"
           value={clientIdInput}
           onChange={(e) => setClientIdInput(e.target.value)}
-          placeholder="Paste your Client ID here"
+          placeholder={t('onboarding.spotify.placeholder')}
           className="flex-1 bg-bg-elevated border border-border rounded px-3 py-2.5 text-sm text-text-primary placeholder:text-text-muted outline-none focus:border-accent transition-colors"
           disabled={connected}
         />
@@ -246,7 +279,7 @@ function StepSpotify({ onNext, onSkip }: { onNext: () => void; onSkip: () => voi
             <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
             <polyline points="22 4 12 14.01 9 11.01" />
           </svg>
-          Connected as {user || '...'}
+          {t('onboarding.spotify.connectedAs', { user: user || '...' })}
         </div>
       )}
 
@@ -256,7 +289,7 @@ function StepSpotify({ onNext, onSkip }: { onNext: () => void; onSkip: () => voi
           onClick={onSkip}
           className="text-xs text-text-muted hover:text-text-secondary transition-colors"
         >
-          I'll do this later
+          {t('onboarding.spotify.doLater')}
         </button>
 
         {connected ? (
@@ -264,7 +297,7 @@ function StepSpotify({ onNext, onSkip }: { onNext: () => void; onSkip: () => voi
             onClick={onNext}
             className="px-6 py-2.5 bg-accent hover:bg-accent-hover text-bg-primary font-medium rounded-lg transition-colors text-sm"
           >
-            Continue →
+            {t('common.continue')} →
           </button>
         ) : (
           <button
@@ -272,7 +305,7 @@ function StepSpotify({ onNext, onSkip }: { onNext: () => void; onSkip: () => voi
             disabled={!clientIdInput.trim() || connecting || !inElectron}
             className="px-6 py-2.5 bg-accent hover:bg-accent-hover text-bg-primary font-medium rounded-lg transition-colors text-sm disabled:opacity-30 disabled:cursor-not-allowed"
           >
-            {connecting ? 'Connecting...' : 'Connect Spotify'}
+            {connecting ? t('onboarding.spotify.connecting') : t('onboarding.spotify.connect')}
           </button>
         )}
       </div>
@@ -283,6 +316,7 @@ function StepSpotify({ onNext, onSkip }: { onNext: () => void; onSkip: () => voi
 // ── Step 3: Add Jingle ──────────────────────────────────────────────────
 
 function StepJingles({ onNext }: { onNext: () => void }) {
+  const { t } = useTranslation();
   const addJingle = useStore((s) => s.addJingle);
   const [pickedFile, setPickedFile] = useState<{ name: string; durationMs: number } | null>(null);
 
@@ -318,10 +352,9 @@ function StepJingles({ onNext }: { onNext: () => void }) {
 
   return (
     <div className="flex flex-col items-center text-center gap-5">
-      <h1 className="text-xl font-bold text-text-primary">Add a jingle or vinheta</h1>
+      <h1 className="text-xl font-bold text-text-primary">{t('onboarding.jingles.title')}</h1>
       <p className="text-text-secondary text-sm leading-relaxed max-w-md">
-        Jingles are short audio clips that play between songs — station IDs, sound effects, news
-        tones, or ads. They're what makes it feel like a real radio station.
+        {t('onboarding.jingles.body')}
       </p>
 
       {pickedFile ? (
@@ -350,7 +383,7 @@ function StepJingles({ onNext }: { onNext: () => void }) {
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
             <path d="M12 5v14M5 12h14" />
           </svg>
-          Add a jingle file
+          {t('onboarding.jingles.addFile')}
         </button>
       )}
 
@@ -359,14 +392,14 @@ function StepJingles({ onNext }: { onNext: () => void }) {
           onClick={onNext}
           className="text-xs text-text-muted hover:text-text-secondary transition-colors"
         >
-          Skip for now →
+          {t('onboarding.jingles.skip')}
         </button>
         {pickedFile && (
           <button
             onClick={onNext}
             className="px-6 py-2.5 bg-accent hover:bg-accent-hover text-bg-primary font-medium rounded-lg transition-colors text-sm"
           >
-            Continue →
+            {t('common.continue')} →
           </button>
         )}
       </div>
@@ -404,9 +437,10 @@ const APP_SECTIONS = [
 ];
 
 function StepReady({ onFinish }: { onFinish: () => void }) {
+  const { t } = useTranslation();
   return (
     <div className="flex flex-col items-center text-center gap-5">
-      <h1 className="text-xl font-bold text-text-primary">You're all set! 🎙</h1>
+      <h1 className="text-xl font-bold text-text-primary">{t('onboarding.ready.title')} 🎙</h1>
 
       <div className="grid grid-cols-2 gap-3 w-full">
         {APP_SECTIONS.map((s) => (
@@ -425,7 +459,7 @@ function StepReady({ onFinish }: { onFinish: () => void }) {
         onClick={onFinish}
         className="mt-2 px-6 py-2.5 bg-accent hover:bg-accent-hover text-bg-primary font-medium rounded-lg transition-colors text-sm"
       >
-        Open the app →
+        {t('onboarding.ready.openApp')}
       </button>
     </div>
   );

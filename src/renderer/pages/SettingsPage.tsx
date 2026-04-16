@@ -5,33 +5,51 @@ import { ACCENT_COLORS } from '@/store';
 import Tooltip from '@/components/Tooltip';
 import { openExternal } from '@/utils/openExternal';
 import { clearSpotifyUserIdCache } from '@/services/spotify-api';
+import { useTranslation } from 'react-i18next';
 
-const WEB_PLAYBACK_HELP: Record<WebPlaybackPhase, string> = {
-  idle: 'Log in to Spotify to start the in-app player.',
-  loading_sdk: 'Loading the Spotify script from sdk.scdn.co…',
-  initializing: 'Creating the Web Playback player instance…',
-  connecting:
-    'Calling player.connect() — waits for Widevine / permissions. If this never becomes Ready: from the project root run npm run evs:sign-electron-dist (Castlabs EVS), then restart. See docs/widevine-and-evs.md.',
-  ready: 'You can play tracks from search and automation.',
-  error:
-    'See details below. If it mentions connect() false, Authentication failed, or WebSocket closed: (1) npm run evs:sign-electron-dist after every npm install, (2) reconnect Spotify here, (3) Premium + streaming scope. Read docs/widevine-and-evs.md.',
-};
+function webPlaybackHelp(t: (key: string) => string): Record<WebPlaybackPhase, string> {
+  return {
+    idle: t('settings.spotify.webPlayback.idle'),
+    loading_sdk: t('settings.spotify.webPlayback.loadingSdk'),
+    initializing: t('settings.spotify.webPlayback.initializing'),
+    connecting: t('settings.spotify.webPlayback.connecting'),
+    ready: t('settings.spotify.webPlayback.ready'),
+    error: t('settings.spotify.webPlayback.error'),
+  };
+}
 
-const ACCENT_SWATCHES: { id: AccentColor; label: string }[] = [
-  { id: 'green', label: 'Spotify Green' },
-  { id: 'blue', label: 'Blue' },
-  { id: 'purple', label: 'Purple' },
-  { id: 'orange', label: 'Orange' },
-  { id: 'red', label: 'Red' },
-];
+function accentSwatches(t: (key: string) => string): { id: AccentColor; label: string }[] {
+  return [
+    { id: 'green', label: t('settings.accent.green') },
+    { id: 'blue', label: t('settings.accent.blue') },
+    { id: 'purple', label: t('settings.accent.purple') },
+    { id: 'orange', label: t('settings.accent.orange') },
+    { id: 'red', label: t('settings.accent.red') },
+  ];
+}
 
-const SONG_TRANSITIONS: { id: SongTransitionMode; label: string }[] = [
-  { id: 'immediate', label: 'Immediate' },
-  { id: 'fade', label: 'Fade' },
-  { id: 'crossfade', label: 'Crossfade' },
-];
+function songTransitions(t: (key: string) => string): { id: SongTransitionMode; label: string }[] {
+  return [
+    { id: 'immediate', label: t('settings.transition.immediate') },
+    { id: 'fade', label: t('settings.transition.fade') },
+    { id: 'crossfade', label: t('settings.transition.crossfade') },
+  ];
+}
+
+function shortcutLabel(id: string, t: (key: string, options?: { defaultValue?: string }) => string, fallback: string): string {
+  if (id === 'play-pause') return t('settings.shortcuts.playPause', { defaultValue: fallback });
+  if (id === 'stop') return t('settings.shortcuts.stop', { defaultValue: fallback });
+  if (id === 'continue') return t('settings.shortcuts.continueAtPause', { defaultValue: fallback });
+  if (id === 'search') return t('settings.shortcuts.openSpotifySearch', { defaultValue: fallback });
+  if (id === 'live') return t('settings.shortcuts.toggleLiveMode', { defaultValue: fallback });
+  return fallback;
+}
 
 export default function SettingsPage() {
+  const { t, i18n } = useTranslation();
+  const WEB_PLAYBACK_HELP = webPlaybackHelp(t);
+  const ACCENT_SWATCHES = accentSwatches(t);
+  const SONG_TRANSITIONS = songTransitions(t);
   const [version, setVersion] = useState('dev');
   const connected = useStore((s) => s.connected);
   const webPlaybackPhase = useStore((s) => s.webPlaybackPhase);
@@ -53,6 +71,8 @@ export default function SettingsPage() {
   const autoUpdate = useStore((s) => s.autoUpdate);
   const shortcuts = useStore((s) => s.shortcuts);
   const setTheme = useStore((s) => s.setTheme);
+  const language = useStore((s) => s.language);
+  const setLanguage = useStore((s) => s.setLanguage);
   const setAccentColor = useStore((s) => s.setAccentColor);
   const setSongTransitionMode = useStore((s) => s.setSongTransitionMode);
   const setFadeInMs = useStore((s) => s.setFadeInMs);
@@ -121,12 +141,12 @@ export default function SettingsPage() {
     if (!trimmed) return;
     await window.electronAPI?.saveSpotifyClientId(trimmed);
     setClientId(trimmed);
-    addToast('Client ID saved', 'success');
+    addToast(t('settings.spotify.saveClientIdSuccess'), 'success');
   };
 
   const handleConnect = async () => {
     if (!clientId) {
-      addToast('Enter your Client ID first', 'warning');
+      addToast(t('settings.spotify.enterClientId'), 'warning');
       return;
     }
     await window.electronAPI?.initiateSpotifyAuth();
@@ -140,29 +160,29 @@ export default function SettingsPage() {
     try {
       const r = await api.checkForUpdates();
       if (r == null || typeof r !== 'object' || typeof (r as { ok?: unknown }).ok !== 'boolean') {
-        addToast('Update check returned nothing valid. Fully quit and reopen the app so main and UI stay in sync.', 'warning');
+        addToast(t('settings.updates.invalidResponse'), 'warning');
         return;
       }
       if (!r.ok) {
         if (r.reason === 'development') {
-          addToast('Updates are only checked in the installed app, not in development.', 'info');
+          addToast(t('settings.updates.devOnly'), 'info');
         } else if (r.reason === 'error') {
-          addToast(r.message || 'Could not check for updates', 'error');
+          addToast(r.message || t('settings.updates.couldNotCheck'), 'error');
         } else {
-          addToast('Update check is unavailable.', 'warning');
+          addToast(t('settings.updates.unavailable'), 'warning');
         }
         return;
       }
       if (!r.isUpdateAvailable) {
         addToast(
           r.remoteVersion
-            ? `You’re up to date. Latest release on the update server is v${r.remoteVersion}.`
-            : 'You’re up to date.',
+            ? t('settings.updates.upToDateWithVersion', { version: r.remoteVersion })
+            : t('settings.updates.upToDate'),
           'success',
         );
       }
     } catch (e) {
-      addToast(e instanceof Error ? e.message : 'Could not check for updates', 'error');
+      addToast(e instanceof Error ? e.message : t('settings.updates.couldNotCheck'), 'error');
     } finally {
       checkUpdateInFlight.current = false;
       setCheckingUpdate(false);
@@ -174,7 +194,7 @@ export default function SettingsPage() {
     await window.electronAPI?.saveToStore('spotifyLastGrantedScopesDisplay', '');
     clearSpotifyUserIdCache();
     useStore.getState().disconnectSpotify();
-    addToast('Disconnected from Spotify', 'info');
+    addToast(t('settings.spotify.disconnected'), 'info');
   };
 
   function formatShortcut(shortcut: { key: string; modifiers: string[] }): string {
@@ -197,13 +217,13 @@ export default function SettingsPage() {
             type="button"
             onClick={() => setCurrentPage('studio')}
             className="shrink-0 p-2 rounded-lg text-text-secondary hover:text-text-primary hover:bg-bg-elevated transition-colors"
-            aria-label="Back to studio"
+            aria-label={t('settings.backToStudio')}
           >
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M19 12H5M12 19l-7-7 7-7" />
             </svg>
           </button>
-          <h1 className="text-xl font-semibold text-text-primary truncate">Settings</h1>
+          <h1 className="text-xl font-semibold text-text-primary truncate">{t('settings.title')}</h1>
         </div>
         <span className="text-xs text-text-muted bg-bg-elevated px-2 py-1 rounded shrink-0">v{version}</span>
       </div>
@@ -217,11 +237,11 @@ export default function SettingsPage() {
               d="M12 0C5.4 0 0 5.4 0 12s5.4 12 12 12 12-5.4 12-12S18.66 0 12 0zm5.521 17.34c-.24.359-.66.48-1.021.24-2.82-1.74-6.36-2.101-10.561-1.141-.418.122-.779-.179-.899-.539-.12-.421.18-.78.54-.9 4.56-1.021 8.52-.6 11.64 1.32.42.18.479.659.301 1.02zm1.44-3.3c-.301.42-.841.6-1.262.3-3.239-1.98-8.159-2.58-11.939-1.38-.479.12-1.02-.12-1.14-.6-.12-.48.12-1.021.6-1.141C9.6 9.9 15 10.561 18.72 12.84c.361.181.54.78.241 1.2zm.12-3.36C15.24 8.4 8.82 8.16 5.16 9.301c-.6.179-1.2-.181-1.38-.721-.18-.601.18-1.2.72-1.381 4.26-1.26 11.28-1.02 15.721 1.621.539.3.719 1.02.419 1.56-.299.421-1.02.599-1.559.3z"
             />
           </svg>
-          <span className="text-sm font-medium text-text-primary">Spotify</span>
+          <span className="text-sm font-medium text-text-primary">{t('settings.sections.spotify')}</span>
           <div className="ml-auto flex items-center gap-2">
             <div className={`w-2 h-2 rounded-full ${connected ? 'bg-accent' : 'bg-danger'}`} />
             <span className="text-xs text-text-secondary">
-              {connected ? `Connected as ${user || '...'}` : 'Not connected'}
+              {connected ? t('settings.spotify.connectedAs', { user: user || '...' }) : t('settings.spotify.notConnected')}
             </span>
           </div>
         </div>
@@ -235,14 +255,12 @@ export default function SettingsPage() {
               <path d="M12 8h.01" />
             </svg>
             <div className="flex-1">
-              <p className="text-xs text-blue-300">
-                You need a free Spotify Developer account to use this app. Click "How to connect" to learn more.
-              </p>
+              <p className="text-xs text-blue-300">{t('settings.spotify.infoBox')}</p>
               <button
                 onClick={() => setShowHelp(!showHelp)}
                 className="mt-2 text-xs text-blue-400 hover:text-blue-300 underline underline-offset-2 transition-colors"
               >
-                How to connect
+                {t('settings.spotify.howToConnect')}
               </button>
             </div>
           </div>
@@ -250,35 +268,29 @@ export default function SettingsPage() {
           {/* Help panel */}
           {showHelp && (
             <div className="bg-bg-elevated rounded-lg px-4 py-3 text-xs text-text-secondary flex flex-col gap-2">
-              <p className="font-medium text-text-primary">Setup instructions:</p>
+              <p className="font-medium text-text-primary">{t('settings.spotify.setupInstructions')}</p>
               <ol className="list-decimal list-inside flex flex-col gap-1.5 pl-1">
-                <li>Go to <button onClick={() => openExternal('https://developer.spotify.com/dashboard')} className="text-accent hover:underline">developer.spotify.com/dashboard</button></li>
-                <li>Log in with your Spotify account (free or premium)</li>
-                <li>Click "Create app"</li>
-                <li>Set the Redirect URI to <code className="bg-bg-primary px-1 py-0.5 rounded text-text-muted">http://127.0.0.1:8888/callback</code> exactly (not https)</li>
-                <li>In APIs, enable Web API and Web Playback SDK</li>
-                <li>If the app is in Development mode, add your Spotify login under User management so the Web API accepts your account</li>
-                <li>
-                  Copy the <strong>Client ID of the app you just created</strong> (yours), not another product’s ID.
-                  When you click Connect, the Spotify page must show <strong>that app’s name</strong>. If it says “Stream Deck,”
-                  “Google,” etc., the Client ID is wrong — paste the ID from your app’s Settings on the dashboard.
-                </li>
-                <li>Click "Connect"</li>
+                <li>{t('settings.spotify.setup.step1')} <button onClick={() => openExternal('https://developer.spotify.com/dashboard')} className="text-accent hover:underline">developer.spotify.com/dashboard</button></li>
+                <li>{t('settings.spotify.setup.step2')}</li>
+                <li>{t('settings.spotify.setup.step3')}</li>
+                <li>{t('settings.spotify.setup.step4')} <code className="bg-bg-primary px-1 py-0.5 rounded text-text-muted">http://127.0.0.1:8888/callback</code> {t('settings.spotify.setup.step4Suffix')}</li>
+                <li>{t('settings.spotify.setup.step5')}</li>
+                <li>{t('settings.spotify.setup.step6')}</li>
+                <li>{t('settings.spotify.setup.step7')}</li>
+                <li>{t('settings.spotify.setup.step8')}</li>
               </ol>
             </div>
           )}
 
           <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-[11px] text-amber-100/95 leading-snug">
-            The Spotify permission screen must match <strong>your</strong> developer app (the name you gave it on the dashboard).
-            If Spotify asks you to approve <strong>Stream Deck</strong> or any app you did not create, clear the Client ID field,
-            create your own app on the dashboard, and paste <strong>its</strong> Client ID — otherwise playlists will always fail with 403.
+            {t('settings.spotify.warningText')}
           </div>
 
           {/* Client ID input */}
           <div className="flex flex-col gap-1.5">
             <div className="flex items-center gap-1.5">
-              <label className="text-xs text-text-secondary" htmlFor="spotify-client-id">Client ID</label>
-              <Tooltip content="Your Spotify app's Client ID from developer.spotify.com/dashboard" placement="top">
+              <label className="text-xs text-text-secondary" htmlFor="spotify-client-id">{t('settings.spotify.clientId')}</label>
+              <Tooltip content={t('settings.spotify.clientIdTooltip')} placement="top">
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-text-muted cursor-help">
                   <circle cx="12" cy="12" r="10" /><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" /><path d="M12 17h.01" />
                 </svg>
@@ -290,7 +302,7 @@ export default function SettingsPage() {
                 type="text"
                 value={clientIdInput}
                 onChange={(e) => setClientIdInput(e.target.value)}
-                placeholder="Paste your Client ID here"
+                placeholder={t('onboarding.spotify.placeholder')}
                 className="flex-1 bg-bg-elevated border border-border rounded-lg px-3 py-2 text-sm text-text-primary placeholder:text-text-muted outline-none focus:border-accent transition-colors"
               />
               <button
@@ -298,7 +310,7 @@ export default function SettingsPage() {
                 disabled={!clientIdInput.trim() || clientIdInput.trim() === clientId}
                 className="px-3 py-2 bg-bg-elevated border border-border rounded-lg text-sm text-text-secondary hover:text-text-primary hover:border-text-muted transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
               >
-                Save
+                {t('common.save')}
               </button>
             </div>
           </div>
@@ -306,11 +318,11 @@ export default function SettingsPage() {
           {/* Connect / Disconnect */}
           <div className="flex items-center gap-3">
             {connected ? (
-              <button
+            <button
                 onClick={handleDisconnect}
                 className="px-4 py-2 bg-danger/10 border border-danger/20 text-danger rounded-lg text-sm hover:bg-danger/20 transition-colors"
               >
-                Disconnect
+                {t('settings.spotify.disconnect')}
               </button>
             ) : (
               <button
@@ -318,7 +330,7 @@ export default function SettingsPage() {
                 disabled={!clientId}
                 className="px-4 py-2 bg-accent text-white font-medium rounded-lg text-sm hover:bg-accent-hover transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
               >
-                Connect
+                {t('settings.spotify.connect')}
               </button>
             )}
             {connected && userAvatar && (
@@ -328,11 +340,7 @@ export default function SettingsPage() {
 
           {connected && (
             <div className="text-[10px] leading-snug space-y-2">
-              <p className="text-text-secondary">
-                Spotify’s “Agree” page often only mentions <em>public</em> playlists; the real list is in the browser tab
-                after login (stays open) and below. You need <code className="text-text-primary">playlist-read-private</code>{' '}
-                for “Your playlists.”
-              </p>
+              <p className="text-text-secondary">{t('settings.spotify.scopesHint')}</p>
               {spotifyGrantedScopes ? (
                 <>
                   <textarea
@@ -340,22 +348,22 @@ export default function SettingsPage() {
                     value={spotifyGrantedScopes}
                     rows={4}
                     className="w-full resize-y min-h-[4.5rem] bg-bg-primary border border-border rounded-lg px-2 py-1.5 text-[10px] font-mono text-text-primary"
-                    aria-label="OAuth scopes from last login"
+                    aria-label={t('settings.spotify.oauthScopesAria')}
                   />
                   <button
                     type="button"
                     onClick={() => {
                       void navigator.clipboard.writeText(spotifyGrantedScopes).then(() => {
-                        addToast('Scopes copied', 'success');
+                        addToast(t('settings.spotify.scopesCopied'), 'success');
                       });
                     }}
                     className="text-[10px] text-accent hover:underline"
                   >
-                    Copy scopes to clipboard
+                    {t('settings.spotify.copyScopes')}
                   </button>
                 </>
               ) : (
-                <p className="text-text-muted text-[10px]">Scopes aren’t loaded yet — switch away and back to Settings, or reconnect.</p>
+                <p className="text-text-muted text-[10px]">{t('settings.spotify.scopesNotLoaded')}</p>
               )}
             </div>
           )}
@@ -363,7 +371,7 @@ export default function SettingsPage() {
           {connected && (
             <div className="rounded-lg border border-border bg-bg-elevated/50 px-4 py-3 space-y-2">
               <div className="flex items-center justify-between gap-2">
-                <span className="text-xs font-medium text-text-primary">In-app Web Player</span>
+                <span className="text-xs font-medium text-text-primary">{t('settings.spotify.inAppWebPlayer')}</span>
                 <span
                   className={`text-[10px] uppercase tracking-wide font-semibold ${
                     webPlaybackPhase === 'ready'
@@ -388,12 +396,13 @@ export default function SettingsPage() {
                   onClick={() => window.electronAPI.toggleDevTools()}
                   className="text-[11px] text-accent hover:underline underline-offset-2"
                 >
-                  Open Developer Tools (Console)
+                  {t('settings.spotify.openDevTools')}
                 </button>
               ) : (
                 <p className="text-[11px] text-text-muted">
-                  In the browser, open DevTools with <kbd className="px-1 rounded bg-bg-primary font-mono text-text-secondary">F12</kbd> or{' '}
-                  <kbd className="px-1 rounded bg-bg-primary font-mono text-text-secondary">⌥⌘I</kbd> (macOS). Use Electron for Spotify debugging.
+                  {t('settings.spotify.devtoolsBrowserHelp')}{' '}
+                  <kbd className="px-1 rounded bg-bg-primary font-mono text-text-secondary">F12</kbd> /{' '}
+                  <kbd className="px-1 rounded bg-bg-primary font-mono text-text-secondary">⌥⌘I</kbd>.
                 </p>
               )}
             </div>
@@ -404,13 +413,13 @@ export default function SettingsPage() {
       {/* ── Audio Defaults ──────────────────────────────────────────── */}
       <section className="bg-bg-surface border border-border rounded-xl overflow-hidden">
         <div className="px-5 py-4 border-b border-border">
-          <span className="text-sm font-medium text-text-primary">Audio Defaults</span>
+          <span className="text-sm font-medium text-text-primary">{t('settings.sections.audioDefaults')}</span>
         </div>
         <div className="px-5 py-4 flex flex-col gap-4">
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-1.5">
-              <span className="text-sm text-text-secondary">Song transition</span>
-              <Tooltip content="Applies to song and playlist steps in the queue" placement="top">
+              <span className="text-sm text-text-secondary">{t('settings.transition.label')}</span>
+              <Tooltip content={t('settings.transition.tooltip')} placement="top">
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-text-muted cursor-help"><circle cx="12" cy="12" r="10" /><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" /><path d="M12 17h.01" /></svg>
               </Tooltip>
             </div>
@@ -432,8 +441,8 @@ export default function SettingsPage() {
           <div className="grid grid-cols-2 gap-4">
             <div className="flex flex-col gap-1.5">
               <div className="flex items-center gap-1.5">
-                <label className="text-xs text-text-secondary" htmlFor="fade-in">Fade in (ms)</label>
-                <Tooltip content="Default duration for fading audio in when a track starts" placement="top">
+                <label className="text-xs text-text-secondary" htmlFor="fade-in">{t('settings.transition.fadeInMs')}</label>
+                <Tooltip content={t('settings.transition.fadeInTooltip')} placement="top">
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-text-muted cursor-help"><circle cx="12" cy="12" r="10" /><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" /><path d="M12 17h.01" /></svg>
                 </Tooltip>
               </div>
@@ -450,8 +459,8 @@ export default function SettingsPage() {
             </div>
             <div className="flex flex-col gap-1.5">
               <div className="flex items-center gap-1.5">
-                <label className="text-xs text-text-secondary" htmlFor="fade-out">Fade out (ms)</label>
-                <Tooltip content="Default duration for fading audio out when a track ends" placement="top">
+                <label className="text-xs text-text-secondary" htmlFor="fade-out">{t('settings.transition.fadeOutMs')}</label>
+                <Tooltip content={t('settings.transition.fadeOutTooltip')} placement="top">
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-text-muted cursor-help"><circle cx="12" cy="12" r="10" /><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" /><path d="M12 17h.01" /></svg>
                 </Tooltip>
               </div>
@@ -468,8 +477,8 @@ export default function SettingsPage() {
             </div>
             <div className="flex flex-col gap-1.5">
               <div className="flex items-center gap-1.5">
-                <label className="text-xs text-text-secondary" htmlFor="crossfade">Crossfade (ms)</label>
-                <Tooltip content="Duration of the overlap when crossfading between two tracks" placement="top">
+                <label className="text-xs text-text-secondary" htmlFor="crossfade">{t('settings.transition.crossfadeMs')}</label>
+                <Tooltip content={t('settings.transition.crossfadeTooltip')} placement="top">
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-text-muted cursor-help"><circle cx="12" cy="12" r="10" /><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" /><path d="M12 17h.01" /></svg>
                 </Tooltip>
               </div>
@@ -486,8 +495,8 @@ export default function SettingsPage() {
             </div>
             <div className="flex flex-col gap-1.5">
               <div className="flex items-center gap-1.5">
-                <label className="text-xs text-text-secondary" htmlFor="duck-level">Duck level (%)</label>
-                <Tooltip content="How much to reduce music volume when a jingle plays over it. Lower = quieter music." placement="top">
+                <label className="text-xs text-text-secondary" htmlFor="duck-level">{t('settings.transition.duckLevel')}</label>
+                <Tooltip content={t('settings.transition.duckTooltip')} placement="top">
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-text-muted cursor-help"><circle cx="12" cy="12" r="10" /><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" /><path d="M12 17h.01" /></svg>
                 </Tooltip>
               </div>
@@ -514,12 +523,12 @@ export default function SettingsPage() {
       {/* ── Updates ─────────────────────────────────────────────────── */}
       <section className="bg-bg-surface border border-border rounded-xl overflow-hidden">
         <div className="px-5 py-4 border-b border-border">
-          <span className="text-sm font-medium text-text-primary">Updates</span>
+          <span className="text-sm font-medium text-text-primary">{t('settings.sections.updates')}</span>
         </div>
         <div className="px-5 py-4 flex flex-col gap-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <span className="text-sm text-text-secondary">Current version</span>
+              <span className="text-sm text-text-secondary">{t('settings.updates.currentVersion')}</span>
               <span className="text-xs text-text-muted bg-bg-elevated px-2 py-0.5 rounded">v{version}</span>
             </div>
             <button
@@ -528,12 +537,12 @@ export default function SettingsPage() {
               disabled={checkingUpdate}
               className="px-3 py-1.5 bg-bg-elevated border border-border rounded-lg text-xs text-text-secondary hover:text-text-primary hover:border-text-muted transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              {checkingUpdate ? 'Checking…' : 'Check for updates'}
+              {checkingUpdate ? t('settings.updates.checking') : t('settings.updates.check')}
             </button>
           </div>
 
           <div className="flex items-center justify-between">
-            <span className="text-sm text-text-secondary">Auto-update on launch</span>
+            <span className="text-sm text-text-secondary">{t('settings.updates.autoUpdateOnLaunch')}</span>
             <button
               onClick={() => setAutoUpdate(!autoUpdate)}
               className={`relative w-10 h-5 rounded-full transition-colors ${autoUpdate ? 'bg-accent' : 'bg-bg-elevated border border-border'}`}
@@ -549,30 +558,59 @@ export default function SettingsPage() {
       {/* ── Appearance ──────────────────────────────────────────────── */}
       <section className="bg-bg-surface border border-border rounded-xl overflow-hidden">
         <div className="px-5 py-4 border-b border-border">
-          <span className="text-sm font-medium text-text-primary">Appearance</span>
+          <span className="text-sm font-medium text-text-primary">{t('settings.sections.appearance')}</span>
         </div>
         <div className="px-5 py-4 flex flex-col gap-5">
           {/* Theme toggle */}
           <div className="flex items-center justify-between">
-            <span className="text-sm text-text-secondary">Theme</span>
+              <span className="text-sm text-text-secondary">{t('settings.theme.label', { defaultValue: 'Theme' })}</span>
             <div className="flex bg-bg-elevated rounded-lg p-0.5">
-              {(['dark', 'light'] as ThemeMode[]).map((t) => (
+              {(['dark', 'light'] as ThemeMode[]).map((themeOption) => (
                 <button
-                  key={t}
-                  onClick={() => setTheme(t)}
+                  key={themeOption}
+                  onClick={() => setTheme(themeOption)}
                   className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors capitalize ${
-                    theme === t ? 'bg-accent text-white' : 'text-text-secondary hover:text-text-primary'
+                    theme === themeOption ? 'bg-accent text-white' : 'text-text-secondary hover:text-text-primary'
                   }`}
                 >
-                  {t}
+                  {t(`settings.theme.${themeOption}`)}
                 </button>
               ))}
+            </div>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-text-secondary">{t('settings.language.label')}</span>
+            <div className="flex bg-bg-elevated rounded-lg p-0.5">
+              <button
+                type="button"
+                onClick={() => {
+                  setLanguage('en');
+                  void i18n.changeLanguage('en');
+                }}
+                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                  language === 'en' ? 'bg-accent text-white' : 'text-text-secondary hover:text-text-primary'
+                }`}
+              >
+                🇺🇸 {t('settings.language.en')}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setLanguage('pt');
+                  void i18n.changeLanguage('pt');
+                }}
+                className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors ${
+                  language === 'pt' ? 'bg-accent text-white' : 'text-text-secondary hover:text-text-primary'
+                }`}
+              >
+                🇵🇹 {t('settings.language.pt')}
+              </button>
             </div>
           </div>
 
           {/* Accent color */}
           <div className="flex items-center justify-between">
-            <span className="text-sm text-text-secondary">Accent color</span>
+            <span className="text-sm text-text-secondary">{t('settings.accentColor', { defaultValue: 'Accent color' })}</span>
             <div className="flex gap-2">
               {ACCENT_SWATCHES.map(({ id, label }) => (
                 <Tooltip key={id} content={label} placement="top">
@@ -597,12 +635,12 @@ export default function SettingsPage() {
       {/* ── Keyboard Shortcuts ──────────────────────────────────────── */}
       <section className="bg-bg-surface border border-border rounded-xl overflow-hidden">
         <div className="px-5 py-4 border-b border-border">
-          <span className="text-sm font-medium text-text-primary">Keyboard Shortcuts</span>
+          <span className="text-sm font-medium text-text-primary">{t('settings.sections.shortcuts')}</span>
         </div>
         <div className="divide-y divide-border">
           {shortcuts.map((shortcut) => (
             <div key={shortcut.id} className="px-5 py-3 flex items-center justify-between">
-              <span className="text-sm text-text-secondary">{shortcut.label}</span>
+              <span className="text-sm text-text-secondary">{shortcutLabel(shortcut.id, t, shortcut.label)}</span>
               <button
                 onClick={() => setRebindingId(shortcut.id)}
                 className={`px-3 py-1 rounded-lg text-xs font-mono transition-colors ${
@@ -611,7 +649,7 @@ export default function SettingsPage() {
                     : 'bg-bg-elevated border border-border text-text-primary hover:border-text-muted'
                 }`}
               >
-                {rebindingId === shortcut.id ? 'Press a key...' : formatShortcut(shortcut)}
+                {rebindingId === shortcut.id ? t('settings.shortcuts.pressKey') : formatShortcut(shortcut)}
               </button>
             </div>
           ))}

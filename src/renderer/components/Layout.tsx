@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, lazy, Suspense } from 'react';
 import { useStore } from '@/store';
-import type { Page, CoachMarkId, AccentColor, ThemeMode, QuickFireSlot, ShortcutBinding, SongTransitionMode } from '@/store';
+import type { Page, CoachMarkId, AccentColor, ThemeMode, ShortcutBinding, SongTransitionMode } from '@/store';
 import { ACCENT_COLORS } from '@/store';
 import { clearSpotifyUserIdCache, getProfile } from '@/services/spotify-api';
 import MacTitleBarInset from './MacTitleBarInset';
@@ -17,6 +17,8 @@ import {
   resetWeeklyScheduleFireKeys,
   runScheduleTick,
 } from '@/services/automation-session';
+import i18n, { isAppLanguage } from '@/i18n';
+import { useTranslation } from 'react-i18next';
 
 const Workspace = lazy(() => import('@/components/workspace/Workspace'));
 const ProgramSchedulePage = lazy(() => import('@/pages/ProgramSchedulePage'));
@@ -42,11 +44,13 @@ function Layout() {
   const theme = useStore((s) => s.theme);
   const accentColor = useStore((s) => s.accentColor);
   const followProgramSchedule = useStore((s) => s.followProgramSchedule);
+  const language = useStore((s) => s.language);
   const PageComponent = pages[currentPage];
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const prevFollowScheduleRef = useRef<boolean | null>(null);
   useAutoUpdate();
   useKeyboardShortcuts();
+  const { t } = useTranslation();
 
   // Persisted settings + last automation queue (session)
   useEffect(() => {
@@ -71,6 +75,9 @@ function Layout() {
         if (val && typeof val === 'object') useStore.setState({ seenCoachMarks: val as Record<CoachMarkId, boolean> });
       }),
       api.getFromStore('theme').then((val) => { if (val) useStore.setState({ theme: val as ThemeMode }); }),
+      api.getFromStore('language').then((val) => {
+        if (isAppLanguage(val)) useStore.setState({ language: val });
+      }),
       api.getFromStore('accentColor').then((val) => { if (val) useStore.setState({ accentColor: val as AccentColor }); }),
       api.getFromStore('songTransitionMode').then((val) => {
         if (val === 'immediate' || val === 'fade' || val === 'crossfade') {
@@ -116,6 +123,10 @@ function Layout() {
   }, []);
 
   useEffect(() => {
+    void i18n.changeLanguage(language);
+  }, [language]);
+
+  useEffect(() => {
     if (!settingsLoaded) return;
     prevFollowScheduleRef.current = useStore.getState().followProgramSchedule;
   }, [settingsLoaded]);
@@ -153,7 +164,7 @@ function Layout() {
       if (granted) {
         void api.saveToStore('spotifyLastGrantedScopesDisplay', granted);
       }
-      useStore.getState().addToast('Connected to Spotify', 'success');
+      useStore.getState().addToast(t('layout.auth.connectedSpotify'), 'success');
       try {
         const profile = await getProfile();
         useStore.setState({ user: profile.displayName, userAvatar: profile.avatar });
@@ -163,7 +174,7 @@ function Layout() {
     });
 
     const unsubError = api.onSpotifyAuthError((error) => {
-      useStore.getState().addToast(`Spotify auth failed: ${error}`, 'error');
+      useStore.getState().addToast(t('layout.auth.spotifyFailed', { error }), 'error');
     });
 
     const unsubScopeReset =
@@ -201,12 +212,15 @@ function Layout() {
       {showWebPreviewBanner && (
         <div className="shrink-0 z-[60] px-4 py-2 text-center text-xs text-amber-100 bg-amber-900/40 border-b border-amber-500/30 leading-snug space-y-1">
           <p>
-            Browser preview only — Spotify and file access need Electron. Run{' '}
+            {t('layout.browserPreview.line1', { command: '' })}
+            {' '}
             <code className="px-1 py-0.5 rounded bg-bg-primary/50 font-mono text-text-primary">npm run electron:dev</code>
-            {' '}(Vite + desktop; DevTools opens docked at the bottom).
           </p>
           <p>
-            In this tab only, use <kbd className="px-1 py-0.5 rounded bg-bg-primary/50 font-mono">F12</kbd> or macOS{' '}
+            {t('layout.browserPreview.line2', { f12: '', macShortcut: '' })}
+            {' '}
+            <kbd className="px-1 py-0.5 rounded bg-bg-primary/50 font-mono">F12</kbd>
+            {' / '}
             <kbd className="px-1 py-0.5 rounded bg-bg-primary/50 font-mono">⌥⌘I</kbd> for DevTools.
           </p>
         </div>
@@ -225,7 +239,7 @@ function Layout() {
             {showMacTitleInset && <MacTitleBarInset />}
             <div className="flex flex-1 min-h-0 overflow-hidden">
             <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-6">
-              <Suspense fallback={<div className="flex items-center justify-center min-h-[40vh]"><span className="text-text-muted text-sm">Loading...</span></div>}>
+              <Suspense fallback={<div className="flex items-center justify-center min-h-[40vh]"><span className="text-text-muted text-sm">{t('common.loading')}</span></div>}>
                 <div key={currentPage} className="animate-page-enter min-h-0 h-full">
                   <PageComponent />
                 </div>

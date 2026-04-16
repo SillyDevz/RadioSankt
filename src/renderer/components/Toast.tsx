@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useStore } from '@/store';
+import { useTranslation } from 'react-i18next';
 
 interface ToastAction {
   label: string;
@@ -49,6 +50,7 @@ const variantIcons: Record<Toast['variant'], JSX.Element> = {
 };
 
 function ToastItem({ toast }: { toast: Toast }) {
+  const { t } = useTranslation();
   const removeToast = useStore((s) => s.removeToast);
   const { border, icon } = variantStyles[toast.variant];
 
@@ -77,7 +79,7 @@ function ToastItem({ toast }: { toast: Toast }) {
       <button
         onClick={() => removeToast(toast.id)}
         className="text-text-muted hover:text-text-secondary shrink-0 ml-1"
-        aria-label="Dismiss"
+        aria-label={t('toasts.dismiss')}
       >
         <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
           <path d="M3.5 3.5l7 7M10.5 3.5l-7 7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />

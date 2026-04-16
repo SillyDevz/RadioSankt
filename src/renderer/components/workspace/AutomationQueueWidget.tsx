@@ -20,6 +20,7 @@ import Tooltip from '@/components/Tooltip';
 import EmptyState from '@/components/automation/EmptyState';
 import SavePlaylistModal from '@/components/automation/SavePlaylistModal';
 import LoadPlaylistModal from '@/components/automation/LoadPlaylistModal';
+import i18n from '@/i18n';
 
 const checkboxClassName = 'shrink-0 cursor-pointer rounded border-border w-3.5 h-3.5 accent-accent';
 
@@ -53,21 +54,21 @@ function QueueHeader() {
   return (
     <div className="px-6 py-4 border-b border-border bg-bg-elevated/20 shrink-0 space-y-3">
       <div className="flex items-center justify-between">
-        <h2 className="text-base font-bold text-text-primary">Automation Queue</h2>
+        <h2 className="text-base font-bold text-text-primary">{i18n.t('automation.queue.title', { defaultValue: 'Automation Queue' })}</h2>
         <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={() => setLoadPlaylistModalOpen(true)}
             className="px-3 py-1.5 bg-bg-elevated hover:bg-border text-text-primary rounded-lg text-xs font-medium transition-colors"
           >
-            Load set
+            {i18n.t('automation.queue.loadSet', { defaultValue: 'Load set' })}
           </button>
           <button
             type="button"
             onClick={() => setSavePlaylistModalOpen(true)}
             className="px-3 py-1.5 bg-bg-elevated hover:bg-border text-text-primary rounded-lg text-xs font-medium transition-colors"
           >
-            Save set
+            {i18n.t('automation.queue.saveSet', { defaultValue: 'Save set' })}
           </button>
         </div>
       </div>
@@ -82,31 +83,35 @@ function QueueHeader() {
                   checked={breakRule.enabled}
                   onChange={(e) => updateBreakRule(breakRule.id, { enabled: e.target.checked })}
                 />
-                <span className="shrink-0">Dynamic breaks</span>
+                <span className="shrink-0">{i18n.t('automation.queue.dynamicBreaks', { defaultValue: 'Dynamic breaks' })}</span>
               </label>
               <button
                 type="button"
                 onClick={() => setShowConfig((v) => !v)}
                 className="shrink-0 rounded px-2 py-1 text-text-muted hover:bg-bg-elevated hover:text-text-primary"
               >
-                {showConfig ? 'Hide' : 'Configure'}
+                {showConfig ? i18n.t('automation.queue.hide', { defaultValue: 'Hide' }) : i18n.t('automation.queue.configure', { defaultValue: 'Configure' })}
               </button>
             </div>
             <p className="text-text-muted pl-[calc(0.875rem+0.5rem)] leading-snug">
-              Every {breakRule.everySongs} songs, <span className="lowercase">play</span> {breakRule.itemsPerBreak} clips,{' '}
-              <span className="lowercase">avoid</span> repeating last {breakRule.avoidRecent}
+              {i18n.t('automation.queue.ruleSummary', {
+                songs: breakRule.everySongs,
+                clips: breakRule.itemsPerBreak,
+                avoid: breakRule.avoidRecent,
+                defaultValue: 'Every {{songs}} songs, play {{clips}} clips, avoid repeating last {{avoid}}',
+              })}
             </p>
           </div>
           {showConfig && (
             <div className="flex flex-wrap items-center gap-2 text-xs pt-1">
-              <span className="text-text-muted">Every</span>
+              <span className="text-text-muted">{i18n.t('automation.queue.every', { defaultValue: 'Every' })}</span>
               <input type="number" min={1} value={breakRule.everySongs} onChange={(e) => updateBreakRule(breakRule.id, { everySongs: Math.max(1, Number(e.target.value) || 1) })} className="w-14 bg-bg-elevated border border-border rounded px-2 py-1 text-text-primary" />
               <span className="text-text-muted">
-                songs, <span className="lowercase">play</span>
+                {i18n.t('automation.queue.songsPlay', { defaultValue: 'songs, play' })}
               </span>
               <input type="number" min={1} value={breakRule.itemsPerBreak} onChange={(e) => updateBreakRule(breakRule.id, { itemsPerBreak: Math.max(1, Number(e.target.value) || 1) })} className="w-14 bg-bg-elevated border border-border rounded px-2 py-1 text-text-primary" />
               <span className="text-text-muted">
-                clips, <span className="lowercase">avoid</span> repeating last
+                {i18n.t('automation.queue.clipsAvoid', { defaultValue: 'clips, avoid repeating last' })}
               </span>
               <input type="number" min={0} value={breakRule.avoidRecent} onChange={(e) => updateBreakRule(breakRule.id, { avoidRecent: Math.max(0, Number(e.target.value) || 0) })} className="w-14 bg-bg-elevated border border-border rounded px-2 py-1 text-text-primary" />
               <button
@@ -115,7 +120,7 @@ function QueueHeader() {
                 disabled={!hasJingles}
                 className="px-2 py-1 rounded bg-bg-elevated border border-border text-text-secondary hover:text-text-primary disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Jingle pool ({selectedJingleIds.length})
+                {i18n.t('automation.queue.jinglePool', { count: selectedJingleIds.length, defaultValue: 'Jingle pool ({{count}})' })}
               </button>
               <button
                 type="button"
@@ -123,13 +128,13 @@ function QueueHeader() {
                 disabled={!hasAds}
                 className="px-2 py-1 rounded bg-bg-elevated border border-border text-text-secondary hover:text-text-primary disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Ad pool ({selectedAdIds.length})
+                {i18n.t('automation.queue.adPool', { count: selectedAdIds.length, defaultValue: 'Ad pool ({{count}})' })}
               </button>
               {breakRule.enabled && selectedJingleIds.length + selectedAdIds.length === 0 && (
-                <span className="text-amber-400">Pick at least one clip in the pools</span>
+                <span className="text-amber-400">{i18n.t('automation.queue.pickOneClip', { defaultValue: 'Pick at least one clip in the pools' })}</span>
               )}
               {breakRule.enabled && !hasJingles && !hasAds && (
-                <span className="text-text-muted">No clips in the library yet — add jingles or ads from Search, then Manage.</span>
+                <span className="text-text-muted">{i18n.t('automation.queue.noClipsYet', { defaultValue: 'No clips in the library yet - add jingles or ads from Search, then Manage.' })}</span>
               )}
             </div>
           )}
@@ -256,14 +261,14 @@ export default function AutomationQueueWidget() {
             <div className="flex items-center gap-2 shrink-0">
               {showPlayBtn && (
                 <Tooltip
-                  content={isStopped ? 'Start automation' : 'Resume automation'}
+                  content={isStopped ? i18n.t('automation.queue.start', { defaultValue: 'Start automation' }) : i18n.t('automation.queue.resume', { defaultValue: 'Resume automation' })}
                   placement="top"
                 >
                   <button
                     type="button"
                     onClick={handlePlay}
                     className="w-8 h-8 flex items-center justify-center rounded-full bg-accent hover:bg-accent-hover text-bg-primary transition-colors shadow-sm hover:scale-105"
-                    aria-label={isStopped ? 'Start automation' : 'Resume automation'}
+                    aria-label={isStopped ? i18n.t('automation.queue.start', { defaultValue: 'Start automation' }) : i18n.t('automation.queue.resume', { defaultValue: 'Resume automation' })}
                   >
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
                       <polygon points="6 3 20 12 6 21 6 3" />
@@ -273,12 +278,12 @@ export default function AutomationQueueWidget() {
               )}
 
               {showPauseBtn && (
-                <Tooltip content="Pause automation" placement="top">
+                <Tooltip content={i18n.t('automation.queue.pause', { defaultValue: 'Pause automation' })} placement="top">
                   <button
                     type="button"
                     onClick={handlePause}
                     className="w-8 h-8 flex items-center justify-center rounded-full bg-bg-elevated hover:bg-border text-text-primary transition-colors"
-                    aria-label="Pause automation"
+                    aria-label={i18n.t('automation.queue.pause', { defaultValue: 'Pause automation' })}
                   >
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
                       <rect x="6" y="4" width="4" height="16" />
@@ -289,12 +294,12 @@ export default function AutomationQueueWidget() {
               )}
 
               {!isStopped && (
-                <Tooltip content="Stop automation and reset to the beginning" placement="top">
+                <Tooltip content={i18n.t('automation.queue.stopReset', { defaultValue: 'Stop automation and reset to the beginning' })} placement="top">
                   <button
                     type="button"
                     onClick={handleStop}
                     className="w-8 h-8 flex items-center justify-center rounded-full bg-bg-elevated hover:bg-border text-text-primary transition-colors"
-                    aria-label="Stop"
+                    aria-label={i18n.t('automation.queue.stop', { defaultValue: 'Stop' })}
                   >
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
                       <rect x="6" y="6" width="12" height="12" rx="1" />
@@ -310,7 +315,7 @@ export default function AutomationQueueWidget() {
                 onClick={handleContinue}
                 className="px-4 py-1.5 bg-accent hover:bg-accent-hover text-bg-primary font-bold rounded-lg text-sm transition-colors animate-pulse shadow-sm"
               >
-                ▶ CONTINUE
+                ▶ {i18n.t('common.continue').toUpperCase()}
               </button>
             )}
 

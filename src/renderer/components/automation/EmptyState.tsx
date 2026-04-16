@@ -1,3 +1,5 @@
+import i18n from '@/i18n';
+
 export default function EmptyState() {
   return (
     <div className="flex flex-col items-center justify-center h-full gap-4 w-full">
@@ -15,9 +17,9 @@ export default function EmptyState() {
           </svg>
         </div>
 
-        <h1 className="text-xl font-bold text-text-primary">Your automation playlist is empty</h1>
+        <h1 className="text-xl font-bold text-text-primary">{i18n.t('automation.empty.title', { defaultValue: 'Your automation playlist is empty' })}</h1>
         <p className="text-text-secondary text-sm">
-          Use Search to add tracks, jingles, or ads, or Load set to open a saved automation. The queue is restored after restart.
+          {i18n.t('automation.empty.body', { defaultValue: 'Use Search to add tracks, jingles, or ads, or Load set to open a saved automation. The queue is restored after restart.' })}
         </p>
       </div>
     </div>

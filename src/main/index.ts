@@ -36,11 +36,49 @@ import {
   getLastGrantedScopes,
 } from './spotify-auth';
 
-const SPOTIFY_SCOPE_RESET_MSG =
-  'Spotify login was reset: this version needs playlist permission. Open Settings and connect again.';
-
 const store = new Store();
 let mainWindow: BrowserWindow | null = null;
+
+type MainLocale = 'en' | 'pt';
+type MainI18nKey =
+  | 'spotify.scopeReset'
+  | 'widevine.title'
+  | 'widevine.message'
+  | 'widevine.commonCauses'
+  | 'widevine.versionHint';
+
+const MAIN_I18N: Record<MainLocale, Record<MainI18nKey, string>> = {
+  en: {
+    'spotify.scopeReset':
+      'Spotify login was reset: this version needs playlist permission. Open Settings and connect again.',
+    'widevine.title': 'Widevine (DRM)',
+    'widevine.message':
+      'The Widevine CDM is not usable. Spotify in-app playback needs a working CDM from Google Component Updater.',
+    'widevine.commonCauses':
+      'Common causes:\n• Using an old Electron/Chromium line.\n• Network / proxy blocking component downloads.\n• Linux: after first CDM download, fully quit and reopen the app.',
+    'widevine.versionHint':
+      'Your node_modules/electron package should show a 41.x.x+wvcus style version in package.json.',
+  },
+  pt: {
+    'spotify.scopeReset':
+      'O login do Spotify foi redefinido: esta versão precisa de permissão de playlist. Abra Configurações e conecte novamente.',
+    'widevine.title': 'Widevine (DRM)',
+    'widevine.message':
+      'O CDM Widevine não está utilizável. A reprodução no Spotify dentro do app precisa do CDM do Google Component Updater.',
+    'widevine.commonCauses':
+      'Causas comuns:\n• Usar uma versão antiga de Electron/Chromium.\n• Rede/proxy bloqueando download de componentes.\n• Linux: após o primeiro download do CDM, feche totalmente e abra novamente.',
+    'widevine.versionHint':
+      'Seu pacote node_modules/electron deve mostrar versão no formato 41.x.x+wvcus no package.json.',
+  },
+};
+
+function currentLocale(): MainLocale {
+  return store.get('language') === 'pt' ? 'pt' : 'en';
+}
+
+function tr(key: MainI18nKey): string {
+  return MAIN_I18N[currentLocale()][key];
+}
 
 function windowIconPath(): string | undefined {
   const fromBuild = join(__dirname, '../renderer/icon.png');
@@ -200,7 +238,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle('spotify-get-token', () => {
     const token = getStoredToken();
     if (consumeSpotifyScopePurgeNotice()) {
-      mainWindow?.webContents.send('spotify-scope-reset', SPOTIFY_SCOPE_RESET_MSG);
+      mainWindow?.webContents.send('spotify-scope-reset', tr('spotify.scopeReset'));
     }
     return token;
   });
@@ -212,7 +250,7 @@ function registerIpcHandlers(): void {
   ipcMain.handle('spotify-refresh-token', async () => {
     const token = await refreshToken(mainWindow);
     if (consumeSpotifyScopePurgeNotice()) {
-      mainWindow?.webContents.send('spotify-scope-reset', SPOTIFY_SCOPE_RESET_MSG);
+      mainWindow?.webContents.send('spotify-scope-reset', tr('spotify.scopeReset'));
     }
     return token;
   });
@@ -400,17 +438,13 @@ app.whenReady().then(async () => {
     const detail = formatWidevineFailure(e);
     void dialog.showMessageBox({
       type: 'warning',
-      title: 'Widevine (DRM)',
-      message:
-        'The Widevine CDM is not usable. Spotify in-app playback needs a working CDM from Google’s Component Updater.',
+      title: tr('widevine.title'),
+      message: tr('widevine.message'),
       detail: `${detail}
 
-Common causes:
-• Using an old Electron/Chromium line: Google only serves CDM updates for roughly the last year of Chromium releases. This app pins a current Castlabs ECS version in package.json — run npm install after pulling.
-• Network / proxy blocking component downloads.
-• Linux: after the first CDM download, fully quit and launch the app again.
+${tr('widevine.commonCauses')}
 
-Your node_modules/electron package should show version like 41.x.x+wvcus (check package.json "electron" field).`,
+${tr('widevine.versionHint')}`,
     });
   }
 

@@ -120,6 +120,7 @@ export interface QuickFireSlot {
 
 export type ThemeMode = 'dark' | 'light';
 export type AccentColor = 'green' | 'blue' | 'purple' | 'orange' | 'red';
+export type AppLanguage = 'en' | 'pt';
 
 export const ACCENT_COLORS: Record<AccentColor, { primary: string; hover: string }> = {
   green: { primary: '#1DB954', hover: '#1ed760' },
@@ -265,6 +266,7 @@ interface LiveSlice {
 }
 
 interface SettingsSlice {
+  language: AppLanguage;
   theme: ThemeMode;
   accentColor: AccentColor;
   songTransitionMode: SongTransitionMode;
@@ -277,6 +279,7 @@ interface SettingsSlice {
   followProgramSchedule: boolean;
   shortcuts: ShortcutBinding[];
   setTheme: (theme: ThemeMode) => void;
+  setLanguage: (language: AppLanguage) => void;
   setAccentColor: (color: AccentColor) => void;
   setSongTransitionMode: (mode: SongTransitionMode) => void;
   setFadeInMs: (ms: number) => void;
@@ -564,6 +567,7 @@ const createLiveSlice: StateCreator<StoreState, [], [], LiveSlice> = (set) => ({
 });
 
 const createSettingsSlice: StateCreator<StoreState, [], [], SettingsSlice> = (set) => ({
+  language: 'en',
   theme: 'dark',
   accentColor: 'green',
   songTransitionMode: 'immediate',
@@ -574,6 +578,10 @@ const createSettingsSlice: StateCreator<StoreState, [], [], SettingsSlice> = (se
   autoUpdate: true,
   followProgramSchedule: true,
   shortcuts: [...DEFAULT_SHORTCUTS],
+  setLanguage: (language) => {
+    set({ language });
+    window.electronAPI?.saveToStore('language', language);
+  },
   setTheme: (theme) => {
     set({ theme });
     window.electronAPI?.saveToStore('theme', theme);

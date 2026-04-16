@@ -2,6 +2,7 @@ import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import type { AutomationStep } from '@/store';
 import Tooltip from '@/components/Tooltip';
+import i18n from '@/i18n';
 
 function formatDuration(ms: number): string {
   const s = Math.floor(ms / 1000);
@@ -36,17 +37,17 @@ export default function StepCard({ step, isPlaying, isSelected, onSelect, onDele
     opacity: isDragging ? 0.5 : 1,
   };
 
-  const name = step.type === 'pause' ? step.label || 'Pause Point' : step.name;
+  const name = step.type === 'pause' ? step.label || i18n.t('automation.step.pausePoint') : step.name;
   const subtitle =
     step.type === 'track'
       ? step.artist
       : step.type === 'playlist'
-        ? `Playlist · ${step.trackCount} tracks`
+        ? i18n.t('automation.step.playlistTracks', { count: step.trackCount, defaultValue: 'Playlist · {{count}} tracks' })
         : step.type === 'jingle'
-          ? 'Jingle'
+          ? i18n.t('automation.step.jingle')
           : step.type === 'ad'
-            ? 'Ad break'
-          : 'Automation pauses here';
+            ? i18n.t('automation.step.adBreak')
+          : i18n.t('automation.step.pausesHere');
   const duration = step.type !== 'pause' ? formatDuration(step.durationMs) : '--:--';
 
   return (
@@ -59,13 +60,13 @@ export default function StepCard({ step, isPlaying, isSelected, onSelect, onDele
       } ${isPlaying ? 'border-l-2 border-l-accent' : 'border-l-2 border-l-transparent'}`}
     >
       {/* Drag handle */}
-      <Tooltip content="Drag to reorder steps" placement="left">
+      <Tooltip content={i18n.t('automation.step.dragReorder')} placement="left">
         <button
           {...attributes}
           {...listeners}
           data-coachmark="drag-handle"
           className="shrink-0 cursor-grab active:cursor-grabbing text-text-muted hover:text-text-secondary p-0.5"
-          aria-label="Drag to reorder"
+          aria-label={i18n.t('automation.step.dragReorder')}
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
             <circle cx="9" cy="6" r="1.5" />
@@ -78,7 +79,7 @@ export default function StepCard({ step, isPlaying, isSelected, onSelect, onDele
         </button>
       </Tooltip>
 
-      <Tooltip content="Play automation from this step" placement="top">
+      <Tooltip content={i18n.t('automation.step.playFromHere')} placement="top">
         <button
           type="button"
           onClick={(e) => {
@@ -86,7 +87,7 @@ export default function StepCard({ step, isPlaying, isSelected, onSelect, onDele
             onPlayFromHere();
           }}
           className="shrink-0 p-1.5 rounded-full text-accent hover:bg-accent/15 transition-colors"
-          aria-label="Play from this step"
+          aria-label={i18n.t('automation.step.playFromHere')}
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
             <polygon points="6 4 20 12 6 20 6 4" />
@@ -125,7 +126,7 @@ export default function StepCard({ step, isPlaying, isSelected, onSelect, onDele
       <button
         onClick={(e) => { e.stopPropagation(); onDelete(); }}
         className="shrink-0 p-1 rounded text-text-muted hover:text-danger hover:bg-danger/10 transition-colors opacity-0 group-hover:opacity-100"
-        aria-label="Remove step"
+        aria-label={i18n.t('automation.step.remove')}
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
           <path d="M18 6L6 18M6 6l12 12" />
