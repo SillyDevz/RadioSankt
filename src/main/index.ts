@@ -503,34 +503,22 @@ app.whenReady().then(async () => {
     `[Widevine] startup userData=${app.getPath('userData')} cdmId=${widevineId} mfCdmId=${mfCdmId ?? 'undefined'} updatesEnabled=${components.updatesEnabled}`,
   );
 
-  const idsToWaitFor = mfCdmId ? [widevineId, mfCdmId] : [widevineId];
-
+  // Wait for L3 (required). Try L1 (Media Foundation) separately so machines that
+  // do not support L1 (older Windows, missing Media Foundation, etc.) don't block startup.
   try {
-    await components.whenReady(idsToWaitFor);
-    const statusAll = components.status();
-    for (const id of idsToWaitFor) {
-      const st = (statusAll as Record<string, unknown>)[id];
-      console.log('[Widevine] component status:', id, st);
-      appendWidevineDebugLog(`[Widevine] components.status[${id}]: ${JSON.stringify(st)}`);
-    }
-    const l3 = (statusAll as Record<string, { version?: string }>)[widevineId];
-    if (!l3?.version) {
+    await components.whenReady([widevineId]);
+    const st = (components.status() as Record<string, { version?: string }>)[widevineId];
+    console.log('[Widevine] component status:', widevineId, st);
+    appendWidevineDebugLog(`[Widevine] components.status[${widevineId}]: ${JSON.stringify(st)}`);
+    if (!st?.version) {
       throw new Error(
-        `Widevine CDM has no version (status: ${JSON.stringify(l3)}). Component Updater could not install DRM — often fixed by upgrading to a supported Castlabs Electron line (see package.json).`,
+        `Widevine CDM has no version (status: ${JSON.stringify(st)}). Component Updater could not install DRM — often fixed by upgrading to a supported Castlabs Electron line (see package.json).`,
       );
     }
-    if (mfCdmId) {
-      const mf = (statusAll as Record<string, { version?: string }>)[mfCdmId];
-      if (!mf?.version) {
-        appendWidevineDebugLog(
-          `[Widevine] Media Foundation (L1) CDM unavailable: ${JSON.stringify(mf)}. Spotify Web Playback on Windows needs L1; L3-only will fail with CreateCdmFunc errors.`,
-        );
-      }
-    }
   } catch (e) {
-    console.error('[Widevine] CDM setup failed:', e);
+    console.error('[Widevine] L3 CDM setup failed:', e);
     appendWidevineDebugLog(
-      `[Widevine] CDM setup failed: ${e instanceof Error ? `${e.name}: ${e.message}` : String(e)}`,
+      `[Widevine] L3 CDM setup failed: ${e instanceof Error ? `${e.name}: ${e.message}` : String(e)}`,
     );
     const detail = formatWidevineFailure(e);
     void dialog.showMessageBox({
@@ -543,6 +531,26 @@ ${tr('widevine.commonCauses')}
 
 ${tr('widevine.versionHint')}`,
     });
+  }
+
+  if (mfCdmId) {
+    try {
+      await components.whenReady([mfCdmId]);
+      const mf = (components.status() as Record<string, { version?: string }>)[mfCdmId];
+      console.log('[Widevine] MF CDM status:', mfCdmId, mf);
+      appendWidevineDebugLog(`[Widevine] components.status[${mfCdmId}]: ${JSON.stringify(mf)}`);
+      if (!mf?.version) {
+        appendWidevineDebugLog(
+          '[Widevine] Media Foundation (L1) CDM unavailable. Spotify Web Playback on Windows needs L1; L3-only may yield CreateCdmFunc errors.',
+        );
+      }
+    } catch (e) {
+      appendWidevineDebugLog(
+        `[Widevine] MF CDM setup skipped: ${e instanceof Error ? `${e.name}: ${e.message}` : String(e)}`,
+      );
+    }
+  } else {
+    appendWidevineDebugLog('[Widevine] MEDIA_FOUNDATION_WIDEVINE_CDM_ID not exposed by this Electron build.');
   }
 
   applyDarwinDockIcon();
