@@ -10,9 +10,7 @@ import { useTranslation } from 'react-i18next';
 function webPlaybackHelp(t: (key: string) => string): Record<WebPlaybackPhase, string> {
   return {
     idle: t('settings.spotify.webPlayback.idle'),
-    loading_sdk: t('settings.spotify.webPlayback.loadingSdk'),
     initializing: t('settings.spotify.webPlayback.initializing'),
-    connecting: t('settings.spotify.webPlayback.connecting'),
     ready: t('settings.spotify.webPlayback.ready'),
     error: t('settings.spotify.webPlayback.error'),
   };
@@ -54,6 +52,7 @@ export default function SettingsPage() {
   const connected = useStore((s) => s.connected);
   const webPlaybackPhase = useStore((s) => s.webPlaybackPhase);
   const webPlaybackLastError = useStore((s) => s.webPlaybackLastError);
+  const deviceName = useStore((s) => s.deviceName);
   const user = useStore((s) => s.user);
   const userAvatar = useStore((s) => s.userAvatar);
   const clientId = useStore((s) => s.clientId);
@@ -381,7 +380,7 @@ export default function SettingsPage() {
                         : 'text-text-muted'
                   }`}
                 >
-                  {webPlaybackPhase.replace(/_/g, ' ')}
+                  {webPlaybackPhase === 'ready' && deviceName ? deviceName : webPlaybackPhase}
                 </span>
               </div>
               <p className="text-[11px] text-text-secondary leading-snug">{WEB_PLAYBACK_HELP[webPlaybackPhase]}</p>
@@ -389,21 +388,6 @@ export default function SettingsPage() {
                 <pre className="text-[11px] text-danger/90 whitespace-pre-wrap break-words font-mono bg-bg-primary/80 rounded p-2 max-h-32 overflow-y-auto border border-danger/20">
                   {webPlaybackLastError}
                 </pre>
-              )}
-              {window.electronAPI?.toggleDevTools ? (
-                <button
-                  type="button"
-                  onClick={() => window.electronAPI.toggleDevTools()}
-                  className="text-[11px] text-accent hover:underline underline-offset-2"
-                >
-                  {t('settings.spotify.openDevTools')}
-                </button>
-              ) : (
-                <p className="text-[11px] text-text-muted">
-                  {t('settings.spotify.devtoolsBrowserHelp')}{' '}
-                  <kbd className="px-1 rounded bg-bg-primary font-mono text-text-secondary">F12</kbd> /{' '}
-                  <kbd className="px-1 rounded bg-bg-primary font-mono text-text-secondary">⌥⌘I</kbd>.
-                </p>
               )}
             </div>
           )}

@@ -35,13 +35,7 @@ export interface SpotifySearchResult {
 }
 
 /** Lifecycle of the Spotify Connect remote-control link (see Settings for diagnostics). */
-export type WebPlaybackPhase =
-  | 'idle'
-  | 'loading_sdk'
-  | 'initializing'
-  | 'connecting'
-  | 'ready'
-  | 'error';
+export type WebPlaybackPhase = 'idle' | 'initializing' | 'ready' | 'error';
 
 export interface Toast {
   id: string;
@@ -163,6 +157,8 @@ interface SpotifySlice {
   token: string | null;
   clientId: string | null;
   deviceId: string | null;
+  /** Human-readable name of the active Spotify Connect device (e.g. "MacBook Pro"). */
+  deviceName: string | null;
   sdkReady: boolean;
   webPlaybackPhase: WebPlaybackPhase;
   webPlaybackLastError: string | null;
@@ -175,6 +171,7 @@ interface SpotifySlice {
   setToken: (token: string | null) => void;
   setClientId: (id: string | null) => void;
   setDeviceId: (id: string | null) => void;
+  setDeviceName: (name: string | null) => void;
   setSdkReady: (ready: boolean) => void;
   setWebPlaybackDiag: (phase: WebPlaybackPhase, lastError?: string | null) => void;
   setSearchResults: (results: SpotifySearchResult[]) => void;
@@ -330,6 +327,7 @@ const createSpotifySlice: StateCreator<StoreState, [], [], SpotifySlice> = (set)
   token: null,
   clientId: null,
   deviceId: null,
+  deviceName: null,
   sdkReady: false,
   webPlaybackPhase: 'idle',
   webPlaybackLastError: null,
@@ -341,6 +339,7 @@ const createSpotifySlice: StateCreator<StoreState, [], [], SpotifySlice> = (set)
   setToken: (token) => set({ token }),
   setClientId: (id) => set({ clientId: id }),
   setDeviceId: (id) => set({ deviceId: id }),
+  setDeviceName: (name) => set({ deviceName: name }),
   setSdkReady: (ready) => set({ sdkReady: ready }),
   setWebPlaybackDiag: (phase, lastError = null) =>
     set({
@@ -356,6 +355,7 @@ const createSpotifySlice: StateCreator<StoreState, [], [], SpotifySlice> = (set)
       userAvatar: null,
       token: null,
       deviceId: null,
+      deviceName: null,
       sdkReady: false,
       webPlaybackPhase: 'idle',
       webPlaybackLastError: null,
