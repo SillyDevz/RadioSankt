@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog, shell, components, session } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import Store from 'electron-store';
-import { join, resolve, normalize } from 'path';
+import { join, resolve, normalize, dirname } from 'path';
 import { existsSync, promises as fs } from 'fs';
 import {
   saveJingle,
@@ -103,6 +103,36 @@ function allowPlaybackPermissions(): void {
     callback(true);
   });
   ses.setPermissionCheckHandler(() => true);
+}
+
+function configureBundledWidevineCdm(): void {
+  if (process.platform !== 'win32') return;
+
+  // On some Windows installs, the component-updater path resolves to an unusable CDM
+  // ("CreateCdmFunc not available"). Prefer the ECS-bundled CDM explicitly.
+  const runtimeDir = dirname(process.execPath);
+  const manifestPath = join(runtimeDir, 'WidevineCdm', 'manifest.json');
+  const dllPath = join(runtimeDir, 'WidevineCdm', '_platform_specific', 'win_x64', 'widevinecdm.dll');
+
+  if (!existsSync(manifestPath) || !existsSync(dllPath)) {
+    console.warn('[Widevine] Bundled CDM files missing; using default component updater path.');
+    return;
+  }
+
+  try {
+    const manifestRaw = require('fs').readFileSync(manifestPath, 'utf-8') as string;
+    const manifest = JSON.parse(manifestRaw) as { version?: string };
+    const version = manifest.version?.trim();
+    if (!version) {
+      console.warn('[Widevine] manifest.json has no version; skipping explicit CDM path.');
+      return;
+    }
+    app.commandLine.appendSwitch('widevine-cdm-path', dllPath);
+    app.commandLine.appendSwitch('widevine-cdm-version', version);
+    console.log('[Widevine] using bundled CDM:', { dllPath, version });
+  } catch (e) {
+    console.warn('[Widevine] Failed to configure bundled CDM:', e);
+  }
 }
 
 function createWindow(): void {
@@ -413,6 +443,8 @@ function formatWidevineFailure(e: unknown): string {
   walk(e, '');
   return lines.join('\n');
 }
+
+configureBundledWidevineCdm();
 
 app.whenReady().then(async () => {
   allowPlaybackPermissions();
