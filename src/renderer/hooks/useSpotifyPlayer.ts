@@ -46,6 +46,11 @@ let lastSpotifySeekSyncSample:
 /** Keeps last track info so we can restore display if Spotify returns a transient null. */
 let cachedDiscoveredDeviceId: string | null = null;
 
+/** Track URI Spotify was reporting the last time we sampled while the current automation
+ *  step was a playlist. Used to detect intra-playlist track advances (so dynamic breaks
+ *  can fire between songs inside a playlist block, not only when the whole block ends). */
+let lastPlaylistTrackUriSample: { stepId: string; trackUri: string } | null = null;
+
 function cancelLiveRamp() {
   if (liveRampRaf !== null) {
     cancelAnimationFrame(liveRampRaf);
@@ -269,6 +274,37 @@ export function useSpotifyPlayer() {
 
           const prevSample = lastSpotifySeekSyncSample;
           const now = Date.now();
+
+          // Intra-playlist advance: when the active step is a playlist block and the
+          // underlying Spotify track URI changes, let the automation engine run its
+          // break-rule logic between songs (not only when the block ends).
+          if (
+            curStep &&
+            curStep.type === 'playlist' &&
+            state.contextUri === curStep.spotifyPlaylistUri &&
+            st.automationStatus === 'playing' &&
+            state.track.uri
+          ) {
+            if (
+              lastPlaylistTrackUriSample &&
+              lastPlaylistTrackUriSample.stepId === curStep.id &&
+              lastPlaylistTrackUriSample.trackUri !== state.track.uri
+            ) {
+              window.dispatchEvent(
+                new CustomEvent('radio-sankt:spotify-playlist-track-changed', {
+                  detail: {
+                    stepId: curStep.id,
+                    previousTrackUri: lastPlaylistTrackUriSample.trackUri,
+                    newTrackUri: state.track.uri,
+                    newTrackDurationMs: state.track.durationMs,
+                  },
+                }),
+              );
+            }
+            lastPlaylistTrackUriSample = { stepId: curStep.id, trackUri: state.track.uri };
+          } else if (!curStep || curStep.type !== 'playlist') {
+            lastPlaylistTrackUriSample = null;
+          }
 
           if (
             playbackMatchesStep &&

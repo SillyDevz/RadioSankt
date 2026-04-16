@@ -1,6 +1,12 @@
 import AudioEngine from './AudioEngine';
 import { useStore } from '@/store';
-import { playTrack, playPlaylistContext, remoteSetVolumePercent } from '@/services/spotify-api';
+import {
+  playTrack,
+  playPlaylistContext,
+  remotePause,
+  remoteResume,
+  remoteSetVolumePercent,
+} from '@/services/spotify-api';
 import type { AutomationStep } from '@/store';
 
 /** Spotify `/me/player/volume` rate-limits aggressively — throttle to ~8 calls/sec. */
@@ -95,10 +101,17 @@ class AutomationEngine {
   private songsSinceBreak = 0;
   /** Invalidates pending step-advance timeouts after skip/pause/seek-reschedule so stale callbacks cannot run. */
   private advanceScheduleGen = 0;
+  /** How many intra-playlist track advances we've already credited to songsSinceBreak for the current playlist step.
+   *  Subtracted from the whole-block credit when the block ends so we don't double count. */
+  private intraPlaylistCreditedForStepId: string | null = null;
+  private intraPlaylistCreditedCount = 0;
+  /** Serializes intra-playlist break insertions so a rapid succession of track-change events doesn't race. */
+  private intraPlaylistBreakInFlight = false;
 
   constructor() {
     if (typeof window === 'undefined') return;
     window.addEventListener('radio-sankt:spotify-seek-sync', this.onSpotifySeekSync);
+    window.addEventListener('radio-sankt:spotify-playlist-track-changed', this.onPlaylistTrackChanged);
   }
 
   private onSpotifySeekSync = (e: Event) => {
@@ -106,6 +119,104 @@ class AutomationEngine {
     if (typeof d?.positionMs !== 'number') return;
     this.handleSpotifySeekSync(d.positionMs, d.playbackUri, d.contextUri);
   };
+
+  private onPlaylistTrackChanged = (e: Event) => {
+    const d = (e as CustomEvent<{
+      stepId?: string;
+      previousTrackUri?: string;
+      newTrackUri?: string;
+      newTrackDurationMs?: number;
+    }>).detail;
+    if (!d?.stepId || !d.newTrackUri) return;
+    void this.handlePlaylistTrackChanged(d.stepId, d.newTrackUri);
+  };
+
+  /** A new song just started inside an active playlist step. Credit the finished one to
+   *  the break counter, and if a break is due, pause Spotify, run the jingles, and resume. */
+  private async handlePlaylistTrackChanged(stepId: string, newTrackUri: string): Promise<void> {
+    if (this.intraPlaylistBreakInFlight) return;
+    const store = this.getStore();
+    if (store.automationStatus !== 'playing') return;
+
+    const steps = this.getSteps();
+    const idx = store.currentStepIndex;
+    const step = steps[idx];
+    if (!step || step.type !== 'playlist' || step.id !== stepId) return;
+
+    // Track one more completed song within this playlist block.
+    if (this.intraPlaylistCreditedForStepId !== stepId) {
+      this.intraPlaylistCreditedForStepId = stepId;
+      this.intraPlaylistCreditedCount = 0;
+    }
+    this.intraPlaylistCreditedCount += 1;
+    this.songsSinceBreak += 1;
+
+    const rule = store.breakRules.find((r) => r.enabled);
+    const everySongs = rule ? Math.max(1, Math.floor(rule.everySongs)) : Infinity;
+    if (!rule || this.songsSinceBreak < everySongs) return;
+
+    // Time to insert a break between songs of the playlist.
+    const picks = this.buildBreakPicks(rule);
+    if (picks.length === 0) return;
+
+    this.intraPlaylistBreakInFlight = true;
+    this.songsSinceBreak = 0;
+
+    try {
+      this.advanceScheduleGen++;
+      this.clearNextStepTimer();
+      this.clearCountdown();
+
+      const deviceId = store.deviceId;
+      if (deviceId) {
+        try {
+          await remotePause(deviceId);
+        } catch {
+          /* ignore — resume will retry the same device */
+        }
+      }
+
+      const audio = AudioEngine.getOrInit();
+      audio.resumeContextIfNeeded();
+      audio.setVolume(1);
+
+      // Play jingles sequentially on the local audio channel.
+      for (const pick of picks) {
+        if (pick.type !== 'jingle' && pick.type !== 'ad') continue;
+        await new Promise<void>((resolve) => {
+          audio.onJingleEnded(() => resolve());
+          audio.playJingle(pick.filePath).catch(() => resolve());
+        });
+      }
+
+      // Re-check: user may have stopped automation while jingles played.
+      const nowStore = this.getStore();
+      if (nowStore.automationStatus !== 'playing') return;
+
+      // Resume playback on Spotify. The next track Spotify will queue may be
+      // the one it started buffering before we paused.
+      if (deviceId) {
+        try {
+          await remoteResume(deviceId);
+        } catch {
+          /* ignore */
+        }
+      }
+
+      // Reset the step start time and countdown using the new track URI.
+      const newStore = this.getStore();
+      const stillStep = newStore.automationSteps[newStore.currentStepIndex];
+      if (stillStep && stillStep.type === 'playlist' && stillStep.id === stepId) {
+        this.currentStepStartTime = Date.now();
+        this.startCountdown(stillStep);
+        this.scheduleNextStep(stillStep, newStore.currentStepIndex);
+      }
+      // Silence the unused-param warning; newTrackUri is only used by the poller.
+      void newTrackUri;
+    } finally {
+      this.intraPlaylistBreakInFlight = false;
+    }
+  }
 
   /** After user seek, realign wall-clock advance timer + countdown with Spotify position. */
   private handleSpotifySeekSync(positionMs: number, playbackUri?: string, contextUri?: string): void {
@@ -167,6 +278,8 @@ class AutomationEngine {
     this.clearNextStepTimer();
     this.clearCountdown();
     AudioEngine.get()?.stopJingle();
+    this.intraPlaylistCreditedForStepId = null;
+    this.intraPlaylistCreditedCount = 0;
   }
 
   /** Spotify/playlist steps contribute this much to `songsSinceBreak` when skipping back. */
@@ -187,6 +300,8 @@ class AutomationEngine {
     if (store.automationStatus === 'stopped') {
       this.breakRecentKeys = [];
       this.songsSinceBreak = 0;
+      this.intraPlaylistCreditedForStepId = null;
+      this.intraPlaylistCreditedCount = 0;
     }
 
     // Start from current step index (or 0)
@@ -519,23 +634,22 @@ class AutomationEngine {
     }, delayMs);
   }
 
-  private maybeInsertBreakAfter(currentIndex: number, step: AutomationStep): number {
-    if (step.type !== 'track' && step.type !== 'playlist') return currentIndex + 1;
-    this.songsSinceBreak += step.type === 'playlist' ? Math.max(1, step.trackCount) : 1;
+  /** Build randomized break picks from the configured pool, respecting the avoid-recent window.
+   *  Pure helper — updates breakRecentKeys but does not mutate the queue or counters. */
+  private buildBreakPicks(rule: {
+    selectedJingleIds: number[];
+    selectedAdIds: number[];
+    itemsPerBreak: number;
+    avoidRecent: number;
+  }): AutomationStep[] {
     const store = this.getStore();
-    const rule = store.breakRules.find((r) => r.enabled);
-    if (!rule) return currentIndex + 1;
-    const everySongs = Math.max(1, Math.floor(rule.everySongs));
-    if (this.songsSinceBreak < everySongs) return currentIndex + 1;
-    this.songsSinceBreak = 0;
-
     const selectedJingles = new Set(rule.selectedJingleIds ?? []);
     const selectedAds = new Set(rule.selectedAdIds ?? []);
     const pool: Array<{ kind: 'jingle' | 'ad'; id: number; name: string; filePath: string; durationMs: number }> = [
       ...store.jingles.filter((j) => selectedJingles.has(j.id)).map((j) => ({ kind: 'jingle' as const, ...j })),
       ...store.ads.filter((a) => selectedAds.has(a.id)).map((a) => ({ kind: 'ad' as const, ...a })),
     ];
-    if (pool.length === 0) return currentIndex + 1;
+    if (pool.length === 0) return [];
 
     const pickCount = Math.max(1, Math.floor(rule.itemsPerBreak));
     const avoidRecent = Math.max(0, Math.floor(rule.avoidRecent));
@@ -561,8 +675,40 @@ class AutomationEngine {
         duckLevel: 0.2,
       } as AutomationStep);
     }
+    return picks;
+  }
 
+  private maybeInsertBreakAfter(currentIndex: number, step: AutomationStep): number {
+    if (step.type !== 'track' && step.type !== 'playlist') return currentIndex + 1;
+
+    // For a playlist step, songs that already triggered intra-block breaks were
+    // credited in handlePlaylistTrackChanged; subtract them so we don't double count.
+    let stepCredit = step.type === 'playlist' ? Math.max(1, step.trackCount) : 1;
+    if (
+      step.type === 'playlist' &&
+      this.intraPlaylistCreditedForStepId === step.id &&
+      this.intraPlaylistCreditedCount > 0
+    ) {
+      stepCredit = Math.max(0, stepCredit - this.intraPlaylistCreditedCount);
+    }
+    this.songsSinceBreak += stepCredit;
+
+    // Clear the intra-playlist credit bookkeeping once the block ends.
+    if (step.type === 'playlist' && this.intraPlaylistCreditedForStepId === step.id) {
+      this.intraPlaylistCreditedForStepId = null;
+      this.intraPlaylistCreditedCount = 0;
+    }
+
+    const store = this.getStore();
+    const rule = store.breakRules.find((r) => r.enabled);
+    if (!rule) return currentIndex + 1;
+    const everySongs = Math.max(1, Math.floor(rule.everySongs));
+    if (this.songsSinceBreak < everySongs) return currentIndex + 1;
+    this.songsSinceBreak = 0;
+
+    const picks = this.buildBreakPicks(rule);
     if (picks.length === 0) return currentIndex + 1;
+
     const insertAt = currentIndex + 1;
     const steps = store.automationSteps;
     store.setAutomationSteps([...steps.slice(0, insertAt), ...picks, ...steps.slice(insertAt)]);
@@ -674,6 +820,9 @@ class AutomationEngine {
     this.clearCountdown();
     this.breakRecentKeys = [];
     this.songsSinceBreak = 0;
+    this.intraPlaylistCreditedForStepId = null;
+    this.intraPlaylistCreditedCount = 0;
+    this.intraPlaylistBreakInFlight = false;
 
     const audio = AudioEngine.get();
     if (audio) {
