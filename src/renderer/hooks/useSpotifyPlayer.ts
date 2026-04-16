@@ -28,31 +28,59 @@ import {
  */
 
 const STATE_POLL_MS = 1500;
-const DEVICE_DISCOVERY_POLL_MS = 4000;
+const DEVICE_DISCOVERY_POLL_MS = 8000;
+
+/** Treat a `progress_ms` jump as a user seek only if it deviates from natural progression
+ *  by more than this many milliseconds (poll cadence + Spotify clock jitter tolerance). */
+const SEEK_DEVIATION_THRESHOLD_MS = 4000;
+
+/** Minimum gap between Spotify `/me/player/volume` calls during a ramp (API rate-limits). */
+const VOLUME_RAMP_MIN_CALL_INTERVAL_MS = 120;
 
 let liveRampRaf: number | null = null;
-let lastSpotifySeekSyncSample: { trackId: string; position: number } | null = null;
+let liveRampLastSent: { at: number; value: number } | null = null;
+let lastSpotifySeekSyncSample:
+  | { trackId: string; position: number; at: number }
+  | null = null;
+
+/** Keeps last track info so we can restore display if Spotify returns a transient null. */
+let cachedDiscoveredDeviceId: string | null = null;
 
 function cancelLiveRamp() {
   if (liveRampRaf !== null) {
     cancelAnimationFrame(liveRampRaf);
     liveRampRaf = null;
   }
+  liveRampLastSent = null;
 }
 
 function rampRemoteSpotifyVolume(deviceId: string, fromPct: number, toPct: number, durationMs: number) {
   cancelLiveRamp();
   const start = performance.now();
-  let lastSent = -1;
+  let lastVolumeSent = -1;
   const tick = () => {
     const t = durationMs <= 0 ? 1 : Math.min(1, (performance.now() - start) / durationMs);
     const v = Math.round(fromPct + (toPct - fromPct) * t);
-    // Throttle: Spotify volume endpoint rate-limits; only send on meaningful change.
-    if (v !== lastSent) {
-      lastSent = v;
+    const now = performance.now();
+    const tooSoon =
+      liveRampLastSent !== null &&
+      now - liveRampLastSent.at < VOLUME_RAMP_MIN_CALL_INTERVAL_MS;
+    if (v !== lastVolumeSent && !tooSoon) {
+      lastVolumeSent = v;
+      liveRampLastSent = { at: now, value: v };
       void remoteSetVolumePercent(v, deviceId).catch(() => {});
     }
-    liveRampRaf = t < 1 ? requestAnimationFrame(tick) : null;
+    if (t < 1) {
+      liveRampRaf = requestAnimationFrame(tick);
+    } else {
+      // Always send the final value so we land exactly on target even if throttled earlier.
+      if (lastVolumeSent !== toPct) {
+        lastVolumeSent = toPct;
+        liveRampLastSent = { at: now, value: toPct };
+        void remoteSetVolumePercent(toPct, deviceId).catch(() => {});
+      }
+      liveRampRaf = null;
+    }
   };
   liveRampRaf = requestAnimationFrame(tick);
 }
@@ -69,7 +97,6 @@ export function useSpotifyPlayer() {
     setCurrentTrack,
     setPosition,
     setDuration,
-    addToast,
   } = useStore(
     (s) => ({
       token: s.token,
@@ -82,7 +109,6 @@ export function useSpotifyPlayer() {
       setCurrentTrack: s.setCurrentTrack,
       setPosition: s.setPosition,
       setDuration: s.setDuration,
-      addToast: s.addToast,
     }),
     shallow,
   );
@@ -134,6 +160,7 @@ export function useSpotifyPlayer() {
       setCurrentTrack(null);
       setPosition(0);
       setDuration(0);
+      cachedDiscoveredDeviceId = null;
       return;
     }
 
@@ -141,6 +168,9 @@ export function useSpotifyPlayer() {
     let discoveryTimer: ReturnType<typeof setTimeout> | null = null;
     let stateTimer: ReturnType<typeof setInterval> | null = null;
     let noDeviceToastAt = 0;
+    /** Only issue `transferPlaybackToDevice` when we discover a NEW device id; never re-transfer
+     *  the one we're already using — that can cause mid-track interruptions. */
+    let transferAttemptedFor: string | null = null;
 
     const pickDevice = async () => {
       if (cancelled) return;
@@ -149,22 +179,32 @@ export function useSpotifyPlayer() {
         if (cancelled) return;
         const picked = pickPreferredDevice(devices);
         if (picked) {
-          if (deviceIdRef.current !== picked.id) {
+          const deviceChanged = deviceIdRef.current !== picked.id;
+          if (deviceChanged) {
             setDeviceId(picked.id);
             setSdkReady(true);
             setWebPlaybackDiag('ready', null);
+            cachedDiscoveredDeviceId = picked.id;
           }
-          // If the picked device isn't active yet, transfer to it silently.
-          if (!picked.is_active) {
+          // Transfer only once per discovered device id, and only when not already active.
+          if (!picked.is_active && transferAttemptedFor !== picked.id) {
+            transferAttemptedFor = picked.id;
             try {
               await transferPlaybackToDevice(picked.id);
             } catch {
               /* ignore; user may intervene */
             }
           }
+          if (picked.is_active) {
+            // Mark as already-transferred once Spotify confirms it's active.
+            transferAttemptedFor = picked.id;
+          }
         } else {
-          setDeviceId(null);
-          setSdkReady(false);
+          if (deviceIdRef.current !== null) {
+            setDeviceId(null);
+            setSdkReady(false);
+          }
+          transferAttemptedFor = null;
           const now = Date.now();
           if (now - noDeviceToastAt > 30_000) {
             noDeviceToastAt = now;
@@ -190,7 +230,7 @@ export function useSpotifyPlayer() {
         const state = await getRemotePlaybackState();
         if (cancelled) return;
         if (!state) {
-          setIsPlaying(false);
+          // Transient null — Spotify sometimes returns 204 between tracks. Don't wipe UI state.
           return;
         }
 
@@ -220,28 +260,39 @@ export function useSpotifyPlayer() {
             !!curStep &&
             ((curStep.type === 'track' && curStep.spotifyUri === state.track.uri) ||
               (curStep.type === 'playlist' && curStep.spotifyPlaylistUri === state.contextUri));
+
           const prevSample = lastSpotifySeekSyncSample;
+          const now = Date.now();
+
           if (
             playbackMatchesStep &&
             st.automationStatus === 'playing' &&
             state.isPlaying &&
             state.track.id &&
             prevSample &&
-            prevSample.trackId === state.track.id &&
-            Math.abs(state.progressMs - prevSample.position) > 2500
+            prevSample.trackId === state.track.id
           ) {
-            window.dispatchEvent(
-              new CustomEvent('radio-sankt:spotify-seek-sync', {
-                detail: {
-                  positionMs: state.progressMs,
-                  playbackUri: state.track.uri,
-                  contextUri: state.contextUri ?? undefined,
-                },
-              }),
-            );
+            // Expected forward delta ≈ wall-clock elapsed since the previous sample.
+            // Only call it a seek if Spotify reports a position that deviates from
+            // natural progression by more than the threshold. This avoids false
+            // positives from polling jitter and rate limiting.
+            const wallElapsed = now - prevSample.at;
+            const observedDelta = state.progressMs - prevSample.position;
+            const deviation = Math.abs(observedDelta - wallElapsed);
+            if (deviation > SEEK_DEVIATION_THRESHOLD_MS) {
+              window.dispatchEvent(
+                new CustomEvent('radio-sankt:spotify-seek-sync', {
+                  detail: {
+                    positionMs: state.progressMs,
+                    playbackUri: state.track.uri,
+                    contextUri: state.contextUri ?? undefined,
+                  },
+                }),
+              );
+            }
           }
           lastSpotifySeekSyncSample = state.track.id
-            ? { trackId: state.track.id, position: state.progressMs }
+            ? { trackId: state.track.id, position: state.progressMs, at: now }
             : null;
         }
       } catch {
@@ -292,10 +343,16 @@ export function useSpotifyPlayer() {
     const onLiveAudio = (e: Event) => {
       const detail = (e as CustomEvent<{ goingLive?: boolean; fadeMs?: number }>).detail;
       if (typeof detail?.fadeMs !== 'number' || typeof detail.goingLive !== 'boolean') return;
-      const devId = deviceIdRef.current;
+      const devId = deviceIdRef.current ?? cachedDiscoveredDeviceId;
       const { volume: curVolume } = useStore.getState();
       const vol = Math.max(0, Math.min(1, curVolume));
-      if (!devId) return;
+      if (!devId) {
+        // No device: fall back to hard pause/resume so going live still silences music.
+        if (detail.goingLive) {
+          void remotePause('').catch(() => {});
+        }
+        return;
+      }
       if (detail.goingLive) {
         rampRemoteSpotifyVolume(devId, Math.round(vol * 100), 0, detail.fadeMs);
       } else {

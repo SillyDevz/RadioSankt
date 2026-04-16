@@ -151,15 +151,27 @@ export default function SearchWidget() {
   const NO_DEVICE_MESSAGE =
     'No Spotify device available — open the Spotify app on this computer (or any signed-in device) and try again.';
 
-  const handlePlayNow = async (uri: string) => {
+  const handlePlayNow = async (track: SpotifySearchResult) => {
     window.dispatchEvent(new CustomEvent('radio-sankt:prime-spotify-playback'));
     let devId = useStore.getState().deviceId || (await waitForDeviceId(15_000));
     if (!devId) {
       addToast(NO_DEVICE_MESSAGE, 'warning');
       return;
     }
+    // Optimistically fill NowPlaying so the user sees feedback immediately.
+    useStore.getState().setCurrentTrack({
+      id: track.uri,
+      title: track.name,
+      artist: track.artist,
+      album: track.album,
+      albumArt: track.albumArt,
+      duration: track.durationMs,
+      uri: track.uri,
+    });
+    useStore.getState().setDuration(track.durationMs);
+    useStore.getState().setPosition(0);
     try {
-      await playTrack(uri, devId);
+      await playTrack(track.uri, devId);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error('[SearchWidget] playTrack', msg);
@@ -167,15 +179,24 @@ export default function SearchWidget() {
     }
   };
 
-  const handlePlayPlaylistNow = async (contextUri: string) => {
+  const handlePlayPlaylistNow = async (summary: SpotifyPlaylistSummary) => {
     window.dispatchEvent(new CustomEvent('radio-sankt:prime-spotify-playback'));
     let devId = useStore.getState().deviceId || (await waitForDeviceId(15_000));
     if (!devId) {
       addToast(NO_DEVICE_MESSAGE, 'warning');
       return;
     }
+    useStore.getState().setCurrentTrack({
+      id: summary.uri,
+      title: summary.name,
+      artist: `Playlist · ${summary.trackCount} tracks`,
+      album: '',
+      albumArt: summary.imageUrl,
+      duration: 0,
+      uri: summary.uri,
+    });
     try {
-      await playPlaylistContext(contextUri, devId);
+      await playPlaylistContext(summary.uri, devId);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error('[SearchWidget] playPlaylistContext', msg);
@@ -278,7 +299,7 @@ export default function SearchWidget() {
   const renderTrackRow = (track: SpotifySearchResult, key: string) => (
     <div
       key={key}
-      onDoubleClick={() => handlePlayNow(track.uri)}
+      onDoubleClick={() => handlePlayNow(track)}
       className="flex items-center gap-3 px-4 py-2 hover:bg-bg-elevated transition-colors group cursor-default"
     >
       <img
@@ -313,7 +334,7 @@ export default function SearchWidget() {
             type="button"
             onClick={(e) => {
               e.stopPropagation();
-              handlePlayNow(track.uri);
+              handlePlayNow(track);
             }}
             className="p-1.5 rounded-md hover:bg-accent/20 text-accent transition-colors"
             aria-label={i18n.t('workspace.search.playNow', { defaultValue: 'Play now' })}
@@ -681,7 +702,7 @@ export default function SearchWidget() {
                 <Tooltip content={i18n.t('workspace.playlists.playWholeNow', { defaultValue: 'Play the whole playlist now on the in-app player' })} placement="bottom">
                   <button
                     type="button"
-                    onClick={() => handlePlayPlaylistNow(selectedPlaylist.uri)}
+                    onClick={() => handlePlayPlaylistNow(selectedPlaylist)}
                     className="px-3 py-1.5 rounded-md text-xs font-medium bg-bg-elevated hover:bg-border text-text-primary transition-colors ml-auto"
                   >
                     {i18n.t('workspace.search.playNow', { defaultValue: 'Play now' })}

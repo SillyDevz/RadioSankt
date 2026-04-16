@@ -3,6 +3,9 @@ import { useStore } from '@/store';
 import { playTrack, playPlaylistContext, remoteSetVolumePercent } from '@/services/spotify-api';
 import type { AutomationStep } from '@/store';
 
+/** Spotify `/me/player/volume` rate-limits aggressively — throttle to ~8 calls/sec. */
+const VOLUME_RAMP_MIN_INTERVAL_MS = 120;
+
 /**
  * Animate Spotify Connect device volume between two percentages over `durationMs`.
  * Used in place of Web Audio gain ramps now that audio plays through Spotify's native app.
@@ -23,14 +26,23 @@ function rampSpotifyRemoteVolume(
     }
     const start = performance.now();
     let lastSent = -1;
+    let lastSentAt = 0;
     const tick = () => {
-      const t = Math.min(1, (performance.now() - start) / durationMs);
+      const now = performance.now();
+      const t = Math.min(1, (now - start) / durationMs);
       const v = Math.round(fromPct + (toPct - fromPct) * t);
-      if (v !== lastSent) {
+      const throttled = now - lastSentAt < VOLUME_RAMP_MIN_INTERVAL_MS;
+      if (v !== lastSent && !throttled) {
         lastSent = v;
+        lastSentAt = now;
         void remoteSetVolumePercent(v, deviceId).catch(() => {});
       }
-      if (t < 1) requestAnimationFrame(tick);
+      if (t < 1) {
+        requestAnimationFrame(tick);
+      } else if (lastSent !== toPct) {
+        // Always land exactly on target.
+        void remoteSetVolumePercent(toPct, deviceId).catch(() => {});
+      }
     };
     requestAnimationFrame(tick);
     setTimeout(resolve, durationMs);
@@ -257,6 +269,46 @@ class AutomationEngine {
     if (step.type === 'pause') {
       this.handlePauseStep(step);
       return;
+    }
+
+    // Populate the NowPlaying bar immediately from the step's own metadata so the UI
+    // reflects the active step before the Spotify state poll catches up. (The poll
+    // will later overwrite this with the true track metadata from Spotify.)
+    if (step.type === 'track') {
+      store.setCurrentTrack({
+        id: step.spotifyUri,
+        title: step.name,
+        artist: step.artist,
+        album: '',
+        albumArt: step.albumArt,
+        duration: step.durationMs,
+        uri: step.spotifyUri,
+      });
+      store.setDuration(step.durationMs);
+      store.setPosition(0);
+    } else if (step.type === 'playlist') {
+      store.setCurrentTrack({
+        id: step.spotifyPlaylistUri,
+        title: step.name,
+        artist: `Playlist · ${step.trackCount} tracks`,
+        album: '',
+        albumArt: step.albumArt,
+        duration: step.durationMs,
+        uri: step.spotifyPlaylistUri,
+      });
+      store.setDuration(step.durationMs);
+      store.setPosition(0);
+    } else if (step.type === 'jingle' || step.type === 'ad') {
+      store.setCurrentTrack({
+        id: String(step.type === 'jingle' ? step.jingleId : step.adId),
+        title: step.name,
+        artist: step.type === 'jingle' ? 'Jingle' : 'Ad',
+        album: '',
+        albumArt: '',
+        duration: step.durationMs,
+      });
+      store.setDuration(step.durationMs);
+      store.setPosition(0);
     }
 
     try {
