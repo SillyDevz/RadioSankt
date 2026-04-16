@@ -3,6 +3,7 @@ import { useStore } from '@/store';
 import type { QuickFireSlot } from '@/store';
 import AudioEngine from '@/engine/AudioEngine';
 import AutomationEngine from '@/engine/AutomationEngine';
+import { remoteSetVolumePercent } from '@/services/spotify-api';
 import Tooltip from '@/components/Tooltip';
 import i18n from '@/i18n';
 
@@ -200,12 +201,28 @@ export default function CartWallWidget() {
     const waitFade = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
     if (isLive) {
+      // Going OFFLINE:
+      //   1) Force the Spotify device volume to 0 so resume doesn't spike at full.
+      //   2) Resume playback.
+      //   3) Fade the volume back up to the user's volume.
+      //   4) Clear isLive only after the fade completes.
       window.dispatchEvent(new CustomEvent('radio-sankt:resume-audio-context'));
+
+      const devId = useStore.getState().deviceId;
+      if (devId) {
+        try {
+          await remoteSetVolumePercent(0, devId);
+        } catch {
+          /* ignore */
+        }
+      }
+
       if (automationStatus === 'paused') {
         await engine.resume({ skipGainRecovery: true });
       } else {
         window.dispatchEvent(new CustomEvent('radio-sankt:spotify-resume'));
       }
+
       window.dispatchEvent(
         new CustomEvent('radio-sankt:live-audio', { detail: { goingLive: false, fadeMs: fadeInMs } }),
       );
@@ -213,11 +230,26 @@ export default function CartWallWidget() {
       setIsLive(false);
       addToast(i18n.t('workspace.cart.backToAutomation', { defaultValue: 'Back to automation' }), 'info');
     } else {
+      // Going LIVE:
+      //   1) Mark isLive so the volume-sync effect stops fighting us.
+      //   2) Fade the Spotify device volume down to 0.
+      //   3) Force volume to 0 (in case the ramp got rate-limited).
+      //   4) Pause playback.
       setIsLive(true);
       window.dispatchEvent(
         new CustomEvent('radio-sankt:live-audio', { detail: { goingLive: true, fadeMs: fadeOutMs } }),
       );
       await waitFade(fadeOutMs);
+
+      const devId = useStore.getState().deviceId;
+      if (devId) {
+        try {
+          await remoteSetVolumePercent(0, devId);
+        } catch {
+          /* ignore */
+        }
+      }
+
       if (automationStatus === 'playing') {
         await engine.pause({ skipFade: true });
       } else {

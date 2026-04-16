@@ -4,7 +4,7 @@ import type { AccentColor, SongTransitionMode, ThemeMode, WebPlaybackPhase } fro
 import { ACCENT_COLORS } from '@/store';
 import Tooltip from '@/components/Tooltip';
 import { openExternal } from '@/utils/openExternal';
-import { clearSpotifyUserIdCache } from '@/services/spotify-api';
+import { clearSpotifyUserIdCache, isSpotifyVolumeControlRejected } from '@/services/spotify-api';
 import { useTranslation } from 'react-i18next';
 
 function webPlaybackHelp(t: (key: string) => string): Record<WebPlaybackPhase, string> {
@@ -384,6 +384,11 @@ export default function SettingsPage() {
                 </span>
               </div>
               <p className="text-[11px] text-text-secondary leading-snug">{WEB_PLAYBACK_HELP[webPlaybackPhase]}</p>
+              {webPlaybackPhase === 'ready' && isSpotifyVolumeControlRejected() && (
+                <p className="text-[11px] text-amber-400 leading-snug">
+                  {t('settings.spotify.volumeRejected')}
+                </p>
+              )}
               {webPlaybackLastError && (
                 <pre className="text-[11px] text-danger/90 whitespace-pre-wrap break-words font-mono bg-bg-primary/80 rounded p-2 max-h-32 overflow-y-auto border border-danger/20">
                   {webPlaybackLastError}

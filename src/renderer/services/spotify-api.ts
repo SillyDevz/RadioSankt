@@ -346,7 +346,20 @@ export async function remoteSeek(positionMs: number, deviceId: string): Promise<
   }
 }
 
-/** Set volume 0-100 on the target device. Ignored silently if the device rejects volume. */
+/** Whether the last Spotify volume call observed was rejected by the target device.
+ *  Surfaced in Settings so users know why ducking/live-fade has no audible effect. */
+let spotifyVolumeControlRejected = false;
+
+export function isSpotifyVolumeControlRejected(): boolean {
+  return spotifyVolumeControlRejected;
+}
+
+export function resetSpotifyVolumeControlStatus(): void {
+  spotifyVolumeControlRejected = false;
+}
+
+/** Set volume 0-100 on the target device. Records a rejection flag when the device
+ *  refuses volume control so the UI can explain why fades/duck aren't audible. */
 export async function remoteSetVolumePercent(volumePercent: number, deviceId: string): Promise<void> {
   const v = Math.max(0, Math.min(100, Math.round(volumePercent)));
   const res = await apiFetch(
@@ -354,11 +367,16 @@ export async function remoteSetVolumePercent(volumePercent: number, deviceId: st
     { method: 'PUT' },
   );
   if (!res.ok && res.status !== 204) {
-    // Some devices (e.g. restricted ones) return 403 for volume; don't throw for that case.
-    if (res.status === 403) return;
+    if (res.status === 403) {
+      // Some devices (web player, certain speakers) disallow remote volume control.
+      spotifyVolumeControlRejected = true;
+      return;
+    }
     const body = await res.text();
     throw new Error(`Spotify volume ${res.status}: ${body}`);
   }
+  // A success after a previous rejection means we're on a device that supports it now.
+  spotifyVolumeControlRejected = false;
 }
 
 async function waitForActiveTrackUri(expectedUri: string, timeoutMs: number): Promise<void> {
