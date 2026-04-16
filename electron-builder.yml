@@ -21,5 +21,5 @@ linux:
     - AppImage
 publish:
   provider: github
-  owner: radiosankt
-  repo: radiosankt
+  owner: SillyDevz
+  repo: RadioSankt
