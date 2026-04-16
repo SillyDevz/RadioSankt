@@ -1,14 +1,24 @@
 # Radio Sankt
 
-Radio Sankt is a desktop radio automation app built with Electron and React. It connects to your Spotify account via the Web Playback SDK, letting you build playlists, schedule automation sequences, play jingles, and go live — all from a single interface.
+Radio Sankt is a desktop radio automation app built with Electron and React. It connects to your Spotify account and remote-controls your Spotify desktop/mobile app (Spotify Connect), letting you build playlists, schedule automation sequences, play jingles, go live, and crossfade — all from a single interface.
 
-The app routes Spotify audio and local jingle files through a Web Audio API mixing engine with two channels, crossfading, ducking, and VU metering. Automation playlists run unattended while you step away, and Live Mode lets you fade out the music and take over whenever you want.
+Local jingles and ads play through a Web Audio API mixing engine and can duck the Spotify app's volume automatically via the Spotify Web API. Automation playlists run unattended while you step away, and Live Mode fades out the music and takes you on-air whenever you want.
+
+## How Spotify playback works
+
+Radio Sankt does **not** play Spotify audio itself. Instead it uses Spotify's Web API to control whatever Spotify app you already have running (the Spotify desktop app, your phone, a Spotify-connected speaker, etc.).
+
+- You **must** keep a Spotify app running and signed in on some device while using Radio Sankt.
+- Premium is required by Spotify for most Web API playback endpoints.
+- This approach avoids Widevine / DRM entirely, so the app works on any machine Spotify runs on (Windows, macOS, Linux — no special drivers required).
+
+Jingles and ads are stored as local files and play through Radio Sankt directly. Ducking works by asking the Spotify device to lower its volume while the jingle runs.
 
 ## Prerequisites
 
 - Node.js 18+
-- A Spotify account (Premium required for Web Playback SDK)
-- macOS or Windows
+- A Spotify account (Premium recommended for full playback control)
+- The Spotify desktop (or mobile) app installed and signed in on the same account
 
 ## Creating a Spotify Developer App
 
@@ -17,7 +27,7 @@ The app routes Spotify audio and local jingle files through a Web Audio API mixi
 3. Click **Create app**
 4. Give it any name (e.g. "Radio Sankt")
 5. Set the **Redirect URI** to `http://127.0.0.1:8888/callback`
-6. Under **APIs used**, check **Web Playback SDK**
+6. Under **APIs used**, check **Web API**
 7. Save the app and copy the **Client ID**
 8. Paste the Client ID into Radio Sankt's Settings page and click **Connect**
 
@@ -27,16 +37,11 @@ The app routes Spotify audio and local jingle files through a Web Audio API mixi
 # Install dependencies
 npm install
 
-# Spotify DRM: VMP-sign the dev Electron binary (required after every npm install that touches electron)
-npm run evs:sign-electron-dist
-
 # Run in development mode (Vite + Electron)
 npm run electron:dev
 ```
 
 The app opens at `http://localhost:5173` with hot reload. Electron launches automatically once the dev server is ready.
-
-**Spotify / Widevine / Castlabs EVS:** See [docs/widevine-and-evs.md](docs/widevine-and-evs.md) for full setup, packaged builds, troubleshooting, and notes for AI assistants.
 
 ## Building
 
@@ -45,8 +50,7 @@ The app opens at `http://localhost:5173` with hot reload. Electron launches auto
 npm run electron:build
 ```
 
-Output goes to the `release/` directory. On macOS you get a `.dmg`, on Windows an `.exe` installer.
-Packaged builds run the repo's EVS hooks automatically; Apple signing/notarization is optional and only affects macOS trust prompts.
+Output goes to the `release/` directory. On macOS you get a `.dmg`, on Windows an `.exe` installer. No Widevine/EVS setup is required because Radio Sankt does not decode DRM audio itself.
 
 ## Publishing a Release
 
@@ -76,12 +80,12 @@ All shortcuts are rebindable from Settings.
 
 ## Troubleshooting
 
-**"Spotify player not ready"** — Make sure you have Spotify Premium. The Web Playback SDK requires a Premium account to stream audio.
+**"No Spotify device available"** — Open the Spotify app on this computer (or any signed-in device) so it appears as a Spotify Connect device. Radio Sankt will automatically pick it up within a few seconds.
 
 **Auth callback fails** — Verify your Redirect URI is exactly `http://127.0.0.1:8888/callback` in your Spotify Developer dashboard. No trailing slash.
 
-**No audio after connecting** — Click anywhere in the app window first. Browsers (and Electron) require a user gesture before allowing audio playback via the Web Audio API.
+**Play commands return 403/Premium required** — Some Spotify Web API playback endpoints require Premium. Also make sure your Client ID matches the app you created (the OAuth consent screen should show **your** app's name).
+
+**Volume control has no effect on one device** — A few Spotify Connect devices (some speakers, web players) reject the Web API `volume` endpoint. Try controlling the Spotify desktop app instead.
 
 **Token refresh errors** — The app auto-refreshes tokens every 60 seconds. If you see repeated auth errors, disconnect and reconnect from Settings.
-
-**`widevine-license` 500 / no audio in dev** — You must VMP-sign **`node_modules/electron/dist`** (`npm run evs:sign-electron-dist`), not only `release/`. Details: [docs/widevine-and-evs.md](docs/widevine-and-evs.md).
