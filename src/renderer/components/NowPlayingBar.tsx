@@ -67,11 +67,14 @@ export default function NowPlayingBar() {
   const automationSteps = useStore((s) => s.automationSteps);
   const automationTransport = automationStatus !== 'stopped';
   const hasAutomationQueue = automationSteps.length > 0 && automationStatus !== 'stopped';
-  /** Matches `togglePlayback`: pause when automation is on-air or Spotify still playing while automation is paused. */
+  /** Button shows a pause icon whenever Spotify (or the automation) is actively producing audio.
+   *  - Automation on-air (playing) or paused-with-sound-still-playing → pause icon.
+   *  - 'waitingAtPause' explicitly uses a play icon (Continue). */
   const transportShowsPause =
-    hasAutomationQueue &&
     automationStatus !== 'waitingAtPause' &&
-    (automationStatus === 'playing' || (automationStatus === 'paused' && isPlaying));
+    (hasAutomationQueue
+      ? automationStatus === 'playing' || (automationStatus === 'paused' && isPlaying)
+      : isPlaying);
 
   const { togglePlay, previousTrack, nextTrack, seek } = useSpotifyPlayer();
   const seekTrackRef = useRef<HTMLDivElement>(null);
