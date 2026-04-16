@@ -11,9 +11,19 @@ const root = path.join(__dirname, '..');
 const release = path.join(root, 'release');
 const python = process.platform === 'win32' ? 'python' : 'python3';
 
+function evsAuthArgs() {
+  const name = process.env.CASTLABS_ACCOUNT_NAME?.trim();
+  const pass = process.env.CASTLABS_ACCOUNT_PASSWORD?.trim();
+  return name && pass ? ['-A', name, '-P', pass] : [];
+}
+
 function sign(dir) {
-  console.log(`[evs:sign-release] ${python} -m castlabs_evs.vmp sign-pkg "${dir}"`);
-  execFileSync(python, ['-m', 'castlabs_evs.vmp', 'sign-pkg', dir], { stdio: 'inherit', cwd: root });
+  const args = ['-m', 'castlabs_evs.vmp', 'sign-pkg', ...evsAuthArgs(), dir];
+  const safeArgs = [...args];
+  const passIndex = safeArgs.indexOf('-P');
+  if (passIndex !== -1 && safeArgs[passIndex + 1]) safeArgs[passIndex + 1] = '***';
+  console.log(`[evs:sign-release] ${python} ${safeArgs.join(' ')}`);
+  execFileSync(python, args, { stdio: 'inherit', cwd: root });
 }
 
 if (!fs.existsSync(release)) {
