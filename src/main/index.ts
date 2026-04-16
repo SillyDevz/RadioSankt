@@ -1,8 +1,8 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, components, session } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell, session } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import Store from 'electron-store';
 import { join, resolve, normalize } from 'path';
-import { existsSync, promises as fs, appendFileSync, readdirSync, statSync } from 'fs';
+import { existsSync, promises as fs } from 'fs';
 import {
   saveJingle,
   getJingles,
@@ -40,35 +40,16 @@ const store = new Store();
 let mainWindow: BrowserWindow | null = null;
 
 type MainLocale = 'en' | 'pt';
-type MainI18nKey =
-  | 'spotify.scopeReset'
-  | 'widevine.title'
-  | 'widevine.message'
-  | 'widevine.commonCauses'
-  | 'widevine.versionHint';
+type MainI18nKey = 'spotify.scopeReset';
 
 const MAIN_I18N: Record<MainLocale, Record<MainI18nKey, string>> = {
   en: {
     'spotify.scopeReset':
       'Spotify login was reset: this version needs playlist permission. Open Settings and connect again.',
-    'widevine.title': 'Widevine (DRM)',
-    'widevine.message':
-      'The Widevine CDM is not usable. Spotify in-app playback needs a working CDM from Google Component Updater.',
-    'widevine.commonCauses':
-      'Common causes:\n• Using an old Electron/Chromium line.\n• Network / proxy blocking component downloads.\n• Linux: after first CDM download, fully quit and reopen the app.',
-    'widevine.versionHint':
-      'Your node_modules/electron package should show a 41.x.x+wvcus style version in package.json.',
   },
   pt: {
     'spotify.scopeReset':
       'O login do Spotify foi redefinido: esta versão precisa de permissão de playlist. Abra Configurações e conecte novamente.',
-    'widevine.title': 'Widevine (DRM)',
-    'widevine.message':
-      'O CDM Widevine não está utilizável. A reprodução no Spotify dentro do app precisa do CDM do Google Component Updater.',
-    'widevine.commonCauses':
-      'Causas comuns:\n• Usar uma versão antiga de Electron/Chromium.\n• Rede/proxy bloqueando download de componentes.\n• Linux: após o primeiro download do CDM, feche totalmente e abra novamente.',
-    'widevine.versionHint':
-      'Seu pacote node_modules/electron deve mostrar versão no formato 41.x.x+wvcus no package.json.',
   },
 };
 
@@ -96,85 +77,15 @@ function applyDarwinDockIcon(): void {
   app.dock?.setIcon(icon);
 }
 
-/** Spotify / Widevine need EME; denying unknown permission checks can block CDM registration. */
+/** Radio Sankt uses Spotify Connect remote-control (not Web Playback SDK), so no EME/DRM
+ *  permissions are required. This handler simply leaves defaults intact for Spotify's
+ *  OAuth popup and local file previews. */
 function allowPlaybackPermissions(): void {
   const ses = session.defaultSession;
   ses.setPermissionRequestHandler((_wc, _permission, callback) => {
     callback(true);
   });
   ses.setPermissionCheckHandler(() => true);
-}
-
-function appendWidevineDebugLog(message: string): void {
-  if (process.platform !== 'win32') return;
-  try {
-    const logPath = join(app.getPath('userData'), 'widevine-debug.log');
-    appendFileSync(logPath, `${new Date().toISOString()} ${message}\n`, 'utf8');
-  } catch {
-    // Ignore logging failures; diagnostics must never block startup.
-  }
-}
-
-/** ECS ships its own Widevine via Component Updater. A stale CDM cached under userData
- *  (e.g. leftover from a previous Electron line) yields "CreateCdmFunc not available"
- *  on Windows. This one-time quarantine forces the Component Updater to pull a fresh CDM. */
-const WIDEVINE_QUARANTINE_FLAG = 'WidevineCdm.quarantine.v1.done';
-
-function quarantineStaleWidevineDir(): void {
-  if (process.platform !== 'win32') return;
-
-  const userData = app.getPath('userData');
-  const flagPath = join(userData, WIDEVINE_QUARANTINE_FLAG);
-  const cdmRoot = join(userData, 'WidevineCdm');
-
-  if (existsSync(flagPath)) {
-    appendWidevineDebugLog('[Widevine] quarantine already performed; skipping');
-    return;
-  }
-
-  if (!existsSync(cdmRoot)) {
-    appendWidevineDebugLog(`[Widevine] userData CDM dir absent: ${cdmRoot}`);
-    try {
-      appendFileSync(flagPath, `${new Date().toISOString()} no-cdm\n`, 'utf8');
-    } catch {
-      // Flag write failure is non-fatal.
-    }
-    return;
-  }
-
-  try {
-    const entries = readdirSync(cdmRoot);
-    const versionEntries = entries.filter((name) => {
-      try {
-        return statSync(join(cdmRoot, name)).isDirectory();
-      } catch {
-        return false;
-      }
-    });
-    appendWidevineDebugLog(
-      `[Widevine] userData CDM versions present: ${versionEntries.join(', ') || '(none)'}`,
-    );
-
-    const quarantineDir = join(userData, `WidevineCdm.stale.${Date.now()}`);
-    fs.rename(cdmRoot, quarantineDir).then(
-      () => {
-        appendWidevineDebugLog(`[Widevine] quarantined CDM dir: ${quarantineDir}`);
-        try {
-          appendFileSync(flagPath, `${new Date().toISOString()} quarantined=${quarantineDir}\n`, 'utf8');
-        } catch {
-          // Flag write failure is non-fatal.
-        }
-      },
-      (err) =>
-        appendWidevineDebugLog(
-          `[Widevine] quarantine rename failed: ${err instanceof Error ? err.message : String(err)}`,
-        ),
-    );
-  } catch (e) {
-    appendWidevineDebugLog(
-      `[Widevine] quarantine scan failed: ${e instanceof Error ? e.message : String(e)}`,
-    );
-  }
 }
 
 function createWindow(): void {
@@ -196,8 +107,6 @@ function createWindow(): void {
       preload: join(__dirname, '../preload/index.js'),
       nodeIntegration: false,
       contextIsolation: true,
-      // Widevine / EME (Spotify Web Playback) does not initialize with a sandboxed renderer on ECS.
-      sandbox: false,
     },
   });
 
@@ -450,108 +359,10 @@ function registerIpcHandlers(): void {
   });
 }
 
-function formatWidevineFailure(e: unknown): string {
-  const lines: string[] = [];
-  const walk = (x: unknown, indent: string): void => {
-    if (x == null) {
-      lines.push(`${indent}${String(x)}`);
-      return;
-    }
-    if (x instanceof Error) {
-      lines.push(`${indent}${x.name}: ${x.message}`);
-      const ext = x as Error & { detail?: unknown; errors?: unknown[] };
-      if (ext.detail !== undefined) {
-        lines.push(`${indent}detail:`);
-        walk(ext.detail, `${indent}  `);
-      }
-      if (Array.isArray(ext.errors)) {
-        ext.errors.forEach((sub, i) => {
-          lines.push(`${indent}[${i}]`);
-          walk(sub, `${indent}  `);
-        });
-      }
-      return;
-    }
-    if (typeof x === 'object') {
-      try {
-        lines.push(`${indent}${JSON.stringify(x, null, 2).split('\n').join(`\n${indent}`)}`);
-      } catch {
-        lines.push(`${indent}${Object.prototype.toString.call(x)}`);
-      }
-      return;
-    }
-    lines.push(`${indent}${String(x)}`);
-  };
-  walk(e, '');
-  return lines.join('\n');
-}
-
 app.whenReady().then(async () => {
   allowPlaybackPermissions();
-  quarantineStaleWidevineDir();
   getDatabase();
   registerIpcHandlers();
-
-  const widevineId = components.WIDEVINE_CDM_ID;
-  const mfCdmId = (components as unknown as { MEDIA_FOUNDATION_WIDEVINE_CDM_ID?: string })
-    .MEDIA_FOUNDATION_WIDEVINE_CDM_ID;
-  console.log('[Widevine] userData:', app.getPath('userData'));
-  console.log('[Widevine] WIDEVINE_CDM_ID:', widevineId);
-  console.log('[Widevine] MEDIA_FOUNDATION_WIDEVINE_CDM_ID:', mfCdmId);
-  console.log('[Widevine] component updates enabled:', components.updatesEnabled);
-  appendWidevineDebugLog(
-    `[Widevine] startup userData=${app.getPath('userData')} cdmId=${widevineId} mfCdmId=${mfCdmId ?? 'undefined'} updatesEnabled=${components.updatesEnabled}`,
-  );
-
-  // Wait for L3 (required). Try L1 (Media Foundation) separately so machines that
-  // do not support L1 (older Windows, missing Media Foundation, etc.) don't block startup.
-  try {
-    await components.whenReady([widevineId]);
-    const st = (components.status() as Record<string, { version?: string }>)[widevineId];
-    console.log('[Widevine] component status:', widevineId, st);
-    appendWidevineDebugLog(`[Widevine] components.status[${widevineId}]: ${JSON.stringify(st)}`);
-    if (!st?.version) {
-      throw new Error(
-        `Widevine CDM has no version (status: ${JSON.stringify(st)}). Component Updater could not install DRM — often fixed by upgrading to a supported Castlabs Electron line (see package.json).`,
-      );
-    }
-  } catch (e) {
-    console.error('[Widevine] L3 CDM setup failed:', e);
-    appendWidevineDebugLog(
-      `[Widevine] L3 CDM setup failed: ${e instanceof Error ? `${e.name}: ${e.message}` : String(e)}`,
-    );
-    const detail = formatWidevineFailure(e);
-    void dialog.showMessageBox({
-      type: 'warning',
-      title: tr('widevine.title'),
-      message: tr('widevine.message'),
-      detail: `${detail}
-
-${tr('widevine.commonCauses')}
-
-${tr('widevine.versionHint')}`,
-    });
-  }
-
-  if (mfCdmId) {
-    try {
-      await components.whenReady([mfCdmId]);
-      const mf = (components.status() as Record<string, { version?: string }>)[mfCdmId];
-      console.log('[Widevine] MF CDM status:', mfCdmId, mf);
-      appendWidevineDebugLog(`[Widevine] components.status[${mfCdmId}]: ${JSON.stringify(mf)}`);
-      if (!mf?.version) {
-        appendWidevineDebugLog(
-          '[Widevine] Media Foundation (L1) CDM unavailable. Spotify Web Playback on Windows needs L1; L3-only may yield CreateCdmFunc errors.',
-        );
-      }
-    } catch (e) {
-      appendWidevineDebugLog(
-        `[Widevine] MF CDM setup skipped: ${e instanceof Error ? `${e.name}: ${e.message}` : String(e)}`,
-      );
-    }
-  } else {
-    appendWidevineDebugLog('[Widevine] MEDIA_FOUNDATION_WIDEVINE_CDM_ID not exposed by this Electron build.');
-  }
 
   applyDarwinDockIcon();
   createWindow();
