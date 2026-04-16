@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, dialog, shell, components, session } from 
 import { autoUpdater } from 'electron-updater';
 import Store from 'electron-store';
 import { join, resolve, normalize, dirname } from 'path';
-import { existsSync, promises as fs } from 'fs';
+import { existsSync, promises as fs, appendFileSync, readFileSync } from 'fs';
 import {
   saveJingle,
   getJingles,
@@ -105,34 +105,81 @@ function allowPlaybackPermissions(): void {
   ses.setPermissionCheckHandler(() => true);
 }
 
-function configureBundledWidevineCdm(): void {
+function appendWidevineDebugLog(message: string): void {
   if (process.platform !== 'win32') return;
+  try {
+    const logPath = join(app.getPath('userData'), 'widevine-debug.log');
+    appendFileSync(logPath, `${new Date().toISOString()} ${message}\n`, 'utf8');
+  } catch {
+    // Ignore logging failures; diagnostics must never block startup.
+  }
+}
 
-  // On some Windows installs, the component-updater path resolves to an unusable CDM
-  // ("CreateCdmFunc not available"). Prefer the ECS-bundled CDM explicitly.
-  const runtimeDir = dirname(process.execPath);
-  const manifestPath = join(runtimeDir, 'WidevineCdm', 'manifest.json');
-  const dllPath = join(runtimeDir, 'WidevineCdm', '_platform_specific', 'win_x64', 'widevinecdm.dll');
-
+function configureWidevineFrom(manifestPath: string, dllPath: string, sourceLabel: string): boolean {
   if (!existsSync(manifestPath) || !existsSync(dllPath)) {
-    console.warn('[Widevine] Bundled CDM files missing; using default component updater path.');
-    return;
+    appendWidevineDebugLog(
+      `[Widevine] candidate missing (${sourceLabel}) manifest=${manifestPath} dll=${dllPath}`,
+    );
+    return false;
   }
 
   try {
-    const manifestRaw = require('fs').readFileSync(manifestPath, 'utf-8') as string;
+    const manifestRaw = readFileSync(manifestPath, 'utf-8');
     const manifest = JSON.parse(manifestRaw) as { version?: string };
     const version = manifest.version?.trim();
     if (!version) {
-      console.warn('[Widevine] manifest.json has no version; skipping explicit CDM path.');
-      return;
+      appendWidevineDebugLog(`[Widevine] candidate invalid (${sourceLabel}) manifest has no version`);
+      return false;
     }
+
     app.commandLine.appendSwitch('widevine-cdm-path', dllPath);
     app.commandLine.appendSwitch('widevine-cdm-version', version);
-    console.log('[Widevine] using bundled CDM:', { dllPath, version });
+    console.log('[Widevine] using bundled CDM:', { sourceLabel, dllPath, version });
+    appendWidevineDebugLog(
+      `[Widevine] configured (${sourceLabel}) path=${dllPath} version=${version}`,
+    );
+    return true;
   } catch (e) {
-    console.warn('[Widevine] Failed to configure bundled CDM:', e);
+    console.warn('[Widevine] Failed to configure CDM candidate:', sourceLabel, e);
+    appendWidevineDebugLog(
+      `[Widevine] candidate threw (${sourceLabel}) error=${e instanceof Error ? `${e.name}: ${e.message}` : String(e)}`,
+    );
+    return false;
   }
+}
+
+function configureBundledWidevineCdm(): void {
+  if (process.platform !== 'win32') return;
+
+  // On some Windows installs, the default CDM resolution yields "CreateCdmFunc not available".
+  // Try known ECS/component locations in priority order and log each attempt.
+  const runtimeDir = dirname(process.execPath);
+  const candidates: Array<{ sourceLabel: string; manifestPath: string; dllPath: string }> = [
+    {
+      sourceLabel: 'runtimeDir',
+      manifestPath: join(runtimeDir, 'WidevineCdm', 'manifest.json'),
+      dllPath: join(runtimeDir, 'WidevineCdm', '_platform_specific', 'win_x64', 'widevinecdm.dll'),
+    },
+    {
+      sourceLabel: 'resourcesPath',
+      manifestPath: join(process.resourcesPath, 'WidevineCdm', 'manifest.json'),
+      dllPath: join(process.resourcesPath, 'WidevineCdm', '_platform_specific', 'win_x64', 'widevinecdm.dll'),
+    },
+    {
+      sourceLabel: 'userData',
+      manifestPath: join(app.getPath('userData'), 'WidevineCdm', 'manifest.json'),
+      dllPath: join(app.getPath('userData'), 'WidevineCdm', '_platform_specific', 'win_x64', 'widevinecdm.dll'),
+    },
+  ];
+
+  for (const candidate of candidates) {
+    if (configureWidevineFrom(candidate.manifestPath, candidate.dllPath, candidate.sourceLabel)) {
+      return;
+    }
+  }
+
+  console.warn('[Widevine] No usable CDM candidate found; using default component updater path.');
+  appendWidevineDebugLog('[Widevine] no candidate configured; default updater path will be used');
 }
 
 function createWindow(): void {
