@@ -276,6 +276,7 @@
   "automation.queue.jinglePool": "Pool de vinhetas ({{count}})",
   "automation.queue.adPool": "Pool de anúncios ({{count}})",
   "automation.queue.pickOneClip": "Selecione pelo menos um clipe nos pools",
+  "automation.queue.breakHint": "Os breaks são inseridos entre faixas enquanto a automação está tocando. Adicione músicas à fila e aperte Play.",
   "automation.queue.noClipsYet": "Ainda não há clipes na biblioteca - adicione vinhetas ou anúncios em Busca e depois Gerenciar.",
   "automation.queue.start": "Iniciar automação",
   "automation.queue.resume": "Retomar automação",

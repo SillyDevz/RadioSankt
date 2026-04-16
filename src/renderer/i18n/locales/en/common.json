@@ -276,6 +276,7 @@
   "automation.queue.jinglePool": "Jingle pool ({{count}})",
   "automation.queue.adPool": "Ad pool ({{count}})",
   "automation.queue.pickOneClip": "Pick at least one clip in the pools",
+  "automation.queue.breakHint": "Breaks are inserted between tracks while automation is running. Add songs to the queue and press Play.",
   "automation.queue.noClipsYet": "No clips in the library yet - add jingles or ads from Search, then Manage.",
   "automation.queue.start": "Start automation",
   "automation.queue.resume": "Resume automation",
