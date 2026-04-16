@@ -1,5 +1,8 @@
 name: Build and Release
 
+# Pushing a *git tag* (e.g. `git tag v0.1.3 && git push origin v0.1.3`) runs this workflow
+# and uploads .dmg / .exe to the GitHub Release for that tag.
+# Creating a release only from the GitHub UI does not run this workflow — you still only get "Source code" zips.
 on:
   push:
     tags:
@@ -77,6 +80,19 @@ jobs:
         with:
           name: release-windows
           path: release
+
+      - name: Verify installers exist before upload
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          installers=(release/*.exe release/*.dmg)
+          if [[ ${#installers[@]} -eq 0 ]]; then
+            echo "::error::No .exe or .dmg under release/. Build jobs may have failed or artifact paths are wrong."
+            ls -la release/ 2>/dev/null || echo "(release/ missing)"
+            exit 1
+          fi
+          printf 'Uploading: %s\n' "${installers[@]}"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
