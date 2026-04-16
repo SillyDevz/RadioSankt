@@ -207,7 +207,7 @@ class AutomationEngine {
     const store = this.getStore();
     if (store.automationStatus === 'stopped') return;
 
-    window.dispatchEvent(new CustomEvent('radio-sankt:prime-spotify-playback'));
+    window.dispatchEvent(new CustomEvent('radio-sankt:resume-audio-context'));
 
     const stepsBefore = this.getSteps();
     const lenBefore = stepsBefore.length;
@@ -232,7 +232,7 @@ class AutomationEngine {
     const store = this.getStore();
     if (store.automationStatus === 'stopped') return;
 
-    window.dispatchEvent(new CustomEvent('radio-sankt:prime-spotify-playback'));
+    window.dispatchEvent(new CustomEvent('radio-sankt:resume-audio-context'));
 
     const steps = this.getSteps();
     if (steps.length === 0) return;
@@ -323,7 +323,7 @@ class AutomationEngine {
       if (step.transitionIn === 'fadeIn') {
         if (step.type === 'jingle' || step.type === 'ad') {
           const audio = AudioEngine.get();
-          if (audio) await audio.fadeIn('B', FADE_DURATION);
+          if (audio) await audio.fadeIn(FADE_DURATION);
         } else if (step.type === 'track' || step.type === 'playlist') {
           const devId = this.getStore().deviceId;
           if (devId) {
@@ -361,7 +361,7 @@ class AutomationEngine {
   }
 
   private async playTrackStep(step: AutomationStep & { type: 'track' }): Promise<void> {
-    window.dispatchEvent(new CustomEvent('radio-sankt:prime-spotify-playback'));
+    window.dispatchEvent(new CustomEvent('radio-sankt:resume-audio-context'));
     const deviceId = await this.ensureSpotifyDevice();
     const store = this.getStore();
 
@@ -375,7 +375,7 @@ class AutomationEngine {
   }
 
   private async playPlaylistStep(step: AutomationStep & { type: 'playlist' }): Promise<void> {
-    window.dispatchEvent(new CustomEvent('radio-sankt:prime-spotify-playback'));
+    window.dispatchEvent(new CustomEvent('radio-sankt:resume-audio-context'));
     const deviceId = await this.ensureSpotifyDevice();
     const store = this.getStore();
 
@@ -400,7 +400,7 @@ class AutomationEngine {
     }
 
     if (step.transitionIn === 'fadeIn') {
-      audio.setVolume('B', 0);
+      audio.setVolume(0);
     }
 
     await audio.playJingle(step.filePath);
@@ -451,7 +451,7 @@ class AutomationEngine {
     const durationMs = (step as { durationMs: number }).durationMs;
     const remainingMs = store.stepTimeRemaining;
     if (remainingMs <= 0 || remainingMs > durationMs + 2000) {
-      window.dispatchEvent(new CustomEvent('radio-sankt:spotify-resume-sdk'));
+      window.dispatchEvent(new CustomEvent('radio-sankt:spotify-resume'));
       await this.executeStep(index);
       return;
     }
@@ -459,7 +459,7 @@ class AutomationEngine {
     store.setAutomationStatus('playing');
     this.emit({ type: 'stepChanged', index });
 
-    window.dispatchEvent(new CustomEvent('radio-sankt:spotify-resume-sdk'));
+    window.dispatchEvent(new CustomEvent('radio-sankt:spotify-resume'));
 
     if (!options?.skipGainRecovery) {
       const devId = store.deviceId;
@@ -496,7 +496,7 @@ class AutomationEngine {
 
         if (step.transitionOut === 'fadeOut') {
           if (isJingleLike(step)) {
-            if (audio) audio.fadeOut('B', FADE_DURATION);
+            if (audio) audio.fadeOut(FADE_DURATION);
           } else if (devId && (step.type === 'track' || step.type === 'playlist')) {
             void rampSpotifyRemoteVolume(devId, volumeToPercent(this.getStore().volume), 0, FADE_DURATION);
           }
@@ -504,7 +504,7 @@ class AutomationEngine {
         if (nextStep?.transitionIn === 'crossfade') {
           // Crossfade fade-out for current step + fade-in for next step (via next step's execute path).
           if (isJingleLike(step)) {
-            if (audio) audio.fadeOut('B', FADE_DURATION);
+            if (audio) audio.fadeOut(FADE_DURATION);
           } else if (devId && (step.type === 'track' || step.type === 'playlist')) {
             void rampSpotifyRemoteVolume(devId, volumeToPercent(this.getStore().volume), 0, FADE_DURATION);
           }
@@ -661,7 +661,7 @@ class AutomationEngine {
     }
 
     store.setAutomationStatus('paused');
-    window.dispatchEvent(new CustomEvent('radio-sankt:spotify-pause-sdk'));
+    window.dispatchEvent(new CustomEvent('radio-sankt:spotify-pause'));
   }
 
   async stop(): Promise<void> {
@@ -693,7 +693,7 @@ class AutomationEngine {
     store.setPosition(0);
     store.setDuration(0);
     store.setIsPlaying(false);
-    window.dispatchEvent(new CustomEvent('radio-sankt:spotify-pause-sdk'));
+    window.dispatchEvent(new CustomEvent('radio-sankt:spotify-pause'));
   }
 }
 

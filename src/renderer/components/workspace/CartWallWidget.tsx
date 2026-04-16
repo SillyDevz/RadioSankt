@@ -200,11 +200,11 @@ export default function CartWallWidget() {
     const waitFade = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
     if (isLive) {
-      window.dispatchEvent(new CustomEvent('radio-sankt:prime-spotify-playback'));
+      window.dispatchEvent(new CustomEvent('radio-sankt:resume-audio-context'));
       if (automationStatus === 'paused') {
         await engine.resume({ skipGainRecovery: true });
       } else {
-        window.dispatchEvent(new CustomEvent('radio-sankt:spotify-resume-sdk'));
+        window.dispatchEvent(new CustomEvent('radio-sankt:spotify-resume'));
       }
       window.dispatchEvent(
         new CustomEvent('radio-sankt:live-audio', { detail: { goingLive: false, fadeMs: fadeInMs } }),
@@ -221,7 +221,7 @@ export default function CartWallWidget() {
       if (automationStatus === 'playing') {
         await engine.pause({ skipFade: true });
       } else {
-        window.dispatchEvent(new CustomEvent('radio-sankt:spotify-pause-sdk'));
+        window.dispatchEvent(new CustomEvent('radio-sankt:spotify-pause'));
       }
       addToast(i18n.t('workspace.cart.youAreLive', { defaultValue: 'You are LIVE' }), 'success');
     }
@@ -232,7 +232,7 @@ export default function CartWallWidget() {
 
     const audio = AudioEngine.getOrInit();
     audio.resumeContextIfNeeded();
-    audio.setVolume('B', 1);
+    audio.setVolume(1);
 
     slotVoiceCountsRef.current[slot.id] = (slotVoiceCountsRef.current[slot.id] || 0) + 1;
     setActiveSlotIds((prev) => new Set(prev).add(slot.id));

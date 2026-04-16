@@ -1,26 +1,30 @@
-type Channel = 'A' | 'B';
-
+/**
+ * Local audio mixer for jingles, ads, and cart-wall hot keys.
+ *
+ * Prior to the Spotify Connect migration this engine also mixed the Spotify
+ * Web Playback SDK's `<audio>` element on a second channel. In Spotify
+ * Connect mode Spotify audio is rendered by the Spotify desktop app itself,
+ * so the engine only needs one channel now.
+ */
 class AudioEngine {
   private static instance: AudioEngine | null = null;
 
   private ctx: AudioContext;
   private masterGain: GainNode;
 
-  private gainA: GainNode;
-  private gainB: GainNode;
-  private analyserA: AnalyserNode;
-  private analyserB: AnalyserNode;
+  private gain: GainNode;
+  private analyser: AnalyserNode;
 
-  private preDuckVolume: Record<Channel, number> = { A: 1, B: 1 };
+  private preDuckVolume = 1;
 
-  // Jingle playback state (single voice — automation / preview)
+  // Single-voice jingle playback (used by the automation engine).
   private jingleSource: AudioBufferSourceNode | null = null;
   private jingleBuffer: AudioBuffer | null = null;
   private jingleStartTime = 0;
   private jinglePlaying = false;
   private jingleOnEnded: (() => void) | null = null;
 
-  /** Cart-wall polyphony: multiple buffer sources into channel B */
+  /** Cart-wall polyphony: multiple buffer sources mix in concurrently. */
   private cartVoices = new Map<string, AudioBufferSourceNode>();
 
   private constructor(ctx: AudioContext) {
@@ -29,19 +33,11 @@ class AudioEngine {
     this.masterGain = ctx.createGain();
     this.masterGain.connect(ctx.destination);
 
-    // Channel A (Spotify)
-    this.gainA = ctx.createGain();
-    this.analyserA = ctx.createAnalyser();
-    this.analyserA.fftSize = 256;
-    this.gainA.connect(this.analyserA);
-    this.analyserA.connect(this.masterGain);
-
-    // Channel B (Jingles)
-    this.gainB = ctx.createGain();
-    this.analyserB = ctx.createAnalyser();
-    this.analyserB.fftSize = 256;
-    this.gainB.connect(this.analyserB);
-    this.analyserB.connect(this.masterGain);
+    this.gain = ctx.createGain();
+    this.analyser = ctx.createAnalyser();
+    this.analyser.fftSize = 256;
+    this.gain.connect(this.analyser);
+    this.analyser.connect(this.masterGain);
   }
 
   static init(ctx: AudioContext): AudioEngine {
@@ -63,89 +59,36 @@ class AudioEngine {
     return this.ctx;
   }
 
-  /** Spotify routes through this graph; browsers/Electron may suspend the context until resumed. */
+  /** Browsers / Electron may suspend the audio context until the user gestures. */
   resumeContextIfNeeded(): void {
     if (this.ctx.state === 'suspended') {
       void this.ctx.resume();
     }
   }
 
-  getGainNode(channel: Channel): GainNode {
-    return channel === 'A' ? this.gainA : this.gainB;
+  // ── Volume / fades / ducking (single channel) ──────────────────────
+
+  setVolume(value: number): void {
+    this.gain.gain.value = value;
+    this.preDuckVolume = value;
   }
 
-  // ── Volume ──────────────────────────────────────────────────────────
-
-  setVolume(channel: Channel, value: number): void {
-    const gain = this.getGainNode(channel);
-    gain.gain.value = value;
-    this.preDuckVolume[channel] = value;
-  }
-
-  // ── Fades ───────────────────────────────────────────────────────────
-
-  fadeIn(channel: Channel, durationMs: number, targetGain = 1): Promise<void> {
+  fadeIn(durationMs: number, targetGain = 1): Promise<void> {
     return new Promise((resolve) => {
-      const gain = this.getGainNode(channel);
       const now = this.ctx.currentTime;
-      gain.gain.setValueAtTime(0, now);
-      gain.gain.linearRampToValueAtTime(targetGain, now + durationMs / 1000);
+      this.gain.gain.setValueAtTime(0, now);
+      this.gain.gain.linearRampToValueAtTime(targetGain, now + durationMs / 1000);
       setTimeout(resolve, durationMs);
     });
   }
 
-  fadeOut(channel: Channel, durationMs: number): Promise<void> {
+  fadeOut(durationMs: number): Promise<void> {
     return new Promise((resolve) => {
-      const gain = this.getGainNode(channel);
       const now = this.ctx.currentTime;
-      gain.gain.setValueAtTime(gain.gain.value, now);
-      gain.gain.linearRampToValueAtTime(0, now + durationMs / 1000);
+      this.gain.gain.setValueAtTime(this.gain.gain.value, now);
+      this.gain.gain.linearRampToValueAtTime(0, now + durationMs / 1000);
       setTimeout(resolve, durationMs);
     });
-  }
-
-  crossfade(from: Channel, to: Channel, durationMs: number): Promise<void> {
-    return Promise.all([
-      this.fadeOut(from, durationMs),
-      this.fadeIn(to, durationMs),
-    ]).then(() => {});
-  }
-
-  // ── Ducking ─────────────────────────────────────────────────────────
-
-  duck(channel: Channel, targetVolume: number, durationMs: number): Promise<void> {
-    return new Promise((resolve) => {
-      const gain = this.getGainNode(channel);
-      this.preDuckVolume[channel] = gain.gain.value;
-      const now = this.ctx.currentTime;
-      gain.gain.setValueAtTime(gain.gain.value, now);
-      gain.gain.linearRampToValueAtTime(targetVolume, now + durationMs / 1000);
-      setTimeout(resolve, durationMs);
-    });
-  }
-
-  unduck(channel: Channel, durationMs: number): Promise<void> {
-    return new Promise((resolve) => {
-      const gain = this.getGainNode(channel);
-      const now = this.ctx.currentTime;
-      gain.gain.setValueAtTime(gain.gain.value, now);
-      gain.gain.linearRampToValueAtTime(this.preDuckVolume[channel], now + durationMs / 1000);
-      setTimeout(resolve, durationMs);
-    });
-  }
-
-  // ── Levels ──────────────────────────────────────────────────────────
-
-  getLevel(channel: Channel): number {
-    const analyser = channel === 'A' ? this.analyserA : this.analyserB;
-    const data = new Float32Array(analyser.fftSize);
-    analyser.getFloatTimeDomainData(data);
-
-    let sum = 0;
-    for (let i = 0; i < data.length; i++) {
-      sum += data[i] * data[i];
-    }
-    return Math.sqrt(sum / data.length);
   }
 
   // ── Jingle playback ────────────────────────────────────────────────
@@ -158,7 +101,7 @@ class AudioEngine {
 
     this.jingleSource = this.ctx.createBufferSource();
     this.jingleSource.buffer = this.jingleBuffer;
-    this.jingleSource.connect(this.gainB);
+    this.jingleSource.connect(this.gain);
 
     this.jingleSource.onended = () => {
       this.jinglePlaying = false;
@@ -172,14 +115,14 @@ class AudioEngine {
     this.jingleSource.start();
   }
 
-  /** Extra cart voices on channel B; does not stop automation jingle or other cart voices. */
+  /** Extra cart voices; do not stop the automation jingle or other cart voices. */
   async playJingleVoice(filePath: string, onEnded?: () => void): Promise<{ id: string; durationMs: number }> {
     const arrayBuffer = await window.electronAPI.readFileBuffer(filePath);
     const buffer = await this.ctx.decodeAudioData(arrayBuffer);
     const id = crypto.randomUUID();
     const source = this.ctx.createBufferSource();
     source.buffer = buffer;
-    source.connect(this.gainB);
+    source.connect(this.gain);
     source.onended = () => {
       this.cartVoices.delete(id);
       onEnded?.();
