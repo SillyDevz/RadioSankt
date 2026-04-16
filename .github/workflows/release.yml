@@ -44,9 +44,8 @@ jobs:
           test -n "$CASTLABS_ACCOUNT_PASSWORD" || { echo "Missing CASTLABS_ACCOUNT_PASSWORD secret."; exit 1; }
 
       - name: Package
-        run: npm run electron:build:mac
+        run: npm run electron:build:mac -- --publish never
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CASTLABS_ACCOUNT_NAME: ${{ secrets.CASTLABS_ACCOUNT_NAME }}
           CASTLABS_ACCOUNT_PASSWORD: ${{ secrets.CASTLABS_ACCOUNT_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
@@ -91,9 +90,8 @@ jobs:
           }
 
       - name: Package
-        run: npm run electron:build:win
+        run: npm run electron:build:win -- --publish never
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: false
           CASTLABS_ACCOUNT_NAME: ${{ secrets.CASTLABS_ACCOUNT_NAME }}
           CASTLABS_ACCOUNT_PASSWORD: ${{ secrets.CASTLABS_ACCOUNT_PASSWORD }}
