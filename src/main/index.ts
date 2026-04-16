@@ -148,7 +148,7 @@ function configureWidevineFrom(manifestPath: string, adapterPath: string, source
   }
 }
 
-function collectWidevineAdapterDlls(rootDir: string, depth: number): string[] {
+function collectWidevineDllCandidates(rootDir: string, depth: number): string[] {
   if (depth < 0 || !existsSync(rootDir)) return [];
   let entries: Dirent[];
   try {
@@ -157,18 +157,21 @@ function collectWidevineAdapterDlls(rootDir: string, depth: number): string[] {
     return [];
   }
 
-  const adapterDlls: string[] = [];
+  const dlls: string[] = [];
   for (const entry of entries) {
     const full = join(rootDir, entry.name);
-    if (entry.isFile() && entry.name.toLowerCase() === 'widevinecdmadapter.dll') {
-      adapterDlls.push(full);
+    if (
+      entry.isFile() &&
+      (entry.name.toLowerCase() === 'widevinecdmadapter.dll' || entry.name.toLowerCase() === 'widevinecdm.dll')
+    ) {
+      dlls.push(full);
       continue;
     }
     if (entry.isDirectory()) {
-      adapterDlls.push(...collectWidevineAdapterDlls(full, depth - 1));
+      dlls.push(...collectWidevineDllCandidates(full, depth - 1));
     }
   }
-  return adapterDlls;
+  return dlls;
 }
 
 function inferWidevineVersionFromDllPath(dllPath: string): string | null {
@@ -180,13 +183,20 @@ function inferWidevineVersionFromDllPath(dllPath: string): string | null {
 }
 
 function configureWidevineFromRoot(rootDir: string, sourceLabel: string): boolean {
-  const adapterDlls = collectWidevineAdapterDlls(rootDir, 6);
-  if (adapterDlls.length === 0) {
-    appendWidevineDebugLog(`[Widevine] no adapter dll found under root (${sourceLabel}) root=${rootDir}`);
+  const dllCandidates = collectWidevineDllCandidates(rootDir, 6);
+  if (dllCandidates.length === 0) {
+    appendWidevineDebugLog(`[Widevine] no Widevine DLL found under root (${sourceLabel}) root=${rootDir}`);
     return false;
   }
 
-  for (const adapterPath of adapterDlls) {
+  // Prefer adapter DLL when available, otherwise fall back to widevinecdm.dll layouts.
+  dllCandidates.sort((a, b) => {
+    const aIsAdapter = a.toLowerCase().endsWith('widevinecdmadapter.dll');
+    const bIsAdapter = b.toLowerCase().endsWith('widevinecdmadapter.dll');
+    return Number(bIsAdapter) - Number(aIsAdapter);
+  });
+
+  for (const adapterPath of dllCandidates) {
     const normalized = adapterPath.replace(/\\/g, '/');
     const platformMarker = '/_platform_specific/win_x64/';
     const markerIdx = normalized.lastIndexOf(platformMarker);
@@ -208,9 +218,7 @@ function configureWidevineFromRoot(rootDir: string, sourceLabel: string): boolea
       return true;
     }
 
-    appendWidevineDebugLog(
-      `[Widevine] adapter dll found but no manifest/version (${sourceLabel}) adapter=${adapterPath}`,
-    );
+    appendWidevineDebugLog(`[Widevine] dll found but no manifest/version (${sourceLabel}) path=${adapterPath}`);
   }
 
   return false;
@@ -222,29 +230,41 @@ function configureBundledWidevineCdm(): void {
   // On some Windows installs, the default CDM resolution yields "CreateCdmFunc not available".
   // Try known ECS/component locations in priority order and log each attempt.
   const runtimeDir = dirname(process.execPath);
-  const candidates: Array<{ sourceLabel: string; manifestPath: string; adapterPath: string; rootDir: string }> = [
+  const candidates: Array<{
+    sourceLabel: string;
+    manifestPath: string;
+    adapterPath: string;
+    fallbackPath: string;
+    rootDir: string;
+  }> = [
     {
       sourceLabel: 'runtimeDir',
       manifestPath: join(runtimeDir, 'WidevineCdm', 'manifest.json'),
       adapterPath: join(runtimeDir, 'WidevineCdm', '_platform_specific', 'win_x64', 'widevinecdmadapter.dll'),
+      fallbackPath: join(runtimeDir, 'WidevineCdm', '_platform_specific', 'win_x64', 'widevinecdm.dll'),
       rootDir: join(runtimeDir, 'WidevineCdm'),
     },
     {
       sourceLabel: 'resourcesPath',
       manifestPath: join(process.resourcesPath, 'WidevineCdm', 'manifest.json'),
       adapterPath: join(process.resourcesPath, 'WidevineCdm', '_platform_specific', 'win_x64', 'widevinecdmadapter.dll'),
+      fallbackPath: join(process.resourcesPath, 'WidevineCdm', '_platform_specific', 'win_x64', 'widevinecdm.dll'),
       rootDir: join(process.resourcesPath, 'WidevineCdm'),
     },
     {
       sourceLabel: 'userData',
       manifestPath: join(app.getPath('userData'), 'WidevineCdm', 'manifest.json'),
       adapterPath: join(app.getPath('userData'), 'WidevineCdm', '_platform_specific', 'win_x64', 'widevinecdmadapter.dll'),
+      fallbackPath: join(app.getPath('userData'), 'WidevineCdm', '_platform_specific', 'win_x64', 'widevinecdm.dll'),
       rootDir: join(app.getPath('userData'), 'WidevineCdm'),
     },
   ];
 
   for (const candidate of candidates) {
     if (configureWidevineFrom(candidate.manifestPath, candidate.adapterPath, candidate.sourceLabel)) {
+      return;
+    }
+    if (configureWidevineFrom(candidate.manifestPath, candidate.fallbackPath, `${candidate.sourceLabel}:fallback-cdm`)) {
       return;
     }
     if (configureWidevineFromRoot(candidate.rootDir, `${candidate.sourceLabel}:root-scan`)) {
