@@ -493,22 +493,39 @@ app.whenReady().then(async () => {
   registerIpcHandlers();
 
   const widevineId = components.WIDEVINE_CDM_ID;
+  const mfCdmId = (components as unknown as { MEDIA_FOUNDATION_WIDEVINE_CDM_ID?: string })
+    .MEDIA_FOUNDATION_WIDEVINE_CDM_ID;
   console.log('[Widevine] userData:', app.getPath('userData'));
   console.log('[Widevine] WIDEVINE_CDM_ID:', widevineId);
+  console.log('[Widevine] MEDIA_FOUNDATION_WIDEVINE_CDM_ID:', mfCdmId);
   console.log('[Widevine] component updates enabled:', components.updatesEnabled);
   appendWidevineDebugLog(
-    `[Widevine] startup userData=${app.getPath('userData')} cdmId=${widevineId} updatesEnabled=${components.updatesEnabled}`,
+    `[Widevine] startup userData=${app.getPath('userData')} cdmId=${widevineId} mfCdmId=${mfCdmId ?? 'undefined'} updatesEnabled=${components.updatesEnabled}`,
   );
 
+  const idsToWaitFor = mfCdmId ? [widevineId, mfCdmId] : [widevineId];
+
   try {
-    await components.whenReady([widevineId]);
-    const st = components.status()[widevineId];
-    console.log('[Widevine] component status:', st);
-    appendWidevineDebugLog(`[Widevine] components.status: ${JSON.stringify(st)}`);
-    if (!st?.version) {
+    await components.whenReady(idsToWaitFor);
+    const statusAll = components.status();
+    for (const id of idsToWaitFor) {
+      const st = (statusAll as Record<string, unknown>)[id];
+      console.log('[Widevine] component status:', id, st);
+      appendWidevineDebugLog(`[Widevine] components.status[${id}]: ${JSON.stringify(st)}`);
+    }
+    const l3 = (statusAll as Record<string, { version?: string }>)[widevineId];
+    if (!l3?.version) {
       throw new Error(
-        `Widevine CDM has no version (status: ${JSON.stringify(st)}). Component Updater could not install DRM — often fixed by upgrading to a supported Castlabs Electron line (see package.json).`,
+        `Widevine CDM has no version (status: ${JSON.stringify(l3)}). Component Updater could not install DRM — often fixed by upgrading to a supported Castlabs Electron line (see package.json).`,
       );
+    }
+    if (mfCdmId) {
+      const mf = (statusAll as Record<string, { version?: string }>)[mfCdmId];
+      if (!mf?.version) {
+        appendWidevineDebugLog(
+          `[Widevine] Media Foundation (L1) CDM unavailable: ${JSON.stringify(mf)}. Spotify Web Playback on Windows needs L1; L3-only will fail with CreateCdmFunc errors.`,
+        );
+      }
     }
   } catch (e) {
     console.error('[Widevine] CDM setup failed:', e);
