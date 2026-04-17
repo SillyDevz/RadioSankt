@@ -38,6 +38,8 @@ import {
 
 const store = new Store();
 let mainWindow: BrowserWindow | null = null;
+const GITHUB_OWNER = 'SillyDevz';
+const GITHUB_REPO = 'RadioSankt';
 
 type MainLocale = 'en' | 'pt';
 type MainI18nKey = 'spotify.scopeReset';
@@ -67,6 +69,45 @@ function windowIconPath(): string | undefined {
   const fromPublic = join(app.getAppPath(), 'public/icon.png');
   if (existsSync(fromPublic)) return fromPublic;
   return undefined;
+}
+
+function normalizeVersion(version: string): string {
+  return version.trim().replace(/^v/i, '');
+}
+
+function compareSemver(a: string, b: string): number {
+  const parse = (value: string) =>
+    normalizeVersion(value)
+      .split('.')
+      .map((part) => Number.parseInt(part, 10))
+      .map((part) => (Number.isFinite(part) ? part : 0));
+  const [a0, a1, a2] = parse(a);
+  const [b0, b1, b2] = parse(b);
+  if (a0 !== b0) return a0 - b0;
+  if (a1 !== b1) return a1 - b1;
+  return a2 - b2;
+}
+
+function isGithubLatest404(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes('404') && message.includes('/releases/latest');
+}
+
+async function resolveLatestReleaseVersion(): Promise<string | null> {
+  const res = await fetch(`https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases?per_page=20`, {
+    headers: {
+      Accept: 'application/vnd.github+json',
+      'User-Agent': `${app.getName()}/${app.getVersion()}`,
+    },
+  });
+  if (!res.ok) return null;
+  const releases = (await res.json()) as Array<{
+    draft?: boolean;
+    prerelease?: boolean;
+    tag_name?: string;
+  }>;
+  const release = releases.find((item) => !item.draft && !item.prerelease && typeof item.tag_name === 'string');
+  return release?.tag_name ? normalizeVersion(release.tag_name) : null;
 }
 
 /** macOS Dock shows Electron’s icon in dev unless we set it (BrowserWindow `icon` does not). */
@@ -173,6 +214,16 @@ function registerIpcHandlers(): void {
           remoteVersion: result.updateInfo?.version ?? null,
         };
       } catch (e) {
+        if (isGithubLatest404(e)) {
+          const remoteVersion = await resolveLatestReleaseVersion();
+          if (remoteVersion) {
+            return {
+              ok: true,
+              isUpdateAvailable: compareSemver(app.getVersion(), remoteVersion) < 0,
+              remoteVersion,
+            };
+          }
+        }
         return {
           ok: false,
           reason: 'error',
