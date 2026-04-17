@@ -90,27 +90,29 @@ function compareSemver(a: string, b: string): number {
 
 function isGithubLatest404(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  return (
-    message.includes('404') &&
-    /github\.com/i.test(message) &&
-    /(releases\/latest|\/releases|latest\.yml|app-update\.yml)/i.test(message)
-  );
+  return message.includes('404') && /github\.com/i.test(message);
 }
 
 async function resolveLatestReleaseVersion(): Promise<string | null> {
-  const res = await fetch(`https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases?per_page=20`, {
+  const url = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases?per_page=20`;
+  console.info(`[updater] fallback fetch releases url=${url}`);
+  const res = await fetch(url, {
     headers: {
       Accept: 'application/vnd.github+json',
       'User-Agent': `${app.getName()}/${app.getVersion()}`,
     },
   });
-  if (!res.ok) return null;
+  if (!res.ok) {
+    console.warn(`[updater] fallback fetch failed status=${res.status}`);
+    return null;
+  }
   const releases = (await res.json()) as Array<{
     draft?: boolean;
     prerelease?: boolean;
     tag_name?: string;
   }>;
   const release = releases.find((item) => !item.draft && !item.prerelease && typeof item.tag_name === 'string');
+  console.info(`[updater] fallback release tag=${release?.tag_name ?? 'none'}`);
   return release?.tag_name ? normalizeVersion(release.tag_name) : null;
 }
 
@@ -210,7 +212,11 @@ function registerIpcHandlers(): void {
     > => {
       if (!app.isPackaged) return { ok: false, reason: 'development' };
       try {
+        console.info('[updater] manual check started');
         const result = await autoUpdater.checkForUpdates();
+        console.info(
+          `[updater] autoUpdater response available=${String(result?.isUpdateAvailable)} version=${result?.updateInfo?.version ?? 'null'}`,
+        );
         if (result == null) return { ok: false, reason: 'updater_inactive' };
         return {
           ok: true,
@@ -218,20 +224,27 @@ function registerIpcHandlers(): void {
           remoteVersion: result.updateInfo?.version ?? null,
         };
       } catch (e) {
+        const errorMessage = e instanceof Error ? e.message : String(e);
+        console.error(`[updater] manual check error ${errorMessage}`);
         if (isGithubLatest404(e)) {
+          console.warn('[updater] github 404 detected, trying fallback');
           const remoteVersion = await resolveLatestReleaseVersion();
           if (remoteVersion) {
+            console.info(
+              `[updater] fallback resolved remoteVersion=${remoteVersion} currentVersion=${app.getVersion()}`,
+            );
             return {
               ok: true,
               isUpdateAvailable: compareSemver(app.getVersion(), remoteVersion) < 0,
               remoteVersion,
             };
           }
+          console.warn('[updater] fallback did not resolve any release version');
         }
         return {
           ok: false,
           reason: 'error',
-          message: e instanceof Error ? e.message : String(e),
+          message: errorMessage,
         };
       }
     },
