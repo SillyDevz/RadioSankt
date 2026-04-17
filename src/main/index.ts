@@ -93,6 +93,10 @@ function isGithubLatest404(error: unknown): boolean {
   return message.includes('404') && /github\.com/i.test(message);
 }
 
+function updaterAccessMessage(): string {
+  return 'Update feed is not publicly accessible (GitHub returned 404). Make the releases repository public or configure a token-backed update provider.';
+}
+
 async function resolveLatestReleaseVersion(): Promise<string | null> {
   const userAgent = `${app.getName()}/${app.getVersion()}`;
   const releasesUrl = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases?per_page=20`;
@@ -273,6 +277,11 @@ function registerIpcHandlers(): void {
             };
           }
           logUpdater('[updater] fallback did not resolve any release version');
+          return {
+            ok: false,
+            reason: 'error',
+            message: updaterAccessMessage(),
+          };
         }
         return {
           ok: false,
