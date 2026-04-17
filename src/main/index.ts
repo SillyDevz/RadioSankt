@@ -90,7 +90,11 @@ function compareSemver(a: string, b: string): number {
 
 function isGithubLatest404(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  return message.includes('404') && message.includes('/releases/latest');
+  return (
+    message.includes('404') &&
+    /github\.com/i.test(message) &&
+    /(releases\/latest|\/releases|latest\.yml|app-update\.yml)/i.test(message)
+  );
 }
 
 async function resolveLatestReleaseVersion(): Promise<string | null> {
