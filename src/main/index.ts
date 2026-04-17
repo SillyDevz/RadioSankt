@@ -116,6 +116,14 @@ async function resolveLatestReleaseVersion(): Promise<string | null> {
   return release?.tag_name ? normalizeVersion(release.tag_name) : null;
 }
 
+function logUpdater(message: string): void {
+  const line = `[${new Date().toISOString()}] ${message}`;
+  console.info(line);
+  void fs
+    .appendFile(join(app.getPath('userData'), 'updater.log'), `${line}\n`, 'utf-8')
+    .catch(() => {});
+}
+
 /** macOS Dock shows Electron’s icon in dev unless we set it (BrowserWindow `icon` does not). */
 function applyDarwinDockIcon(): void {
   if (process.platform !== 'darwin') return;
@@ -212,9 +220,9 @@ function registerIpcHandlers(): void {
     > => {
       if (!app.isPackaged) return { ok: false, reason: 'development' };
       try {
-        console.info('[updater] manual check started');
+        logUpdater('[updater] manual check started');
         const result = await autoUpdater.checkForUpdates();
-        console.info(
+        logUpdater(
           `[updater] autoUpdater response available=${String(result?.isUpdateAvailable)} version=${result?.updateInfo?.version ?? 'null'}`,
         );
         if (result == null) return { ok: false, reason: 'updater_inactive' };
@@ -225,12 +233,12 @@ function registerIpcHandlers(): void {
         };
       } catch (e) {
         const errorMessage = e instanceof Error ? e.message : String(e);
-        console.error(`[updater] manual check error ${errorMessage}`);
+        logUpdater(`[updater] manual check error ${errorMessage}`);
         if (isGithubLatest404(e)) {
-          console.warn('[updater] github 404 detected, trying fallback');
+          logUpdater('[updater] github 404 detected, trying fallback');
           const remoteVersion = await resolveLatestReleaseVersion();
           if (remoteVersion) {
-            console.info(
+            logUpdater(
               `[updater] fallback resolved remoteVersion=${remoteVersion} currentVersion=${app.getVersion()}`,
             );
             return {
@@ -239,7 +247,7 @@ function registerIpcHandlers(): void {
               remoteVersion,
             };
           }
-          console.warn('[updater] fallback did not resolve any release version');
+          logUpdater('[updater] fallback did not resolve any release version');
         }
         return {
           ok: false,
