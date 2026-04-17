@@ -6,6 +6,7 @@
   "scripts": {
     "prepare": "husky",
     "postinstall": "node ./scripts/repair-electron-mac-framework.cjs",
+    "check:secrets": "node ./scripts/check-secrets.cjs",
     "start": "npm run electron:dev",
     "dev": "vite",
     "build": "tsc && vite build",
