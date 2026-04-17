@@ -94,26 +94,51 @@ function isGithubLatest404(error: unknown): boolean {
 }
 
 async function resolveLatestReleaseVersion(): Promise<string | null> {
-  const url = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases?per_page=20`;
-  console.info(`[updater] fallback fetch releases url=${url}`);
-  const res = await fetch(url, {
-    headers: {
-      Accept: 'application/vnd.github+json',
-      'User-Agent': `${app.getName()}/${app.getVersion()}`,
-    },
-  });
-  if (!res.ok) {
-    console.warn(`[updater] fallback fetch failed status=${res.status}`);
-    return null;
+  const userAgent = `${app.getName()}/${app.getVersion()}`;
+  const releasesUrl = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases?per_page=20`;
+  const latestApiUrl = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`;
+  const latestWebUrl = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`;
+  const headers = { Accept: 'application/vnd.github+json', 'User-Agent': userAgent };
+  try {
+    const releasesRes = await fetch(releasesUrl, { headers });
+    logUpdater(`[updater] fallback releases api status=${releasesRes.status}`);
+    if (releasesRes.ok) {
+      const releases = (await releasesRes.json()) as Array<{
+        draft?: boolean;
+        prerelease?: boolean;
+        tag_name?: string;
+      }>;
+      const release = releases.find((item) => !item.draft && !item.prerelease && typeof item.tag_name === 'string');
+      if (release?.tag_name) return normalizeVersion(release.tag_name);
+    }
+  } catch (error) {
+    logUpdater(`[updater] fallback releases api error=${error instanceof Error ? error.message : String(error)}`);
   }
-  const releases = (await res.json()) as Array<{
-    draft?: boolean;
-    prerelease?: boolean;
-    tag_name?: string;
-  }>;
-  const release = releases.find((item) => !item.draft && !item.prerelease && typeof item.tag_name === 'string');
-  console.info(`[updater] fallback release tag=${release?.tag_name ?? 'none'}`);
-  return release?.tag_name ? normalizeVersion(release.tag_name) : null;
+  try {
+    const latestApiRes = await fetch(latestApiUrl, { headers });
+    logUpdater(`[updater] fallback latest api status=${latestApiRes.status}`);
+    if (latestApiRes.ok) {
+      const latest = (await latestApiRes.json()) as { tag_name?: string };
+      if (latest.tag_name) return normalizeVersion(latest.tag_name);
+    }
+  } catch (error) {
+    logUpdater(`[updater] fallback latest api error=${error instanceof Error ? error.message : String(error)}`);
+  }
+  try {
+    const latestWebRes = await fetch(latestWebUrl, {
+      headers: { 'User-Agent': userAgent },
+      redirect: 'manual',
+    });
+    logUpdater(`[updater] fallback latest web status=${latestWebRes.status}`);
+    const location = latestWebRes.headers.get('location');
+    if (location) {
+      const match = location.match(/\/tag\/([^/?#]+)/i);
+      if (match?.[1]) return normalizeVersion(decodeURIComponent(match[1]));
+    }
+  } catch (error) {
+    logUpdater(`[updater] fallback latest web error=${error instanceof Error ? error.message : String(error)}`);
+  }
+  return null;
 }
 
 function logUpdater(message: string): void {
