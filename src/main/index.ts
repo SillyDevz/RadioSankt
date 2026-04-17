@@ -38,6 +38,8 @@ import {
 
 const store = new Store();
 let mainWindow: BrowserWindow | null = null;
+const GITHUB_OWNER = 'SillyDevz';
+const GITHUB_REPO = 'RadioSankt';
 
 type MainLocale = 'en' | 'pt';
 type MainI18nKey = 'spotify.scopeReset';
@@ -67,6 +69,59 @@ function windowIconPath(): string | undefined {
   const fromPublic = join(app.getAppPath(), 'public/icon.png');
   if (existsSync(fromPublic)) return fromPublic;
   return undefined;
+}
+
+function normalizeVersion(version: string): string {
+  return version.trim().replace(/^v/i, '');
+}
+
+function compareSemver(a: string, b: string): number {
+  const parse = (value: string) =>
+    normalizeVersion(value)
+      .split('.')
+      .map((part) => Number.parseInt(part, 10))
+      .map((part) => (Number.isFinite(part) ? part : 0));
+  const [a0, a1, a2] = parse(a);
+  const [b0, b1, b2] = parse(b);
+  if (a0 !== b0) return a0 - b0;
+  if (a1 !== b1) return a1 - b1;
+  return a2 - b2;
+}
+
+function isGithubLatest404(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes('404') && /github\.com/i.test(message);
+}
+
+async function resolveLatestReleaseVersion(): Promise<string | null> {
+  const url = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases?per_page=20`;
+  console.info(`[updater] fallback fetch releases url=${url}`);
+  const res = await fetch(url, {
+    headers: {
+      Accept: 'application/vnd.github+json',
+      'User-Agent': `${app.getName()}/${app.getVersion()}`,
+    },
+  });
+  if (!res.ok) {
+    console.warn(`[updater] fallback fetch failed status=${res.status}`);
+    return null;
+  }
+  const releases = (await res.json()) as Array<{
+    draft?: boolean;
+    prerelease?: boolean;
+    tag_name?: string;
+  }>;
+  const release = releases.find((item) => !item.draft && !item.prerelease && typeof item.tag_name === 'string');
+  console.info(`[updater] fallback release tag=${release?.tag_name ?? 'none'}`);
+  return release?.tag_name ? normalizeVersion(release.tag_name) : null;
+}
+
+function logUpdater(message: string): void {
+  const line = `[${new Date().toISOString()}] ${message}`;
+  console.info(line);
+  void fs
+    .appendFile(join(app.getPath('userData'), 'updater.log'), `${line}\n`, 'utf-8')
+    .catch(() => {});
 }
 
 /** macOS Dock shows Electron’s icon in dev unless we set it (BrowserWindow `icon` does not). */
@@ -165,7 +220,11 @@ function registerIpcHandlers(): void {
     > => {
       if (!app.isPackaged) return { ok: false, reason: 'development' };
       try {
+        logUpdater('[updater] manual check started');
         const result = await autoUpdater.checkForUpdates();
+        logUpdater(
+          `[updater] autoUpdater response available=${String(result?.isUpdateAvailable)} version=${result?.updateInfo?.version ?? 'null'}`,
+        );
         if (result == null) return { ok: false, reason: 'updater_inactive' };
         return {
           ok: true,
@@ -173,10 +232,27 @@ function registerIpcHandlers(): void {
           remoteVersion: result.updateInfo?.version ?? null,
         };
       } catch (e) {
+        const errorMessage = e instanceof Error ? e.message : String(e);
+        logUpdater(`[updater] manual check error ${errorMessage}`);
+        if (isGithubLatest404(e)) {
+          logUpdater('[updater] github 404 detected, trying fallback');
+          const remoteVersion = await resolveLatestReleaseVersion();
+          if (remoteVersion) {
+            logUpdater(
+              `[updater] fallback resolved remoteVersion=${remoteVersion} currentVersion=${app.getVersion()}`,
+            );
+            return {
+              ok: true,
+              isUpdateAvailable: compareSemver(app.getVersion(), remoteVersion) < 0,
+              remoteVersion,
+            };
+          }
+          logUpdater('[updater] fallback did not resolve any release version');
+        }
         return {
           ok: false,
           reason: 'error',
-          message: e instanceof Error ? e.message : String(e),
+          message: errorMessage,
         };
       }
     },
