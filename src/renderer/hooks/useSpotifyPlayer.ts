@@ -535,21 +535,6 @@ export function useSpotifyPlayer() {
     }
   }, []);
 
-  useEffect(() => {
-    const onPrev = () => {
-      void previousTrack();
-    };
-    const onNext = () => {
-      void nextTrack();
-    };
-    window.addEventListener('radio-sankt:previous-track', onPrev);
-    window.addEventListener('radio-sankt:next-track', onNext);
-    return () => {
-      window.removeEventListener('radio-sankt:previous-track', onPrev);
-      window.removeEventListener('radio-sankt:next-track', onNext);
-    };
-  }, [previousTrack, nextTrack]);
-
   const seek = useCallback(
     async (positionMs: number) => {
       const devId = deviceIdRef.current;

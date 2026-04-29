@@ -165,7 +165,6 @@ export default function NowPlayingBar() {
               <div className="flex h-10 min-w-0 flex-1 items-center justify-end">
               <Tooltip
                 content={automationTransport ? t('nowPlaying.prevStep') : t('nowPlaying.prevTrack')}
-                shortcut="Shift+P"
                 referenceClassName="size-10 shrink-0"
               >
                 <button
@@ -226,7 +225,6 @@ export default function NowPlayingBar() {
               <div className="flex h-10 min-w-0 flex-1 items-center justify-start">
               <Tooltip
                 content={automationTransport ? t('nowPlaying.nextStep') : t('nowPlaying.nextTrack')}
-                shortcut="Shift+N"
                 referenceClassName="size-10 shrink-0"
               >
                 <button

@@ -63,18 +63,11 @@ git push origin v1.0.0
 
 The workflow builds for macOS and Windows, then creates a GitHub Release with the installers attached. Make sure you have a `GH_TOKEN` secret configured in your repository settings.
 
-## Keyboard Shortcuts
+## Keyboard shortcuts
 
 | Shortcut | Action |
 |----------|--------|
-| Space | Play / Pause automation |
-| S | Stop automation |
-| C | Continue at pause point |
-| Cmd/Ctrl+K | Open Spotify search |
-| L | Toggle live mode |
-| F1 | Open help panel |
-| Shift+P | Previous track |
-| Shift+N | Next track |
+| Space | Play / pause automation (when not typing in a field) |
 
 ## Troubleshooting
 
