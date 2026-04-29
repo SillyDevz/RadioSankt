@@ -232,6 +232,7 @@ export default function AutomationQueueWidget() {
   const stepTimeRemaining = useStore((s) => s.stepTimeRemaining);
   const reorderAutomationSteps = useStore((s) => s.reorderAutomationSteps);
   const removeAutomationStep = useStore((s) => s.removeAutomationStep);
+  const clearAutomationSteps = useStore((s) => s.clearAutomationSteps);
   const setSelectedStepIndex = useStore((s) => s.setSelectedStepIndex);
 
   const sensors = useSensors(
@@ -349,6 +350,14 @@ export default function AutomationQueueWidget() {
                 ▶ {i18n.t('common.continue').toUpperCase()}
               </button>
             )}
+
+            <button
+              type="button"
+              onClick={clearAutomationSteps}
+              className="px-3 py-1.5 bg-bg-elevated hover:bg-border text-text-primary rounded-lg text-xs font-medium transition-colors"
+            >
+              {i18n.t('automation.queue.clearQueue', { defaultValue: 'Clear queue' })}
+            </button>
 
             <div className="flex-1 flex items-center gap-3 min-w-0 px-2">
               <span className="text-xs font-medium text-text-secondary whitespace-nowrap">

@@ -266,6 +266,7 @@
   "automation.queue.title": "Automation Queue",
   "automation.queue.loadSet": "Load set",
   "automation.queue.saveSet": "Save set",
+  "automation.queue.clearQueue": "Clear queue",
   "automation.queue.dynamicBreaks": "Dynamic breaks",
   "automation.queue.hide": "Hide",
   "automation.queue.configure": "Configure",
