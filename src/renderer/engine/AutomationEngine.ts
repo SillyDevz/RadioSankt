@@ -5,8 +5,8 @@ import {
   playTrack,
   playPlaylistContext,
   remotePause,
-  remoteResume,
   remoteSetVolumePercent,
+  resumePlaybackBestEffort,
 } from '@/services/spotify-api';
 import { startRecommendationsContinuation, stopRecommendationsContinuation } from '@/services/recommendations-queue';
 import type { AutomationStep } from '@/store';
@@ -187,11 +187,21 @@ class AutomationEngine {
       audio.setVolume(1);
 
       // Play jingles sequentially on the local audio channel.
+      // Register onJingleEnded only after playJingle starts — playJingle calls stopJingle() first,
+      // which clears any handler registered beforehand (otherwise we never resume Spotify).
       for (const pick of picks) {
         if (pick.type !== 'jingle' && pick.type !== 'ad') continue;
+        try {
+          await audio.playJingle(pick.filePath);
+        } catch {
+          /* skip failed clip */
+        }
         await new Promise<void>((resolve) => {
+          if (!audio.isJinglePlaying()) {
+            resolve();
+            return;
+          }
           audio.onJingleEnded(() => resolve());
-          audio.playJingle(pick.filePath).catch(() => resolve());
         });
       }
 
@@ -199,14 +209,11 @@ class AutomationEngine {
       const nowStore = this.getStore();
       if (nowStore.automationStatus !== 'playing') return;
 
-      // Resume playback on Spotify. The next track Spotify will queue may be
-      // the one it started buffering before we paused.
-      if (deviceId) {
-        try {
-          await remoteResume(deviceId);
-        } catch {
-          /* ignore */
-        }
+      // Resume playback on Spotify (prefer cached device; fall back if id went stale).
+      try {
+        await resumePlaybackBestEffort(deviceId);
+      } catch {
+        window.dispatchEvent(new CustomEvent('radio-sankt:spotify-resume'));
       }
 
       // Reschedule using remaining block time — do not reset to full playlist duration or the
@@ -360,9 +367,9 @@ class AutomationEngine {
     const stepsNow = this.getSteps();
     if (stepsNow.length === 0) return;
 
-    const inserted = stepsNow.length > lenBefore;
-    const target = !inserted && nextAfterBreak >= lenBefore ? 0 : nextAfterBreak;
-    await this.executeStep(Math.max(0, Math.min(target, stepsNow.length - 1)));
+    // Advance to next step index, or `steps.length` to finish (never wrap to 0 — that restarted the queue).
+    const target = Math.max(0, Math.min(nextAfterBreak, stepsNow.length));
+    await this.executeStep(target);
   }
 
   async skipBackward(): Promise<void> {

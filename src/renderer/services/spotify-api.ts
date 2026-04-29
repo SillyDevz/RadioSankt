@@ -304,6 +304,39 @@ export async function remoteResume(deviceId: string): Promise<void> {
   }
 }
 
+/** Resume on whichever device Spotify considers active (no `device_id`). Use when cached ids may be stale. */
+export async function remoteResumeActiveDevice(): Promise<void> {
+  const res = await apiFetch('/me/player/play', {
+    method: 'PUT',
+  });
+  if (!res.ok && res.status !== 204) {
+    const body = await res.text();
+    throw new Error(`Spotify resume (active) ${res.status}: ${body}`);
+  }
+}
+
+/** Try preferred device id, then poll device from player state, then active-device resume. */
+export async function resumePlaybackBestEffort(preferredDeviceId: string | null | undefined): Promise<void> {
+  if (preferredDeviceId) {
+    try {
+      await remoteResume(preferredDeviceId);
+      return;
+    } catch {
+      /* fall through */
+    }
+  }
+  const snap = await getRemotePlaybackState();
+  if (snap?.deviceId && snap.deviceId !== preferredDeviceId) {
+    try {
+      await remoteResume(snap.deviceId);
+      return;
+    } catch {
+      /* fall through */
+    }
+  }
+  await remoteResumeActiveDevice();
+}
+
 export async function remotePause(deviceId: string): Promise<void> {
   const res = await apiFetch(`/me/player/pause?device_id=${encodeURIComponent(deviceId)}`, {
     method: 'PUT',

@@ -126,8 +126,8 @@ export default function JingleManagerModal({
     }
     try {
       setPlayingJingleId(asset.id);
-      engine.onJingleEnded(() => setPlayingJingleId(null));
       await engine.playJingle(asset.filePath);
+      engine.onJingleEnded(() => setPlayingJingleId(null));
     } catch {
       setPlayingJingleId(null);
       addToast(`Failed to play ${shownKind === 'ads' ? 'ad' : 'jingle'}`, 'error');

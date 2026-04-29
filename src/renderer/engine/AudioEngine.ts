@@ -175,6 +175,7 @@ class AudioEngine {
     return this.jinglePlaying;
   }
 
+  /** Must be called after `playJingle` has started — `playJingle` clears this via `stopJingle()` first. */
   onJingleEnded(cb: () => void): void {
     this.jingleOnEnded = cb;
   }
