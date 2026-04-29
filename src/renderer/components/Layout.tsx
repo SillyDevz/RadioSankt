@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, lazy, Suspense } from 'react';
 import { useStore } from '@/store';
-import type { Page, CoachMarkId, AccentColor, ThemeMode, ShortcutBinding, SongTransitionMode } from '@/store';
+import type { Page, CoachMarkId, AccentColor, ThemeMode, SongTransitionMode } from '@/store';
 import { ACCENT_COLORS } from '@/store';
 import { clearSpotifyUserIdCache, getProfile } from '@/services/spotify-api';
 import MacTitleBarInset from './MacTitleBarInset';
@@ -96,7 +96,6 @@ function Layout() {
       api.getFromStore('continuePlaylistRecommendations').then((val) => {
         if (typeof val === 'boolean') useStore.setState({ continuePlaylistRecommendations: val });
       }),
-      api.getFromStore('shortcuts').then((val) => { if (Array.isArray(val)) useStore.setState({ shortcuts: val as ShortcutBinding[] }); }),
       api.getFromStore('workspaceLayout').then((val) => { if (Array.isArray(val)) useStore.setState({ workspaceLayout: val as any }); }),
       api.getFromStore('soundboardVolume').then((val) => {
         if (typeof val === 'number') useStore.setState({ soundboardVolume: Math.max(0, Math.min(1, val)) });

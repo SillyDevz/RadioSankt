@@ -34,15 +34,6 @@ function songTransitions(t: (key: string) => string): { id: SongTransitionMode; 
   ];
 }
 
-function shortcutLabel(id: string, t: (key: string, options?: { defaultValue?: string }) => string, fallback: string): string {
-  if (id === 'play-pause') return t('settings.shortcuts.playPause', { defaultValue: fallback });
-  if (id === 'stop') return t('settings.shortcuts.stop', { defaultValue: fallback });
-  if (id === 'continue') return t('settings.shortcuts.continueAtPause', { defaultValue: fallback });
-  if (id === 'search') return t('settings.shortcuts.openSpotifySearch', { defaultValue: fallback });
-  if (id === 'live') return t('settings.shortcuts.toggleLiveMode', { defaultValue: fallback });
-  return fallback;
-}
-
 export default function SettingsPage() {
   const { t, i18n } = useTranslation();
   const WEB_PLAYBACK_HELP = webPlaybackHelp(t);
@@ -68,7 +59,6 @@ export default function SettingsPage() {
   const crossfadeMs = useStore((s) => s.crossfadeMs);
   const duckLevel = useStore((s) => s.duckLevel);
   const autoUpdate = useStore((s) => s.autoUpdate);
-  const shortcuts = useStore((s) => s.shortcuts);
   const setTheme = useStore((s) => s.setTheme);
   const language = useStore((s) => s.language);
   const setLanguage = useStore((s) => s.setLanguage);
@@ -79,13 +69,11 @@ export default function SettingsPage() {
   const setCrossfadeMs = useStore((s) => s.setCrossfadeMs);
   const setDuckLevel = useStore((s) => s.setDuckLevel);
   const setAutoUpdate = useStore((s) => s.setAutoUpdate);
-  const updateShortcut = useStore((s) => s.updateShortcut);
 
   const [clientIdInput, setClientIdInput] = useState('');
   const [showHelp, setShowHelp] = useState(false);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
   const checkUpdateInFlight = useRef(false);
-  const [rebindingId, setRebindingId] = useState<string | null>(null);
   const spotifyGrantedScopes = useStore((s) => s.spotifyGrantedScopes);
   const setCurrentPage = useStore((s) => s.setCurrentPage);
 
@@ -103,37 +91,6 @@ export default function SettingsPage() {
       }
     }).catch(() => {});
   }, [setClientId]);
-
-  // Keyboard rebinding listener
-  useEffect(() => {
-    if (!rebindingId) return;
-
-    const handler = (e: KeyboardEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-
-      if (e.key === 'Escape') {
-        setRebindingId(null);
-        return;
-      }
-
-      const modifiers: string[] = [];
-      if (e.metaKey) modifiers.push('Meta');
-      if (e.ctrlKey) modifiers.push('Ctrl');
-      if (e.altKey) modifiers.push('Alt');
-      if (e.shiftKey) modifiers.push('Shift');
-
-      // Don't capture modifier-only presses
-      if (['Meta', 'Control', 'Alt', 'Shift'].includes(e.key)) return;
-
-      const key = e.key === ' ' ? 'Space' : e.key.length === 1 ? e.key.toUpperCase() : e.key;
-      updateShortcut(rebindingId, key, modifiers);
-      setRebindingId(null);
-    };
-
-    window.addEventListener('keydown', handler, true);
-    return () => window.removeEventListener('keydown', handler, true);
-  }, [rebindingId, updateShortcut]);
 
   const handleSaveClientId = async () => {
     const trimmed = clientIdInput.trim();
@@ -195,17 +152,6 @@ export default function SettingsPage() {
     useStore.getState().disconnectSpotify();
     addToast(t('settings.spotify.disconnected'), 'info');
   };
-
-  function formatShortcut(shortcut: { key: string; modifiers: string[] }): string {
-    const parts = [...shortcut.modifiers.map((m) => {
-      if (m === 'Meta') return navigator.platform.includes('Mac') ? '⌘' : 'Ctrl';
-      if (m === 'Ctrl') return 'Ctrl';
-      if (m === 'Alt') return navigator.platform.includes('Mac') ? '⌥' : 'Alt';
-      if (m === 'Shift') return '⇧';
-      return m;
-    }), shortcut.key];
-    return parts.join('+');
-  }
 
   return (
     <div className="max-w-[640px] mx-auto py-8 flex flex-col gap-6 animate-page-enter">
@@ -618,30 +564,6 @@ export default function SettingsPage() {
               ))}
             </div>
           </div>
-        </div>
-      </section>
-
-      {/* ── Keyboard Shortcuts ──────────────────────────────────────── */}
-      <section className="bg-bg-surface border border-border rounded-xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-border">
-          <span className="text-sm font-medium text-text-primary">{t('settings.sections.shortcuts')}</span>
-        </div>
-        <div className="divide-y divide-border">
-          {shortcuts.map((shortcut) => (
-            <div key={shortcut.id} className="px-5 py-3 flex items-center justify-between">
-              <span className="text-sm text-text-secondary">{shortcutLabel(shortcut.id, t, shortcut.label)}</span>
-              <button
-                onClick={() => setRebindingId(shortcut.id)}
-                className={`px-3 py-1 rounded-lg text-xs font-mono transition-colors ${
-                  rebindingId === shortcut.id
-                    ? 'bg-accent/20 border border-accent text-accent animate-pulse'
-                    : 'bg-bg-elevated border border-border text-text-primary hover:border-text-muted'
-                }`}
-              >
-                {rebindingId === shortcut.id ? t('settings.shortcuts.pressKey') : formatShortcut(shortcut)}
-              </button>
-            </div>
-          ))}
         </div>
       </section>
     </div>

@@ -2,6 +2,15 @@ import { useEffect } from 'react';
 import { useStore } from '@/store';
 import AutomationEngine from '@/engine/AutomationEngine';
 
+/** Fixed shortcuts (previously configurable in Settings — section removed). */
+const SHORTCUTS = [
+  { id: 'play-pause', key: 'Space', modifiers: [] as string[] },
+  { id: 'stop', key: 'S', modifiers: [] as string[] },
+  { id: 'continue', key: 'C', modifiers: [] as string[] },
+  { id: 'search', key: 'K', modifiers: ['Meta'] as string[] },
+  { id: 'live', key: 'L', modifiers: [] as string[] },
+] as const;
+
 function matchesShortcut(e: KeyboardEvent, key: string, modifiers: string[]): boolean {
   const eventKey = e.key === ' ' ? 'Space' : e.key.length === 1 ? e.key.toUpperCase() : e.key;
   if (eventKey !== key) return false;
@@ -23,25 +32,23 @@ function matchesShortcut(e: KeyboardEvent, key: string, modifiers: string[]): bo
 }
 
 export function useKeyboardShortcuts() {
-  const shortcuts = useStore((s) => s.shortcuts);
-
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       // Ignore if typing in an input
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
 
-      const find = (id: string) => shortcuts.find((s) => s.id === id);
+      const find = (id: string) => SHORTCUTS.find((s) => s.id === id);
 
       const playPause = find('play-pause');
-      if (playPause && matchesShortcut(e, playPause.key, playPause.modifiers)) {
+      if (playPause && matchesShortcut(e, playPause.key, [...playPause.modifiers])) {
         e.preventDefault();
         window.dispatchEvent(new CustomEvent('radio-sankt:toggle-play'));
         return;
       }
 
       const stop = find('stop');
-      if (stop && matchesShortcut(e, stop.key, stop.modifiers)) {
+      if (stop && matchesShortcut(e, stop.key, [...stop.modifiers])) {
         e.preventDefault();
         const engine = AutomationEngine.getInstance();
         engine.stop();
@@ -49,7 +56,7 @@ export function useKeyboardShortcuts() {
       }
 
       const cont = find('continue');
-      if (cont && matchesShortcut(e, cont.key, cont.modifiers)) {
+      if (cont && matchesShortcut(e, cont.key, [...cont.modifiers])) {
         e.preventDefault();
         const engine = AutomationEngine.getInstance();
         engine.resume();
@@ -57,14 +64,14 @@ export function useKeyboardShortcuts() {
       }
 
       const search = find('search');
-      if (search && matchesShortcut(e, search.key, search.modifiers)) {
+      if (search && matchesShortcut(e, search.key, [...search.modifiers])) {
         e.preventDefault();
         useStore.getState().setSpotifySearchOpen(true);
         return;
       }
 
       const live = find('live');
-      if (live && matchesShortcut(e, live.key, live.modifiers)) {
+      if (live && matchesShortcut(e, live.key, [...live.modifiers])) {
         e.preventDefault();
         // Dispatch custom event so LivePage can handle the toggle logic
         window.dispatchEvent(new CustomEvent('radio-sankt:toggle-live'));
@@ -85,5 +92,5 @@ export function useKeyboardShortcuts() {
 
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [shortcuts]);
+  }, []);
 }

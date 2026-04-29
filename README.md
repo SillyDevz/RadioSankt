@@ -76,8 +76,6 @@ The workflow builds for macOS and Windows, then creates a GitHub Release with th
 | Shift+P | Previous track |
 | Shift+N | Next track |
 
-All shortcuts are rebindable from Settings.
-
 ## Troubleshooting
 
 **"No Spotify device available"** — Open the Spotify app on this computer (or any signed-in device) so it appears as a Spotify Connect device. Radio Sankt will automatically pick it up within a few seconds.

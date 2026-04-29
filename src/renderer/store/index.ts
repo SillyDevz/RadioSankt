@@ -124,21 +124,6 @@ export const ACCENT_COLORS: Record<AccentColor, { primary: string; hover: string
   red: { primary: '#ef4444', hover: '#f87171' },
 };
 
-export interface ShortcutBinding {
-  id: string;
-  label: string;
-  key: string;
-  modifiers: string[];
-}
-
-export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
-  { id: 'play-pause', label: 'Play / Pause automation', key: 'Space', modifiers: [] },
-  { id: 'stop', label: 'Stop automation', key: 'S', modifiers: [] },
-  { id: 'continue', label: 'Continue at pause', key: 'C', modifiers: [] },
-  { id: 'search', label: 'Open Spotify search', key: 'K', modifiers: ['Meta'] },
-  { id: 'live', label: 'Toggle live mode', key: 'L', modifiers: [] },
-];
-
 // ── Slice interfaces ───────────────────────────────────────────────────
 
 interface UISlice {
@@ -279,7 +264,6 @@ interface SettingsSlice {
   followProgramSchedule: boolean;
   /** After the program ends on a playlist step, seed Spotify recommendations from the last track and keep queue topped up. */
   continuePlaylistRecommendations: boolean;
-  shortcuts: ShortcutBinding[];
   setTheme: (theme: ThemeMode) => void;
   setLanguage: (language: AppLanguage) => void;
   setAccentColor: (color: AccentColor) => void;
@@ -291,8 +275,6 @@ interface SettingsSlice {
   setAutoUpdate: (auto: boolean) => void;
   setFollowProgramSchedule: (on: boolean) => void;
   setContinuePlaylistRecommendations: (on: boolean) => void;
-  setShortcuts: (shortcuts: ShortcutBinding[]) => void;
-  updateShortcut: (id: string, key: string, modifiers: string[]) => void;
 }
 
 interface OnboardingSlice {
@@ -601,7 +583,6 @@ const createSettingsSlice: StateCreator<StoreState, [], [], SettingsSlice> = (se
   autoUpdate: true,
   followProgramSchedule: true,
   continuePlaylistRecommendations: false,
-  shortcuts: [...DEFAULT_SHORTCUTS],
   setLanguage: (language) => {
     set({ language });
     window.electronAPI?.saveToStore('language', language);
@@ -663,18 +644,6 @@ const createSettingsSlice: StateCreator<StoreState, [], [], SettingsSlice> = (se
     set({ continuePlaylistRecommendations: on });
     window.electronAPI?.saveToStore('continuePlaylistRecommendations', on);
   },
-  setShortcuts: (shortcuts) => {
-    set({ shortcuts });
-    window.electronAPI?.saveToStore('shortcuts', shortcuts);
-  },
-  updateShortcut: (id, key, modifiers) =>
-    set((state) => {
-      const shortcuts = state.shortcuts.map((s) =>
-        s.id === id ? { ...s, key, modifiers } : s,
-      );
-      window.electronAPI?.saveToStore('shortcuts', shortcuts);
-      return { shortcuts };
-    }),
 });
 
 // ── Store ──────────────────────────────────────────────────────────────
