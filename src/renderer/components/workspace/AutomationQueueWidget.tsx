@@ -81,12 +81,7 @@ function QueueHeader() {
           checked={continuePlaylistRecommendations}
           onChange={(e) => setContinuePlaylistRecommendations(e.target.checked)}
         />
-        <span className="leading-snug">
-          {i18n.t('automation.queue.continueRecommendations', {
-            defaultValue:
-              'When the program ends after a playlist, continue with Spotify recommendations from the last track',
-          })}
-        </span>
+        <span className="leading-snug">{i18n.t('automation.queue.continueRecommendations')}</span>
       </label>
       {breakRule && (
         <>
