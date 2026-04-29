@@ -355,13 +355,18 @@ export default function AutomationQueueWidget() {
               type="button"
               onClick={clearAutomationSteps}
               className="px-3 py-1.5 bg-bg-elevated hover:bg-border text-text-primary rounded-lg text-xs font-medium transition-colors"
+              aria-label={i18n.t('automation.queue.clear')}
             >
-              {i18n.t('automation.queue.clearQueue', { defaultValue: 'Clear queue' })}
+              {i18n.t('automation.queue.clear')}
             </button>
 
             <div className="flex-1 flex items-center gap-3 min-w-0 px-2">
               <span className="text-xs font-medium text-text-secondary whitespace-nowrap">
-                Step {currentStepIndex + 1} of {steps.length}
+                {i18n.t('automation.queue.stepProgress', {
+                  current: currentStepIndex + 1,
+                  total: steps.length,
+                  defaultValue: 'Step {{current}} of {{total}}',
+                })}
               </span>
               <div className="flex-1 h-1.5 bg-bg-elevated rounded-full overflow-hidden">
                 <div
