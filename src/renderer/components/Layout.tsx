@@ -17,6 +17,7 @@ import {
   resetWeeklyScheduleFireKeys,
   runScheduleTick,
 } from '@/services/automation-session';
+import '@/services/recommendations-queue';
 import i18n, { isAppLanguage } from '@/i18n';
 import { useTranslation } from 'react-i18next';
 
@@ -91,6 +92,9 @@ function Layout() {
       api.getFromStore('autoUpdate').then((val) => { if (typeof val === 'boolean') useStore.setState({ autoUpdate: val }); }),
       api.getFromStore('followProgramSchedule').then((val) => {
         if (typeof val === 'boolean') useStore.setState({ followProgramSchedule: val });
+      }),
+      api.getFromStore('continuePlaylistRecommendations').then((val) => {
+        if (typeof val === 'boolean') useStore.setState({ continuePlaylistRecommendations: val });
       }),
       api.getFromStore('shortcuts').then((val) => { if (Array.isArray(val)) useStore.setState({ shortcuts: val as ShortcutBinding[] }); }),
       api.getFromStore('workspaceLayout').then((val) => { if (Array.isArray(val)) useStore.setState({ workspaceLayout: val as any }); }),

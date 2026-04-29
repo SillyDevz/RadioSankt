@@ -39,6 +39,8 @@ function stepDurationMs(step: AutomationStep | undefined): number {
 function QueueHeader() {
   const setSavePlaylistModalOpen = useStore((s) => s.setSavePlaylistModalOpen);
   const setLoadPlaylistModalOpen = useStore((s) => s.setLoadPlaylistModalOpen);
+  const continuePlaylistRecommendations = useStore((s) => s.continuePlaylistRecommendations);
+  const setContinuePlaylistRecommendations = useStore((s) => s.setContinuePlaylistRecommendations);
   const breakRule = useStore((s) => s.breakRules[0]);
   const updateBreakRule = useStore((s) => s.updateBreakRule);
   const jingles = useStore((s) => s.jingles);
@@ -72,6 +74,20 @@ function QueueHeader() {
           </button>
         </div>
       </div>
+      <label className="flex cursor-pointer select-none items-start gap-2 text-xs text-text-secondary">
+        <input
+          type="checkbox"
+          className={checkboxClassName}
+          checked={continuePlaylistRecommendations}
+          onChange={(e) => setContinuePlaylistRecommendations(e.target.checked)}
+        />
+        <span className="leading-snug">
+          {i18n.t('automation.queue.continueRecommendations', {
+            defaultValue:
+              'When the program ends after a playlist, continue with Spotify recommendations from the last track',
+          })}
+        </span>
+      </label>
       {breakRule && (
         <>
           <div className="space-y-1 text-xs">

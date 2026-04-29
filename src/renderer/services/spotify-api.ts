@@ -403,7 +403,51 @@ async function waitForActivePlaylistContext(expectedContextUri: string, timeoutM
   );
 }
 
+export function spotifyUriToTrackId(uri: string): string | null {
+  const u = uri.trim();
+  const colon = /^spotify:track:([a-zA-Z0-9]+)$/.exec(u);
+  if (colon) return colon[1];
+  try {
+    const url = new URL(u);
+    const parts = url.pathname.split('/').filter(Boolean);
+    const ti = parts.indexOf('track');
+    if (ti !== -1 && parts[ti + 1]) return parts[ti + 1];
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+export async function fetchRecommendationTrackUris(
+  seedTrackId: string,
+  limit = 20,
+  market?: string,
+): Promise<string[]> {
+  const params = new URLSearchParams({
+    seed_tracks: seedTrackId,
+    limit: String(Math.min(100, Math.max(1, limit))),
+  });
+  if (market && market.length === 2) params.set('market', market);
+
+  const res = await apiFetch(`/recommendations?${params}`);
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Spotify recommendations ${res.status}: ${body}`);
+  }
+  const data = (await res.json()) as { tracks?: Array<{ uri?: string }> };
+  const raw = data.tracks ?? [];
+  return raw.map((t) => t.uri).filter((u): u is string => typeof u === 'string' && u.startsWith('spotify:track:'));
+}
+
 export async function playTrack(uri: string, deviceId: string): Promise<void> {
+  await playTrackUris([uri], deviceId);
+}
+
+/** Replace the queue with these URIs and start playback (first URI plays immediately). */
+export async function playTrackUris(uris: string[], deviceId: string): Promise<void> {
+  const list = uris.filter((u) => typeof u === 'string' && u.startsWith('spotify:track:')).slice(0, 50);
+  if (list.length === 0) throw new Error('No track URIs to play');
+
   try {
     await transferPlaybackToDevice(deviceId);
   } catch (err) {
@@ -412,13 +456,22 @@ export async function playTrack(uri: string, deviceId: string): Promise<void> {
   const res = await apiFetch(`/me/player/play?device_id=${encodeURIComponent(deviceId)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ uris: [uri] }),
+    body: JSON.stringify({ uris: list }),
   });
   if (!res.ok && res.status !== 204) {
     const body = await res.text();
     throw new Error(`Play failed ${res.status}: ${body}`);
   }
-  await waitForActiveTrackUri(uri, 12_000);
+  await waitForActiveTrackUri(list[0], 12_000);
+}
+
+export async function addTrackToQueue(uri: string): Promise<void> {
+  if (!uri.startsWith('spotify:track:')) return;
+  const res = await apiFetch(`/me/player/queue?uri=${encodeURIComponent(uri)}`, { method: 'POST' });
+  if (!res.ok && res.status !== 204) {
+    const body = await res.text();
+    throw new Error(`Spotify queue ${res.status}: ${body}`);
+  }
 }
 
 export async function playPlaylistContext(contextUri: string, deviceId: string): Promise<void> {

@@ -277,6 +277,8 @@ interface SettingsSlice {
   autoUpdate: boolean;
   /** When true, automation loads and plays the set for each weekly block at its start time (app must stay open). */
   followProgramSchedule: boolean;
+  /** After the program ends on a playlist step, seed Spotify recommendations from the last track and keep queue topped up. */
+  continuePlaylistRecommendations: boolean;
   shortcuts: ShortcutBinding[];
   setTheme: (theme: ThemeMode) => void;
   setLanguage: (language: AppLanguage) => void;
@@ -288,6 +290,7 @@ interface SettingsSlice {
   setDuckLevel: (level: number) => void;
   setAutoUpdate: (auto: boolean) => void;
   setFollowProgramSchedule: (on: boolean) => void;
+  setContinuePlaylistRecommendations: (on: boolean) => void;
   setShortcuts: (shortcuts: ShortcutBinding[]) => void;
   updateShortcut: (id: string, key: string, modifiers: string[]) => void;
 }
@@ -351,7 +354,8 @@ const createSpotifySlice: StateCreator<StoreState, [], [], SpotifySlice> = (set)
     }),
   setSearchResults: (results) => set({ searchResults: results }),
   setSpotifyGrantedScopes: (spotifyGrantedScopes) => set({ spotifyGrantedScopes }),
-  disconnectSpotify: () =>
+  disconnectSpotify: () => {
+    window.dispatchEvent(new CustomEvent('radio-sankt:stop-recommendations'));
     set({
       connected: false,
       user: null,
@@ -364,7 +368,8 @@ const createSpotifySlice: StateCreator<StoreState, [], [], SpotifySlice> = (set)
       webPlaybackLastError: null,
       searchResults: [],
       spotifyGrantedScopes: null,
-    }),
+    });
+  },
 });
 
 const createPlayerSlice: StateCreator<StoreState, [], [], PlayerSlice> = (set) => ({
@@ -415,14 +420,16 @@ const createAutomationSlice: StateCreator<StoreState, [], [], AutomationSlice> =
         selectedStepIndex: sel !== null && sel >= steps.length ? (steps.length > 0 ? steps.length - 1 : null) : sel,
       };
     }),
-  clearAutomationSteps: () =>
+  clearAutomationSteps: () => {
+    window.dispatchEvent(new CustomEvent('radio-sankt:stop-recommendations'));
     set({
       automationSteps: [],
       selectedStepIndex: null,
       currentStepIndex: 0,
       automationStatus: 'stopped',
       stepTimeRemaining: 0,
-    }),
+    });
+  },
   reorderAutomationSteps: (fromIndex, toIndex) =>
     set((s) => {
       const prev = [...s.automationSteps];
@@ -593,6 +600,7 @@ const createSettingsSlice: StateCreator<StoreState, [], [], SettingsSlice> = (se
   duckLevel: 20,
   autoUpdate: true,
   followProgramSchedule: true,
+  continuePlaylistRecommendations: false,
   shortcuts: [...DEFAULT_SHORTCUTS],
   setLanguage: (language) => {
     set({ language });
@@ -650,6 +658,10 @@ const createSettingsSlice: StateCreator<StoreState, [], [], SettingsSlice> = (se
   setFollowProgramSchedule: (on) => {
     set({ followProgramSchedule: on });
     window.electronAPI?.saveToStore('followProgramSchedule', on);
+  },
+  setContinuePlaylistRecommendations: (on) => {
+    set({ continuePlaylistRecommendations: on });
+    window.electronAPI?.saveToStore('continuePlaylistRecommendations', on);
   },
   setShortcuts: (shortcuts) => {
     set({ shortcuts });

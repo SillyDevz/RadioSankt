@@ -1,12 +1,14 @@
 import AudioEngine from './AudioEngine';
 import { useStore } from '@/store';
 import {
+  getRemotePlaybackState,
   playTrack,
   playPlaylistContext,
   remotePause,
   remoteResume,
   remoteSetVolumePercent,
 } from '@/services/spotify-api';
+import { startRecommendationsContinuation, stopRecommendationsContinuation } from '@/services/recommendations-queue';
 import type { AutomationStep } from '@/store';
 
 /** Spotify `/me/player/volume` rate-limits aggressively — throttle to ~8 calls/sec. */
@@ -298,6 +300,7 @@ class AutomationEngine {
       return;
     }
     if (store.automationStatus === 'stopped') {
+      stopRecommendationsContinuation();
       this.breakRecentKeys = [];
       this.songsSinceBreak = 0;
       this.intraPlaylistCreditedForStepId = null;
@@ -372,6 +375,24 @@ class AutomationEngine {
 
     if (index >= steps.length) {
       this.emit({ type: 'finished' });
+      const prevStep = steps.length > 0 ? steps[steps.length - 1] : undefined;
+      if (
+        prevStep?.type === 'playlist' &&
+        store.continuePlaylistRecommendations &&
+        store.deviceId
+      ) {
+        try {
+          const remote = await getRemotePlaybackState();
+          const lastUri = remote?.itemUri;
+          if (lastUri?.startsWith('spotify:track:')) {
+            await startRecommendationsContinuation(lastUri, store.deviceId);
+            this.finishAutomationKeepingSpotifyPlaying();
+            return;
+          }
+        } catch (err) {
+          console.warn('[Automation] recommendations continuation failed:', err);
+        }
+      }
       this.stopInternal();
       return;
     }
@@ -609,7 +630,12 @@ class AutomationEngine {
         const devId = this.getStore().deviceId;
         const isJingleLike = (s: AutomationStep | undefined) => s?.type === 'jingle' || s?.type === 'ad';
 
-        if (step.transitionOut === 'fadeOut') {
+        const skipFadeForRec =
+          step.type === 'playlist' &&
+          !nextStep &&
+          this.getStore().continuePlaylistRecommendations;
+
+        if (step.transitionOut === 'fadeOut' && !skipFadeForRec) {
           if (isJingleLike(step)) {
             if (audio) audio.fadeOut(FADE_DURATION);
           } else if (devId && (step.type === 'track' || step.type === 'playlist')) {
@@ -814,7 +840,28 @@ class AutomationEngine {
     await this.stopInternal();
   }
 
+  /** Automation ended successfully but Spotify keeps playing (recommendations queue). */
+  private finishAutomationKeepingSpotifyPlaying(): void {
+    this.advanceScheduleGen++;
+    this.clearNextStepTimer();
+    this.clearCountdown();
+    this.breakRecentKeys = [];
+    this.songsSinceBreak = 0;
+    this.intraPlaylistCreditedForStepId = null;
+    this.intraPlaylistCreditedCount = 0;
+    this.intraPlaylistBreakInFlight = false;
+
+    AudioEngine.get()?.stopJingle();
+
+    const store = this.getStore();
+    store.setAutomationStatus('stopped');
+    store.setCurrentStepIndex(0);
+    store.setStepTimeRemaining(0);
+    store.setIsPlaying(true);
+  }
+
   private async stopInternal(): Promise<void> {
+    stopRecommendationsContinuation();
     this.advanceScheduleGen++;
     this.clearNextStepTimer();
     this.clearCountdown();
