@@ -13,6 +13,7 @@ class AudioEngine {
   private masterGain: GainNode;
 
   private gain: GainNode;
+  private cartGain: GainNode;
   private analyser: AnalyserNode;
 
   private preDuckVolume = 1;
@@ -34,9 +35,11 @@ class AudioEngine {
     this.masterGain.connect(ctx.destination);
 
     this.gain = ctx.createGain();
+    this.cartGain = ctx.createGain();
     this.analyser = ctx.createAnalyser();
     this.analyser.fftSize = 256;
     this.gain.connect(this.analyser);
+    this.cartGain.connect(this.analyser);
     this.analyser.connect(this.masterGain);
   }
 
@@ -71,6 +74,10 @@ class AudioEngine {
   setVolume(value: number): void {
     this.gain.gain.value = value;
     this.preDuckVolume = value;
+  }
+
+  setCartVolume(value: number): void {
+    this.cartGain.gain.value = value;
   }
 
   fadeIn(durationMs: number, targetGain = 1): Promise<void> {
@@ -122,7 +129,7 @@ class AudioEngine {
     const id = crypto.randomUUID();
     const source = this.ctx.createBufferSource();
     source.buffer = buffer;
-    source.connect(this.gain);
+    source.connect(this.cartGain);
     source.onended = () => {
       this.cartVoices.delete(id);
       onEnded?.();
@@ -151,6 +158,17 @@ class AudioEngine {
     this.cartVoices.clear();
     this.jinglePlaying = false;
     this.jingleOnEnded = null;
+  }
+
+  stopCartVoices(): void {
+    this.cartVoices.forEach((src) => {
+      try {
+        src.stop();
+      } catch {
+        /* already stopped */
+      }
+    });
+    this.cartVoices.clear();
   }
 
   isJinglePlaying(): boolean {
