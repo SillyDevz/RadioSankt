@@ -47,6 +47,8 @@ jobs:
           path: |
             release/*.dmg
             release/*.zip
+            release/*.yml
+            release/*.blockmap
 
   build-windows:
     runs-on: windows-latest
