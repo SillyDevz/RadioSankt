@@ -178,8 +178,8 @@ export default function CartWallWidget() {
   const addToast = useStore((s) => s.addToast);
   const fadeOutMs = useStore((s) => s.fadeOutMs);
   const fadeInMs = useStore((s) => s.fadeInMs);
-  const cartVolume = useStore((s) => s.cartVolume);
-  const setCartVolume = useStore((s) => s.setCartVolume);
+  const soundboardVolume = useStore((s) => s.soundboardVolume);
+  const setSoundboardVolume = useStore((s) => s.setSoundboardVolume);
 
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; slotId: string } | null>(null);
   const [assigningSlotId, setAssigningSlotId] = useState<string | null>(null);
@@ -200,8 +200,8 @@ export default function CartWallWidget() {
 
   useEffect(() => {
     const audio = AudioEngine.getOrInit();
-    audio.setCartVolume(cartVolume);
-  }, [cartVolume]);
+    audio.setCartVolume(soundboardVolume);
+  }, [soundboardVolume]);
 
   const handleGoLive = useCallback(async () => {
     const engine = AutomationEngine.getInstance();
@@ -364,8 +364,8 @@ export default function CartWallWidget() {
                 min={0}
                 max={1}
                 step={0.01}
-                value={cartVolume}
-                onChange={(e) => setCartVolume(parseFloat(e.target.value))}
+                value={soundboardVolume}
+                onChange={(e) => setSoundboardVolume(parseFloat(e.target.value))}
                 className="w-24 accent-accent"
                 aria-label={i18n.t('workspace.cart.soundboardVolume', { defaultValue: 'Soundboard volume' })}
               />
