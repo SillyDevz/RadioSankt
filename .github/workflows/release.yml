@@ -29,10 +29,11 @@ jobs:
       - run: npm ci
 
       # Ensure the installer and latest.yml pick up the tagged version even if
-      # package.json hasn't been bumped yet. No-op for manual "release: published".
+      # package.json hasn't been bumped yet. Runs on tag push OR when a Release
+      # is published from the UI (otherwise artifacts keep the old package.json version).
       - name: Sync package version from tag
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-        run: node ./scripts/sync-version-from-tag.cjs "${{ github.ref_name }}"
+        if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || github.event_name == 'release' }}
+        run: node ./scripts/sync-version-from-tag.cjs "${{ github.event.release.tag_name || github.ref_name }}"
 
       - name: Package
         run: npm run electron:build:mac -- --publish never
@@ -63,8 +64,8 @@ jobs:
       - run: npm ci
 
       - name: Sync package version from tag
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-        run: node ./scripts/sync-version-from-tag.cjs "${{ github.ref_name }}"
+        if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || github.event_name == 'release' }}
+        run: node ./scripts/sync-version-from-tag.cjs "${{ github.event.release.tag_name || github.ref_name }}"
 
       - name: Package
         run: npm run electron:build:win -- --publish never
