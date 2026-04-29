@@ -284,6 +284,7 @@
   "automation.queue.stopReset": "Parar automação e voltar ao início",
   "automation.queue.stop": "Parar",
   "automation.queue.clear": "Limpar fila",
+  "automation.queue.stepProgress": "Etapa {{current}} de {{total}}",
   "automation.queue.clearAria": "Limpar fila de automação",
   "automation.step.pausePoint": "Ponto de pausa",
   "automation.step.playlistTracks": "Playlist - {{count}} faixas",

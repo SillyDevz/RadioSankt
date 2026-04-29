@@ -284,6 +284,7 @@
   "automation.queue.pause": "Pause automation",
   "automation.queue.stopReset": "Stop automation and reset to the beginning",
   "automation.queue.stop": "Stop",
+  "automation.queue.stepProgress": "Step {{current}} of {{total}}",
   "automation.step.pausePoint": "Pause Point",
   "automation.step.playlistTracks": "Playlist · {{count}} tracks",
   "automation.step.jingle": "Jingle",

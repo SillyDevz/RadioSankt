@@ -362,7 +362,11 @@ export default function AutomationQueueWidget() {
 
             <div className="flex-1 flex items-center gap-3 min-w-0 px-2">
               <span className="text-xs font-medium text-text-secondary whitespace-nowrap">
-                Step {currentStepIndex + 1} of {steps.length}
+                {i18n.t('automation.queue.stepProgress', {
+                  current: currentStepIndex + 1,
+                  total: steps.length,
+                  defaultValue: 'Step {{current}} of {{total}}',
+                })}
               </span>
               <div className="flex-1 h-1.5 bg-bg-elevated rounded-full overflow-hidden">
                 <div
