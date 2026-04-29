@@ -396,9 +396,9 @@ class AutomationEngine {
       this.emit({ type: 'finished' });
       const prevStep = steps.length > 0 ? steps[steps.length - 1] : undefined;
       if (
-        prevStep?.type === 'playlist' &&
         store.continuePlaylistRecommendations &&
-        store.deviceId
+        store.deviceId &&
+        (prevStep?.type === 'playlist' || prevStep?.type === 'track')
       ) {
         try {
           const remote = await getRemotePlaybackState();
@@ -650,9 +650,9 @@ class AutomationEngine {
         const isJingleLike = (s: AutomationStep | undefined) => s?.type === 'jingle' || s?.type === 'ad';
 
         const skipFadeForRec =
-          step.type === 'playlist' &&
           !nextStep &&
-          this.getStore().continuePlaylistRecommendations;
+          this.getStore().continuePlaylistRecommendations &&
+          (step.type === 'playlist' || step.type === 'track');
 
         if (step.transitionOut === 'fadeOut' && !skipFadeForRec) {
           if (isJingleLike(step)) {

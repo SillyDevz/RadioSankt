@@ -270,7 +270,7 @@
   "automation.queue.saveSet": "Save set",
   "automation.queue.clear": "Clear queue",
   "automation.queue.clearAria": "Clear automation queue",
-  "automation.queue.continueRecommendations": "When the program ends after a playlist, continue with Spotify recommendations from the last track",
+  "automation.queue.continueRecommendations": "When the program ends after the last song or playlist, continue with Spotify recommendations from that track",
   "automation.queue.dynamicBreaks": "Dynamic breaks",
   "automation.queue.hide": "Hide",
   "automation.queue.configure": "Configure",
