@@ -98,32 +98,79 @@ function waitForSpotifyDeviceId(timeoutMs: number): Promise<string | null> {
   });
 }
 
-/** Last playable track in the automation playlist step (stable seed when `/me/player` is flaky). */
-async function resolveRecommendationSeedFromPrevStep(prevStep: AutomationStep | undefined): Promise<string | null> {
-  if (!prevStep) return null;
-  if (prevStep.type === 'track') return prevStep.spotifyUri;
-  if (prevStep.type !== 'playlist') return null;
-  const pid = spotifyUriToPlaylistId(prevStep.spotifyPlaylistUri);
-  if (!pid) return null;
-  try {
-    const tracks = await getPlaylistTracks(pid);
-    const last = tracks[tracks.length - 1];
-    return last?.uri?.startsWith('spotify:track:') ? last.uri : null;
-  } catch {
-    return null;
+/** Ordered URIs to seed Spotify recommendations when automation ends (live playback best; playlist anchors as fallback). */
+async function resolveRecommendationSeedUris(prevStep: AutomationStep | undefined): Promise<string[]> {
+  if (!prevStep) return [];
+  if (prevStep.type === 'track') {
+    return prevStep.spotifyUri.startsWith('spotify:track:') ? [prevStep.spotifyUri] : [];
   }
+  if (prevStep.type !== 'playlist') return [];
+
+  const pid = spotifyUriToPlaylistId(prevStep.spotifyPlaylistUri);
+  let playlistUris: string[] = [];
+  if (pid) {
+    try {
+      const tracks = await getPlaylistTracks(pid);
+      playlistUris = tracks
+        .map((t) => t.uri)
+        .filter((u): u is string => typeof u === 'string' && u.startsWith('spotify:track:'));
+    } catch {
+      playlistUris = [];
+    }
+  }
+
+  const remote = await getRemotePlaybackState();
+  const liveUri = remote?.itemUri?.startsWith('spotify:track:') ? remote.itemUri : null;
+  const ctx = remote?.contextUri;
+  const inThisPlaylist =
+    typeof ctx === 'string' && ctx === prevStep.spotifyPlaylistUri && liveUri && playlistUris.includes(liveUri);
+
+  if (inThisPlaylist && liveUri) {
+    const out: string[] = [liveUri];
+    const last = playlistUris[playlistUris.length - 1];
+    const first = playlistUris[0];
+    if (last && last !== liveUri) out.push(last);
+    if (first && first !== liveUri && first !== last) out.push(first);
+    return [...new Set(out)];
+  }
+
+  if (liveUri && playlistUris.includes(liveUri)) {
+    const out: string[] = [liveUri];
+    const last = playlistUris[playlistUris.length - 1];
+    const first = playlistUris[0];
+    if (last && last !== liveUri) out.push(last);
+    if (first && first !== liveUri && first !== last) out.push(first);
+    return [...new Set(out)];
+  }
+
+  const last = playlistUris[playlistUris.length - 1];
+  const first = playlistUris[0];
+  if (last && first) return last !== first ? [last, first] : [last];
+  if (last) return [last];
+  return [];
 }
 
-/** Poll Spotify player between tracks (204/no item); fall back to playlist-derived seed. */
-async function waitForSeedTrackUri(timeoutMs: number, fallbackUri: string | null): Promise<string | null> {
+/** Poll Spotify between tracks (204); prefer seeds that still match the ending playlist step. */
+async function waitForSeedUrisAfterPlaylistStep(
+  prevStep: AutomationStep & { type: 'playlist' },
+  initialSeeds: string[],
+  timeoutMs: number,
+): Promise<string[]> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const remote = await getRemotePlaybackState();
     const uri = remote?.itemUri;
-    if (uri?.startsWith('spotify:track:')) return uri;
+    const ctx = remote?.contextUri;
+    if (uri?.startsWith('spotify:track:')) {
+      if (ctx === prevStep.spotifyPlaylistUri) {
+        const merged = [uri, ...initialSeeds.filter((u) => u !== uri)];
+        return [...new Set(merged)];
+      }
+      return [uri, ...initialSeeds.filter((u) => u !== uri)];
+    }
     await new Promise((r) => setTimeout(r, 400));
   }
-  return fallbackUri?.startsWith('spotify:track:') ? fallbackUri : null;
+  return initialSeeds.length > 0 ? initialSeeds : [];
 }
 
 class AutomationEngine {
@@ -667,10 +714,12 @@ class AutomationEngine {
         (prevStep?.type === 'playlist' || prevStep?.type === 'track')
       ) {
         try {
-          const fallbackSeed = await resolveRecommendationSeedFromPrevStep(prevStep);
-          const seedUri = await waitForSeedTrackUri(9000, fallbackSeed);
-          if (seedUri) {
-            await startRecommendationsContinuation(seedUri, store.deviceId);
+          let seedUris = await resolveRecommendationSeedUris(prevStep);
+          if (prevStep?.type === 'playlist' && seedUris.length > 0) {
+            seedUris = await waitForSeedUrisAfterPlaylistStep(prevStep, seedUris, 12_000);
+          }
+          if (seedUris.length > 0) {
+            await startRecommendationsContinuation(seedUris, store.deviceId);
             this.finishAutomationKeepingSpotifyPlaying();
             return;
           }

@@ -472,8 +472,20 @@ export async function fetchRecommendationTrackUris(
   limit = 20,
   market?: string,
 ): Promise<string[]> {
+  return fetchRecommendationTrackUrisFromSeeds([seedTrackId], limit, market);
+}
+
+/** Up to 5 seed track IDs (Spotify limit). More seeds yield broader recommendation sets. */
+export async function fetchRecommendationTrackUrisFromSeeds(
+  seedTrackIds: string[],
+  limit = 20,
+  market?: string,
+): Promise<string[]> {
+  const unique = [...new Set(seedTrackIds.filter((id) => typeof id === 'string' && id.length > 0))].slice(0, 5);
+  if (unique.length === 0) return [];
+
   const params = new URLSearchParams({
-    seed_tracks: seedTrackId,
+    seed_tracks: unique.join(','),
     limit: String(Math.min(100, Math.max(1, limit))),
   });
   if (market && market.length === 2) params.set('market', market);
