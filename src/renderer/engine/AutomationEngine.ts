@@ -555,6 +555,10 @@ class AutomationEngine {
     audio.resumeContextIfNeeded();
     const deviceId = this.getStore().deviceId;
 
+    if (deviceId && !step.duckMusic) {
+      await remotePause(deviceId).catch(() => {});
+    }
+
     if (step.duckMusic && deviceId) {
       const baseVol = volumeToPercent(this.getStore().volume);
       const duckPct = Math.round(baseVol * Math.max(0, Math.min(1, step.duckLevel)));

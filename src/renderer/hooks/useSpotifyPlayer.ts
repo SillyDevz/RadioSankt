@@ -489,6 +489,20 @@ export function useSpotifyPlayer() {
       try {
         await remoteSeek(clamped, devId);
         setPosition(clamped);
+        const st = useStore.getState();
+        if (st.automationStatus === 'playing') {
+          const cur = st.automationSteps[st.currentStepIndex];
+          if (cur?.type === 'track') {
+            window.dispatchEvent(
+              new CustomEvent('radio-sankt:spotify-seek-sync', {
+                detail: {
+                  positionMs: clamped,
+                  playbackUri: cur.spotifyUri,
+                },
+              }),
+            );
+          }
+        }
       } catch {
         /* ignore */
       }
