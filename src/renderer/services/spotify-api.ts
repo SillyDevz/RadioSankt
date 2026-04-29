@@ -451,6 +451,22 @@ export function spotifyUriToTrackId(uri: string): string | null {
   return null;
 }
 
+/** Spotify playlist id from `spotify:playlist:…` or open.spotify.com playlist URL. */
+export function spotifyUriToPlaylistId(uri: string): string | null {
+  const u = uri.trim();
+  const colon = /^spotify:playlist:([a-zA-Z0-9]+)$/.exec(u);
+  if (colon) return colon[1];
+  try {
+    const url = new URL(u);
+    const parts = url.pathname.split('/').filter(Boolean);
+    const pi = parts.indexOf('playlist');
+    if (pi !== -1 && parts[pi + 1]) return parts[pi + 1];
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
 export async function fetchRecommendationTrackUris(
   seedTrackId: string,
   limit = 20,

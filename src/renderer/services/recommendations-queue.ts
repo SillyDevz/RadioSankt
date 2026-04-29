@@ -7,9 +7,9 @@ import {
   spotifyUriToTrackId,
 } from '@/services/spotify-api';
 
-const REFILL_INTERVAL_MS = 45_000;
+const REFILL_INTERVAL_MS = 18_000;
 const BATCH_LIMIT = 18;
-const ADD_PER_TICK = 10;
+const ADD_PER_TICK = 15;
 const SEEN_CAP = 400;
 
 let refillTimer: ReturnType<typeof setInterval> | null = null;
@@ -68,7 +68,10 @@ export async function startRecommendationsContinuation(seedTrackUri: string, dev
       if (!curId) return;
 
       const batch = await fetchRecommendationTrackUris(curId, BATCH_LIMIT, market ?? undefined);
-      const novel = batch.filter((u) => u !== curUri && !queuedSeen.has(u));
+      let novel = batch.filter((u) => u !== curUri && !queuedSeen.has(u));
+      if (novel.length === 0 && batch.length > 0) {
+        novel = batch.filter((u) => u !== curUri);
+      }
       let added = 0;
       for (const u of novel) {
         if (added >= ADD_PER_TICK) break;
@@ -85,6 +88,8 @@ export async function startRecommendationsContinuation(seedTrackUri: string, dev
       /* ignore; next tick */
     }
   };
+
+  void tick();
 
   refillTimer = setInterval(() => {
     void tick();

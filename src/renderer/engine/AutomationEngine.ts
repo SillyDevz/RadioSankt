@@ -1,12 +1,14 @@
 import AudioEngine from './AudioEngine';
 import { useStore } from '@/store';
 import {
+  getPlaylistTracks,
   getRemotePlaybackState,
   playTrack,
   playPlaylistContext,
   remotePause,
   remoteSetVolumePercent,
   resumePlaybackBestEffort,
+  spotifyUriToPlaylistId,
 } from '@/services/spotify-api';
 import { startRecommendationsContinuation, stopRecommendationsContinuation } from '@/services/recommendations-queue';
 import type { AutomationStep } from '@/store';
@@ -94,6 +96,34 @@ function waitForSpotifyDeviceId(timeoutMs: number): Promise<string | null> {
     };
     tick();
   });
+}
+
+/** Last playable track in the automation playlist step (stable seed when `/me/player` is flaky). */
+async function resolveRecommendationSeedFromPrevStep(prevStep: AutomationStep | undefined): Promise<string | null> {
+  if (!prevStep) return null;
+  if (prevStep.type === 'track') return prevStep.spotifyUri;
+  if (prevStep.type !== 'playlist') return null;
+  const pid = spotifyUriToPlaylistId(prevStep.spotifyPlaylistUri);
+  if (!pid) return null;
+  try {
+    const tracks = await getPlaylistTracks(pid);
+    const last = tracks[tracks.length - 1];
+    return last?.uri?.startsWith('spotify:track:') ? last.uri : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Poll Spotify player between tracks (204/no item); fall back to playlist-derived seed. */
+async function waitForSeedTrackUri(timeoutMs: number, fallbackUri: string | null): Promise<string | null> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const remote = await getRemotePlaybackState();
+    const uri = remote?.itemUri;
+    if (uri?.startsWith('spotify:track:')) return uri;
+    await new Promise((r) => setTimeout(r, 400));
+  }
+  return fallbackUri?.startsWith('spotify:track:') ? fallbackUri : null;
 }
 
 class AutomationEngine {
@@ -637,10 +667,10 @@ class AutomationEngine {
         (prevStep?.type === 'playlist' || prevStep?.type === 'track')
       ) {
         try {
-          const remote = await getRemotePlaybackState();
-          const lastUri = remote?.itemUri;
-          if (lastUri?.startsWith('spotify:track:')) {
-            await startRecommendationsContinuation(lastUri, store.deviceId);
+          const fallbackSeed = await resolveRecommendationSeedFromPrevStep(prevStep);
+          const seedUri = await waitForSeedTrackUri(9000, fallbackSeed);
+          if (seedUri) {
+            await startRecommendationsContinuation(seedUri, store.deviceId);
             this.finishAutomationKeepingSpotifyPlaying();
             return;
           }
