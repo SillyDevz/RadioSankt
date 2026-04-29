@@ -1,6 +1,6 @@
 import {
   addTrackToQueue,
-  fetchRecommendationTrackUris,
+  fetchRecommendationTrackUrisFromSeeds,
   getProfile,
   getRemotePlaybackState,
   playTrackUris,
@@ -10,14 +10,15 @@ import {
 const REFILL_INTERVAL_MS = 18_000;
 const BATCH_LIMIT = 18;
 const ADD_PER_TICK = 15;
-const SEEN_CAP = 400;
+/** Keep modest — over-pruning makes Spotify return the same small set and repeats one track. */
+const SEEN_CAP = 120;
 
 let refillTimer: ReturnType<typeof setInterval> | null = null;
 const queuedSeen = new Set<string>();
 
 function trimSeen(): void {
   if (queuedSeen.size <= SEEN_CAP) return;
-  const drop = queuedSeen.size - SEEN_CAP + 80;
+  const drop = queuedSeen.size - SEEN_CAP + 40;
   const it = queuedSeen.values();
   for (let i = 0; i < drop; i++) {
     const n = it.next();
@@ -38,20 +39,36 @@ if (typeof window !== 'undefined') {
   window.addEventListener('radio-sankt:stop-recommendations', () => stopRecommendationsContinuation());
 }
 
-/** Seed from the last playlist track; replaces queue with a recommendation batch and keeps topping up. */
-export async function startRecommendationsContinuation(seedTrackUri: string, deviceId: string): Promise<void> {
+function dedupeUris(uris: string[]): string[] {
+  const out: string[] = [];
+  const set = new Set<string>();
+  for (const u of uris) {
+    if (!u?.startsWith('spotify:track:') || set.has(u)) continue;
+    set.add(u);
+    out.push(u);
+  }
+  return out;
+}
+
+/** Seed URIs should be ordered best-first (e.g. live track, then last/first in block). IDs passed to Spotify are capped at 5. */
+export async function startRecommendationsContinuation(seedTrackUris: string[], deviceId: string): Promise<void> {
   stopRecommendationsContinuation();
 
-  const seedId = spotifyUriToTrackId(seedTrackUri);
-  if (!seedId) throw new Error('Invalid seed track URI');
+  const uris = dedupeUris(seedTrackUris);
+  const seedIds = uris.map((u) => spotifyUriToTrackId(u)).filter((id): id is string => id != null);
+  if (seedIds.length === 0) throw new Error('No valid seed track URIs');
 
   const profile = await getProfile();
   const market = profile.country ?? undefined;
 
-  let recs = await fetchRecommendationTrackUris(seedId, BATCH_LIMIT, market ?? undefined);
-  recs = recs.filter((u) => u !== seedTrackUri);
+  const fetchBatch = async (forSeedIds: string[]) =>
+    fetchRecommendationTrackUrisFromSeeds(forSeedIds.slice(0, 5), BATCH_LIMIT, market ?? undefined);
+
+  let recs = await fetchBatch(seedIds);
+  const firstPlaying = uris[0];
+  recs = recs.filter((u) => u !== firstPlaying);
   if (recs.length === 0) {
-    recs = await fetchRecommendationTrackUris(seedId, BATCH_LIMIT, market ?? undefined);
+    recs = await fetchBatch(seedIds);
   }
   if (recs.length === 0) throw new Error('No recommendations from Spotify');
 
@@ -67,7 +84,7 @@ export async function startRecommendationsContinuation(seedTrackUri: string, dev
       const curId = curUri ? spotifyUriToTrackId(curUri) : null;
       if (!curId) return;
 
-      const batch = await fetchRecommendationTrackUris(curId, BATCH_LIMIT, market ?? undefined);
+      const batch = await fetchBatch([curId, ...seedIds.filter((id) => id !== curId)].slice(0, 5));
       let novel = batch.filter((u) => u !== curUri && !queuedSeen.has(u));
       if (novel.length === 0 && batch.length > 0) {
         novel = batch.filter((u) => u !== curUri);
