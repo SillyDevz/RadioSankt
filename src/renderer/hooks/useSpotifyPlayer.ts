@@ -2,7 +2,7 @@ import { useEffect, useRef, useCallback } from 'react';
 import { shallow } from 'zustand/shallow';
 import { useStore } from '@/store';
 import AudioEngine from '@/engine/AudioEngine';
-import AutomationEngine from '@/engine/AutomationEngine';
+import AutomationEngine, { AUTOMATION_SPOTIFY_NEAR_END_MS } from '@/engine/AutomationEngine';
 import {
   getRemotePlaybackState,
   listSpotifyDevices,
@@ -33,6 +33,12 @@ const DEVICE_DISCOVERY_POLL_MS = 8000;
 /** Treat a `progress_ms` jump as a user seek only if it deviates from natural progression
  *  by more than this many milliseconds (poll cadence + Spotify clock jitter tolerance). */
 const SEEK_DEVIATION_THRESHOLD_MS = 4000;
+
+/** During automation, detect seeks sooner than idle playback so timers stay aligned. */
+const AUTOMATION_SEEK_DEVIATION_MS = 900;
+
+/** Avoid spamming near-end while polls stay in the tail window (single-flight is engine-side too). */
+let automationNearEndCooldownUntil = 0;
 
 /** Minimum gap between Spotify `/me/player/volume` calls during a ramp (API rate-limits). */
 const VOLUME_RAMP_MIN_CALL_INTERVAL_MS = 120;
@@ -321,7 +327,11 @@ export function useSpotifyPlayer() {
             const wallElapsed = now - prevSample.at;
             const observedDelta = state.progressMs - prevSample.position;
             const deviation = Math.abs(observedDelta - wallElapsed);
-            if (deviation > SEEK_DEVIATION_THRESHOLD_MS) {
+            const seekThreshold =
+              curStep?.type === 'track' || curStep?.type === 'playlist'
+                ? AUTOMATION_SEEK_DEVIATION_MS
+                : SEEK_DEVIATION_THRESHOLD_MS;
+            if (deviation > seekThreshold) {
               window.dispatchEvent(
                 new CustomEvent('radio-sankt:spotify-seek-sync', {
                   detail: {
@@ -329,6 +339,67 @@ export function useSpotifyPlayer() {
                     playbackUri: state.track.uri,
                     contextUri: state.contextUri ?? undefined,
                   },
+                }),
+              );
+            }
+          }
+
+          if (
+            playbackMatchesStep &&
+            st.automationStatus === 'playing' &&
+            state.isPlaying &&
+            curStep?.type === 'playlist' &&
+            curStep.spotifyPlaylistUri === state.contextUri
+          ) {
+            window.dispatchEvent(
+              new CustomEvent('radio-sankt:automation-playlist-progress', {
+                detail: {
+                  stepId: curStep.id,
+                  trackUri: state.track.uri,
+                  progressMs: state.progressMs,
+                  trackDurationMs: state.track.durationMs,
+                },
+              }),
+            );
+            const stAfter = useStore.getState();
+            const remainingBlock = stAfter.stepTimeRemaining;
+            const nextOv =
+              stAfter.automationSteps[stAfter.currentStepIndex + 1]?.transitionIn === 'crossfade'
+                ? stAfter.automationSteps[stAfter.currentStepIndex + 1]!.overlapMs
+                : 0;
+            const tailMs = AUTOMATION_SPOTIFY_NEAR_END_MS + nextOv;
+            const nowMs = Date.now();
+            if (remainingBlock <= tailMs && nowMs >= automationNearEndCooldownUntil) {
+              automationNearEndCooldownUntil = nowMs + 3500;
+              window.dispatchEvent(
+                new CustomEvent('radio-sankt:automation-spotify-near-end', {
+                  detail: { stepIndex: st.currentStepIndex },
+                }),
+              );
+            }
+          }
+
+          if (
+            playbackMatchesStep &&
+            st.automationStatus === 'playing' &&
+            state.isPlaying &&
+            curStep?.type === 'track' &&
+            curStep.spotifyUri === state.track.uri
+          ) {
+            const spotifyRemaining = Math.max(0, state.track.durationMs - state.progressMs);
+            const stAfter = useStore.getState();
+            stAfter.setStepTimeRemaining(Math.min(curStep.durationMs, spotifyRemaining));
+            const nextOv =
+              stAfter.automationSteps[stAfter.currentStepIndex + 1]?.transitionIn === 'crossfade'
+                ? stAfter.automationSteps[stAfter.currentStepIndex + 1]!.overlapMs
+                : 0;
+            const tailMs = AUTOMATION_SPOTIFY_NEAR_END_MS + nextOv;
+            const nowMs = Date.now();
+            if (spotifyRemaining <= tailMs && nowMs >= automationNearEndCooldownUntil) {
+              automationNearEndCooldownUntil = nowMs + 3500;
+              window.dispatchEvent(
+                new CustomEvent('radio-sankt:automation-spotify-near-end', {
+                  detail: { stepIndex: st.currentStepIndex },
                 }),
               );
             }
@@ -353,6 +424,7 @@ export function useSpotifyPlayer() {
       if (stateTimer) clearInterval(stateTimer);
       cancelLiveRamp();
       lastSpotifySeekSyncSample = null;
+      automationNearEndCooldownUntil = 0;
     };
   }, [
     token,
@@ -490,7 +562,7 @@ export function useSpotifyPlayer() {
         await remoteSeek(clamped, devId);
         setPosition(clamped);
         const st = useStore.getState();
-        if (st.automationStatus === 'playing') {
+        if (st.automationStatus === 'playing' || st.automationStatus === 'paused') {
           const cur = st.automationSteps[st.currentStepIndex];
           if (cur?.type === 'track') {
             window.dispatchEvent(

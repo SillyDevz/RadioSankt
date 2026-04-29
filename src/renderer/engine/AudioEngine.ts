@@ -160,6 +160,21 @@ class AudioEngine {
     this.jingleOnEnded = null;
   }
 
+  /** Stop automation/cart jingle voice only (cart-wall polyphony keeps playing). */
+  stopAutomationJingle(): void {
+    if (this.jingleSource) {
+      try {
+        this.jingleSource.stop();
+      } catch {
+        /* already stopped */
+      }
+      this.jingleSource = null;
+    }
+    this.jingleBuffer = null;
+    this.jinglePlaying = false;
+    this.jingleOnEnded = null;
+  }
+
   stopCartVoices(): void {
     this.cartVoices.forEach((src) => {
       try {
