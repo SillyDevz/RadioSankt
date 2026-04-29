@@ -159,7 +159,11 @@ class AutomationEngine {
 
     // Time to insert a break between songs of the playlist.
     const picks = this.buildBreakPicks(rule);
-    if (picks.length === 0) return;
+    if (picks.length === 0) {
+      // Avoid re-evaluating every track forever while the pool is misconfigured.
+      this.songsSinceBreak = 0;
+      return;
+    }
 
     this.intraPlaylistBreakInFlight = true;
     this.songsSinceBreak = 0;
@@ -205,13 +209,26 @@ class AutomationEngine {
         }
       }
 
-      // Reset the step start time and countdown using the new track URI.
+      // Reschedule using remaining block time — do not reset to full playlist duration or the
+      // advance timer can fire immediately when summed durationMs is shorter than real playback.
       const newStore = this.getStore();
-      const stillStep = newStore.automationSteps[newStore.currentStepIndex];
+      const stepsNow = newStore.automationSteps;
+      const stillIdx = newStore.currentStepIndex;
+      const stillStep = stepsNow[stillIdx];
       if (stillStep && stillStep.type === 'playlist' && stillStep.id === stepId) {
-        this.currentStepStartTime = Date.now();
-        this.startCountdown(stillStep);
-        this.scheduleNextStep(stillStep, newStore.currentStepIndex);
+        const dur = stillStep.durationMs;
+        let remainingMs = newStore.stepTimeRemaining;
+        if (remainingMs <= 0 || remainingMs > dur + 2000) {
+          remainingMs = dur;
+        } else {
+          remainingMs = Math.min(dur, Math.max(0, remainingMs));
+        }
+        const elapsedIntoBlock = dur - remainingMs;
+        this.currentStepStartTime = Date.now() - elapsedIntoBlock;
+        this.startCountdown(stillStep, remainingMs);
+        const nextStep = stepsNow[stillIdx + 1];
+        const overlapMs = nextStep?.transitionIn === 'crossfade' ? nextStep.overlapMs : 0;
+        this.scheduleAdvanceFromStep(stillStep, stillIdx, Math.max(remainingMs - overlapMs, 500));
       }
       // Silence the unused-param warning; newTrackUri is only used by the poller.
       void newTrackUri;
@@ -234,6 +251,8 @@ class AutomationEngine {
       if (!playbackUri || playbackUri !== step.spotifyUri) return;
     } else if (step.type === 'playlist') {
       if (!contextUri || contextUri !== step.spotifyPlaylistUri) return;
+      // Spotify reports progress within the current item only; playlist steps use summed block durationMs.
+      return;
     }
 
     const durationMs = (step as { durationMs: number }).durationMs;
@@ -742,8 +761,12 @@ class AutomationEngine {
   }
 
   private scheduleNextStep(step: AutomationStep, currentIndex: number): void {
-    const durationMs = step.type === 'pause' ? 0 : (step as { durationMs: number }).durationMs;
-    if (!durationMs) return;
+    if (step.type === 'pause') return;
+    const durationMs = (step as { durationMs: number }).durationMs;
+    if (!durationMs) {
+      this.scheduleAdvanceFromStep(step, currentIndex, 0);
+      return;
+    }
 
     const nextStep = this.getSteps()[currentIndex + 1];
     const overlapMs = nextStep?.transitionIn === 'crossfade' ? nextStep.overlapMs : 0;
