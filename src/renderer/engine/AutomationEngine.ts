@@ -203,13 +203,25 @@ class AutomationEngine {
         }
       }
 
-      // Reset the step start time and countdown using the new track URI.
+      // Reschedule using remaining block time — do not reset to full playlist duration or the
+      // advance timer can fire immediately when summed durationMs is shorter than real playback.
       const newStore = this.getStore();
-      const stillStep = newStore.automationSteps[newStore.currentStepIndex];
+      const stillIdx = newStore.currentStepIndex;
+      const stillStep = newStore.automationSteps[stillIdx];
       if (stillStep && stillStep.type === 'playlist' && stillStep.id === stepId) {
-        this.currentStepStartTime = Date.now();
-        this.startCountdown(stillStep);
-        this.scheduleNextStep(stillStep, newStore.currentStepIndex);
+        const dur = stillStep.durationMs;
+        let remainingMs = newStore.stepTimeRemaining;
+        if (remainingMs <= 0 || remainingMs > dur + 2000) {
+          remainingMs = dur;
+        } else {
+          remainingMs = Math.min(dur, Math.max(0, remainingMs));
+        }
+        const elapsedIntoBlock = dur - remainingMs;
+        this.currentStepStartTime = Date.now() - elapsedIntoBlock;
+        this.startCountdown(stillStep, remainingMs);
+        const nextStep = newStore.automationSteps[stillIdx + 1];
+        const overlapMs = nextStep?.transitionIn === 'crossfade' ? nextStep.overlapMs : 0;
+        this.scheduleAdvanceFromStep(stillStep, stillIdx, Math.max(remainingMs - overlapMs, 500));
       }
       // Silence the unused-param warning; newTrackUri is only used by the poller.
       void newTrackUri;
