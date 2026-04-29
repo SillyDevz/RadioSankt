@@ -211,6 +211,7 @@ interface AutomationSlice {
   setAutomationSteps: (steps: AutomationStep[]) => void;
   addAutomationStep: (step: AutomationStep) => void;
   removeAutomationStep: (id: string) => void;
+  clearAutomationSteps: () => void;
   reorderAutomationSteps: (fromIndex: number, toIndex: number) => void;
   updateAutomationStep: (id: string, updates: Partial<AutomationStep>) => void;
   setSelectedStepIndex: (index: number | null) => void;
@@ -411,6 +412,14 @@ const createAutomationSlice: StateCreator<StoreState, [], [], AutomationSlice> =
         automationSteps: steps,
         selectedStepIndex: sel !== null && sel >= steps.length ? (steps.length > 0 ? steps.length - 1 : null) : sel,
       };
+    }),
+  clearAutomationSteps: () =>
+    set({
+      automationSteps: [],
+      selectedStepIndex: null,
+      currentStepIndex: 0,
+      automationStatus: 'stopped',
+      stepTimeRemaining: 0,
     }),
   reorderAutomationSteps: (fromIndex, toIndex) =>
     set((s) => {
