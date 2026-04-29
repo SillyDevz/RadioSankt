@@ -364,9 +364,9 @@ class AutomationEngine {
     const stepsNow = this.getSteps();
     if (stepsNow.length === 0) return;
 
-    const inserted = stepsNow.length > lenBefore;
-    const target = !inserted && nextAfterBreak >= lenBefore ? 0 : nextAfterBreak;
-    await this.executeStep(Math.max(0, Math.min(target, stepsNow.length - 1)));
+    // Advance to next step index, or `steps.length` to finish (never wrap to 0 — that restarted the queue).
+    const target = Math.max(0, Math.min(nextAfterBreak, stepsNow.length));
+    await this.executeStep(target);
   }
 
   async skipBackward(): Promise<void> {
