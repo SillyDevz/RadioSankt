@@ -255,8 +255,10 @@ export type CoachMarkId = 'automation-drag' | 'automation-pause' | 'live-golive'
 
 interface LiveSlice {
   isLive: boolean;
+  soundboardVolume: number;
   quickFireSlots: QuickFireSlot[];
   setIsLive: (live: boolean) => void;
+  setSoundboardVolume: (volume: number) => void;
   setQuickFireSlots: (slots: QuickFireSlot[]) => void;
   updateQuickFireSlot: (id: string, updates: Partial<QuickFireSlot>) => void;
   clearQuickFireSlot: (id: string) => void;
@@ -545,8 +547,13 @@ function createDefaultQuickFireSlots(): QuickFireSlot[] {
 
 const createLiveSlice: StateCreator<StoreState, [], [], LiveSlice> = (set) => ({
   isLive: false,
+  soundboardVolume: 1,
   quickFireSlots: createDefaultQuickFireSlots(),
   setIsLive: (live) => set({ isLive: live }),
+  setSoundboardVolume: (volume) => {
+    set({ soundboardVolume: volume });
+    window.electronAPI?.saveToStore('soundboardVolume', volume);
+  },
   setQuickFireSlots: (slots) => set({ quickFireSlots: slots }),
   updateQuickFireSlot: (id, updates) =>
     set((state) => {

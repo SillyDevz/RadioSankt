@@ -178,6 +178,8 @@ export default function CartWallWidget() {
   const addToast = useStore((s) => s.addToast);
   const fadeOutMs = useStore((s) => s.fadeOutMs);
   const fadeInMs = useStore((s) => s.fadeInMs);
+  const cartVolume = useStore((s) => s.cartVolume);
+  const setCartVolume = useStore((s) => s.setCartVolume);
 
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; slotId: string } | null>(null);
   const [assigningSlotId, setAssigningSlotId] = useState<string | null>(null);
@@ -195,6 +197,11 @@ export default function CartWallWidget() {
       }
     });
   }, [setQuickFireSlots]);
+
+  useEffect(() => {
+    const audio = AudioEngine.getOrInit();
+    audio.setCartVolume(cartVolume);
+  }, [cartVolume]);
 
   const handleGoLive = useCallback(async () => {
     const engine = AutomationEngine.getInstance();
@@ -264,8 +271,6 @@ export default function CartWallWidget() {
 
     const audio = AudioEngine.getOrInit();
     audio.resumeContextIfNeeded();
-    audio.setVolume(1);
-
     slotVoiceCountsRef.current[slot.id] = (slotVoiceCountsRef.current[slot.id] || 0) + 1;
     setActiveSlotIds((prev) => new Set(prev).add(slot.id));
 
@@ -309,6 +314,15 @@ export default function CartWallWidget() {
     }
   }, [addToast]);
 
+  const handleStopAll = useCallback(() => {
+    const audio = AudioEngine.get();
+    if (!audio) return;
+    audio.stopCartVoices();
+    slotVoiceCountsRef.current = {};
+    setActiveSlotIds(new Set());
+    setSlotProgress({});
+  }, []);
+
   const handleContextMenu = (e: React.MouseEvent, slotId: string) => {
     e.preventDefault();
     setContextMenu({ x: e.clientX, y: e.clientY, slotId });
@@ -342,30 +356,51 @@ export default function CartWallWidget() {
             <h2 className="text-base font-bold text-text-primary">{i18n.t('workspace.cart.title', { defaultValue: 'Soundboard' })}</h2>
             <p className="text-xs text-text-muted">{i18n.t('workspace.cart.subtitle', { defaultValue: 'Quick-fire clips for live moments' })}</p>
           </div>
-        <Tooltip content={isLive ? 'End live mode and resume automation' : 'Pauses automation and fades out music so you can speak or play content live'} placement="bottom">
-          <button
-            onClick={handleGoLive}
-            className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-bold tracking-wide transition-all duration-200 ${
-              isLive
-                ? 'bg-accent text-white shadow-md hover:bg-accent-hover'
-                : 'bg-danger text-white hover:bg-red-600'
-            }`}
-          >
-            {isLive ? (
-              <>
-                <div className="h-2 w-2 rounded-full bg-white animate-pulse-live" />
-                {i18n.t('workspace.cart.onAir', { defaultValue: 'ON AIR' })}
-              </>
-            ) : (
-              <>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-                  <circle cx="12" cy="12" r="10" />
-                </svg>
-                {i18n.t('workspace.cart.goLive', { defaultValue: 'GO LIVE' })}
-              </>
-            )}
-          </button>
-        </Tooltip>
+          <div className="flex items-center gap-3">
+            <div className="hidden md:flex items-center gap-2 rounded-xl border border-border bg-bg-surface px-3 py-2">
+              <span className="text-xs font-medium text-text-secondary">{i18n.t('workspace.cart.soundboardVolume', { defaultValue: 'Soundboard volume' })}</span>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={cartVolume}
+                onChange={(e) => setCartVolume(parseFloat(e.target.value))}
+                className="w-24 accent-accent"
+                aria-label={i18n.t('workspace.cart.soundboardVolume', { defaultValue: 'Soundboard volume' })}
+              />
+            </div>
+            <button
+              onClick={handleStopAll}
+              className="rounded-xl border border-border bg-bg-surface px-3 py-2 text-xs font-bold text-text-primary transition-colors hover:bg-bg-elevated"
+            >
+              {i18n.t('workspace.cart.stopAll', { defaultValue: 'STOP SFX' })}
+            </button>
+            <Tooltip content={isLive ? 'End live mode and resume automation' : 'Pauses automation and fades out music so you can speak or play content live'} placement="bottom">
+              <button
+                onClick={handleGoLive}
+                className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-bold tracking-wide transition-all duration-200 ${
+                  isLive
+                    ? 'bg-accent text-white shadow-md hover:bg-accent-hover'
+                    : 'bg-danger text-white hover:bg-red-600'
+                }`}
+              >
+                {isLive ? (
+                  <>
+                    <div className="h-2 w-2 rounded-full bg-white animate-pulse-live" />
+                    {i18n.t('workspace.cart.onAir', { defaultValue: 'ON AIR' })}
+                  </>
+                ) : (
+                  <>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                      <circle cx="12" cy="12" r="10" />
+                    </svg>
+                    {i18n.t('workspace.cart.goLive', { defaultValue: 'GO LIVE' })}
+                  </>
+                )}
+              </button>
+            </Tooltip>
+          </div>
         </div>
       </div>
 

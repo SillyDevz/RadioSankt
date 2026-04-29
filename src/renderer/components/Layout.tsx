@@ -94,6 +94,9 @@ function Layout() {
       }),
       api.getFromStore('shortcuts').then((val) => { if (Array.isArray(val)) useStore.setState({ shortcuts: val as ShortcutBinding[] }); }),
       api.getFromStore('workspaceLayout').then((val) => { if (Array.isArray(val)) useStore.setState({ workspaceLayout: val as any }); }),
+      api.getFromStore('soundboardVolume').then((val) => {
+        if (typeof val === 'number') useStore.setState({ soundboardVolume: Math.max(0, Math.min(1, val)) });
+      }),
       api.getSpotifyClientId().then((id) => {
         if (id) useStore.setState({ clientId: id });
       }),

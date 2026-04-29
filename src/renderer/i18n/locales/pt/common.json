@@ -251,6 +251,8 @@
   "workspace.cart.subtitle": "Clipes rápidos para momentos ao vivo",
   "workspace.cart.goLive": "ENTRAR AO VIVO",
   "workspace.cart.onAir": "NO AR",
+  "workspace.cart.stopAll": "Parar todos",
+  "workspace.cart.soundboardVolume": "Volume do soundboard",
   "workspace.cart.renameSlot": "Renomear slot",
   "workspace.cart.slotName": "Nome do slot",
   "workspace.jingles.assign": "ATRIBUIR",

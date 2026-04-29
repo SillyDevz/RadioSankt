@@ -253,6 +253,8 @@
   "workspace.cart.onAir": "ON AIR",
   "workspace.cart.renameSlot": "Rename slot",
   "workspace.cart.slotName": "Slot name",
+  "workspace.cart.stopAll": "Stop all",
+  "workspace.cart.soundboardVolume": "Soundboard volume",
   "workspace.jingles.assign": "ASSIGN",
   "workspace.jingles.assignSoundboardClip": "Assign Soundboard Clip",
   "workspace.jingles.libraryTitle": "Soundboard Library",
