@@ -342,6 +342,7 @@ class AutomationEngine {
         }
         if (advanceGen !== this.advanceScheduleGen) return;
         if (this.getStore().automationStatus !== 'playing') return;
+        this.forceNextPlayback = true;
       }
 
       if (advanceGen !== this.advanceScheduleGen) return;
