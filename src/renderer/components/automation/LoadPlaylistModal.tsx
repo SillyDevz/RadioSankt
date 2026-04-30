@@ -119,8 +119,8 @@ export default function LoadPlaylistModal() {
     <ModalShell open={open} onClose={() => setOpen(false)} className="w-full max-w-md overflow-hidden">
         <div className="px-4 py-3 border-b border-border flex items-center justify-between">
           <h2 className="text-sm font-semibold text-text-primary">{t('automation.playlist.modalTitle', { defaultValue: 'Automation sets' })}</h2>
-          <button onClick={() => setOpen(false)} className="text-text-muted hover:text-text-primary">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+          <button onClick={() => setOpen(false)} className="text-text-muted hover:text-text-primary" aria-label="Close">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
               <path d="M18 6L6 18M6 6l12 12" />
             </svg>
           </button>
@@ -155,7 +155,7 @@ export default function LoadPlaylistModal() {
                 className="p-1 rounded text-text-muted hover:text-danger hover:bg-danger/10 transition-colors opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
                 aria-label={t('automation.playlist.deleteAria', { defaultValue: 'Delete playlist' })}
               >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
                   <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
                 </svg>
               </button>

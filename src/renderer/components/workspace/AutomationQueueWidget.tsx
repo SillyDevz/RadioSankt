@@ -406,17 +406,21 @@ export default function AutomationQueueWidget() {
                   <div className="flex flex-col gap-2">
                     {steps.map((step, i) => {
                       const isGrouped = step.type === 'track' && !!step.groupId;
-                      const isFirstInGroup = isGrouped && (i === 0 || steps[i - 1]?.type !== 'track' || (steps[i - 1] as any).groupId !== step.groupId);
+                      const prev = steps[i - 1];
+                      const isFirstInGroup = isGrouped && (i === 0 || prev?.type !== 'track' || prev.groupId !== step.groupId);
                       const isCollapsed = isGrouped && !expandedGroups.has(step.groupId!);
 
                       if (isGrouped && !isFirstInGroup && isCollapsed) return null;
 
-                      const groupPlayingIndex = isFirstInGroup ? steps.findIndex((s, idx) => idx >= i && s.type === 'track' && (s as any).groupId === step.groupId && idx === currentStepIndex) : -1;
+                      const groupPlayingIndex = isFirstInGroup ? steps.findIndex((s, idx) => idx >= i && s.type === 'track' && s.groupId === step.groupId && idx === currentStepIndex) : -1;
 
                       return (
                         <React.Fragment key={step.id}>
                           {isFirstInGroup && (
                             <div
+                              role="button"
+                              tabIndex={0}
+                              aria-expanded={!isCollapsed}
                               className={`flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer select-none transition-colors ${groupPlayingIndex >= 0 ? 'bg-accent/10 border border-accent/30' : 'bg-bg-elevated/50 border border-border/50 hover:bg-bg-elevated'}`}
                               onClick={() => {
                                 setExpandedGroups((prev) => {
@@ -425,6 +429,17 @@ export default function AutomationQueueWidget() {
                                   else next.add(step.groupId!);
                                   return next;
                                 });
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                  e.preventDefault();
+                                  setExpandedGroups((prev) => {
+                                    const next = new Set(prev);
+                                    if (next.has(step.groupId!)) next.delete(step.groupId!);
+                                    else next.add(step.groupId!);
+                                    return next;
+                                  });
+                                }
                               }}
                             >
                               <img src={step.groupArt || step.albumArt} alt="" className="w-8 h-8 rounded object-cover shrink-0" />

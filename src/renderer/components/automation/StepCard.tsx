@@ -42,12 +42,10 @@ const StepCard = React.memo(function StepCard({ step, isPlaying, isSelected, onS
   const subtitle =
     step.type === 'track'
       ? step.artist
-      : step.type === 'playlist'
-        ? t('automation.step.playlistTracks', { count: step.trackCount, defaultValue: 'Playlist · {{count}} tracks' })
-        : step.type === 'jingle'
-          ? t('automation.step.jingle')
-          : step.type === 'ad'
-            ? t('automation.step.adBreak')
+      : step.type === 'jingle'
+        ? t('automation.step.jingle')
+        : step.type === 'ad'
+          ? t('automation.step.adBreak')
           : t('automation.step.pausesHere');
   const duration = step.type !== 'pause' ? formatDuration(step.durationMs) : '--:--';
 
@@ -55,7 +53,10 @@ const StepCard = React.memo(function StepCard({ step, isPlaying, isSelected, onS
     <div
       ref={setNodeRef}
       style={style}
+      role="button"
+      tabIndex={0}
       onClick={onSelect}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onSelect(); } }}
       className={`flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer transition-all group ${
         isSelected ? 'bg-bg-elevated ring-1 ring-accent/40' : 'hover:bg-bg-elevated/60'
       } ${isPlaying ? 'border-l-2 border-l-accent' : 'border-l-2 border-l-transparent'}`}
@@ -69,7 +70,7 @@ const StepCard = React.memo(function StepCard({ step, isPlaying, isSelected, onS
           className="shrink-0 cursor-grab active:cursor-grabbing text-text-muted hover:text-text-secondary p-0.5"
           aria-label={t('automation.step.dragReorder')}
         >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
             <circle cx="9" cy="6" r="1.5" />
             <circle cx="15" cy="6" r="1.5" />
             <circle cx="9" cy="12" r="1.5" />
@@ -90,7 +91,7 @@ const StepCard = React.memo(function StepCard({ step, isPlaying, isSelected, onS
           className="shrink-0 p-1.5 rounded-full text-accent hover:bg-accent/15 transition-colors"
           aria-label={t('automation.step.playFromHere')}
         >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
             <polygon points="6 4 20 12 6 20 6 4" />
           </svg>
         </button>
@@ -126,10 +127,10 @@ const StepCard = React.memo(function StepCard({ step, isPlaying, isSelected, onS
       {/* Delete */}
       <button
         onClick={(e) => { e.stopPropagation(); onDelete(); }}
-        className="shrink-0 p-1 rounded text-text-muted hover:text-danger hover:bg-danger/10 transition-colors opacity-0 group-hover:opacity-100"
+        className="shrink-0 p-1 rounded text-text-muted hover:text-danger hover:bg-danger/10 transition-colors opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
         aria-label={t('automation.step.remove')}
       >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
           <path d="M18 6L6 18M6 6l12 12" />
         </svg>
       </button>

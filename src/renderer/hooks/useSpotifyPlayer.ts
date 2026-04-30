@@ -52,11 +52,6 @@ let lastSpotifySeekSyncSample:
 /** Keeps last track info so we can restore display if Spotify returns a transient null. */
 let cachedDiscoveredDeviceId: string | null = null;
 
-/** Track URI Spotify was reporting the last time we sampled while the current automation
- *  step was a playlist. Used to detect intra-playlist track advances (so dynamic breaks
- *  can fire between songs inside a playlist block, not only when the whole block ends). */
-let lastPlaylistTrackUriSample: { stepId: string; trackUri: string } | null = null;
-
 function cancelLiveRamp() {
   if (liveRampRaf !== null) {
     cancelAnimationFrame(liveRampRaf);
@@ -257,40 +252,45 @@ export function useSpotifyPlayer() {
 
     const pollState = async () => {
       if (cancelled) return;
+      let state;
       try {
-        const state = await getRemotePlaybackState();
-        if (cancelled) return;
-        if (!state) {
-          // Transient null — Spotify sometimes returns 204 between tracks. Don't wipe UI state.
-          return;
-        }
+        state = await getRemotePlaybackState();
+      } catch {
+        return; // transient network error, next tick retries
+      }
+      if (cancelled) return;
+      if (!state) {
+        // Transient null — Spotify sometimes returns 204 between tracks. Don't wipe UI state.
+        return;
+      }
 
-        // Playback-stolen detection: if Spotify reports paused but automation thinks it's
-        // playing, another device/user paused playback — pause automation to stay in sync.
-        // Skip when the current step is a jingle/ad or during intra-playlist breaks
-        // (we intentionally pause Spotify for those).
-        const stBefore = useStore.getState();
-        const curAutoStep = stBefore.automationSteps[stBefore.currentStepIndex];
-        const isLocalAudioStep = curAutoStep?.type === 'jingle' || curAutoStep?.type === 'ad';
-        const engine = AutomationEngine.getInstance();
-        if (
-          !state.isPlaying &&
-          stBefore.isPlaying &&
-          (stBefore.automationStatus === 'playing') &&
-          !isLocalAudioStep
-        ) {
-          engine.pause();
-        }
+      // Playback-stolen detection: if Spotify reports paused but automation thinks it's
+      // playing, another device/user paused playback — pause automation to stay in sync.
+      // Skip when the current step is a jingle/ad or during intra-playlist breaks
+      // (we intentionally pause Spotify for those).
+      const stBefore = useStore.getState();
+      const curAutoStep = stBefore.automationSteps[stBefore.currentStepIndex];
+      const isLocalAudioStep = curAutoStep?.type === 'jingle' || curAutoStep?.type === 'ad';
+      const engine = AutomationEngine.getInstance();
+      if (
+        !state.isPlaying &&
+        stBefore.isPlaying &&
+        (stBefore.automationStatus === 'playing') &&
+        !isLocalAudioStep
+      ) {
+        engine.pause();
+      }
 
-        setIsPlaying(state.isPlaying);
+      if (state.isPlaying !== useStore.getState().isPlaying) setIsPlaying(state.isPlaying);
 
-        if (state.deviceId && state.deviceId !== deviceIdRef.current) {
-          setDeviceId(state.deviceId);
-          if (state.deviceName) setDeviceName(state.deviceName);
-          setSdkReady(true);
-        }
+      if (state.deviceId && state.deviceId !== deviceIdRef.current) {
+        setDeviceId(state.deviceId);
+        if (state.deviceName) setDeviceName(state.deviceName);
+        setSdkReady(true);
+      }
 
-        if (state.track) {
+      if (state.track) {
+        if (state.track.uri !== useStore.getState().currentTrack?.uri) {
           setCurrentTrack({
             id: state.track.id ?? state.track.uri,
             title: state.track.name,
@@ -300,149 +300,105 @@ export function useSpotifyPlayer() {
             duration: state.track.durationMs,
             uri: state.track.uri,
           });
-          setDuration(state.track.durationMs);
-          setPosition(state.progressMs);
+        }
+        if (state.track.durationMs !== useStore.getState().duration) setDuration(state.track.durationMs);
+        if (Math.abs(state.progressMs - useStore.getState().position) > 500) setPosition(state.progressMs);
 
-          const st = useStore.getState();
-          const curStep = st.automationSteps[st.currentStepIndex];
-          const playbackMatchesStep =
-            !!curStep &&
-            ((curStep.type === 'track' && curStep.spotifyUri === state.track.uri) ||
-              (curStep.type === 'playlist' && curStep.spotifyPlaylistUri === state.contextUri));
+        const st = useStore.getState();
+        const curStep = st.automationSteps[st.currentStepIndex];
+        const playbackMatchesStep =
+          !!curStep &&
+          ((curStep.type === 'track' && curStep.spotifyUri === state.track.uri) ||
+            (curStep.type === 'playlist' && curStep.spotifyPlaylistUri === state.contextUri));
 
-          const prevSample = lastSpotifySeekSyncSample;
-          const now = Date.now();
+        const prevSample = lastSpotifySeekSyncSample;
+        const now = Date.now();
 
-          // Intra-playlist advance: when the active step is a playlist block and the
-          // underlying Spotify track URI changes, let the automation engine run its
-          // break-rule logic between songs (not only when the block ends).
-          if (
-            curStep &&
-            curStep.type === 'playlist' &&
-            state.contextUri === curStep.spotifyPlaylistUri &&
-            st.automationStatus === 'playing' &&
-            state.isPlaying &&
-            state.track.uri
-          ) {
-            if (
-              lastPlaylistTrackUriSample &&
-              lastPlaylistTrackUriSample.stepId === curStep.id &&
-              lastPlaylistTrackUriSample.trackUri !== state.track.uri
-            ) {
-              window.dispatchEvent(
-                new CustomEvent('radio-sankt:spotify-playlist-track-changed', {
-                  detail: {
-                    stepId: curStep.id,
-                    previousTrackUri: lastPlaylistTrackUriSample.trackUri,
-                    newTrackUri: state.track.uri,
-                    newTrackDurationMs: state.track.durationMs,
-                  },
-                }),
-              );
-            }
-            lastPlaylistTrackUriSample = { stepId: curStep.id, trackUri: state.track.uri };
-          } else if (!curStep || curStep.type !== 'playlist') {
-            lastPlaylistTrackUriSample = null;
-          }
-
-          if (
-            playbackMatchesStep &&
-            st.automationStatus === 'playing' &&
-            state.isPlaying &&
-            state.track.id &&
-            prevSample &&
-            prevSample.trackId === state.track.id
-          ) {
-            // Expected forward delta ≈ wall-clock elapsed since the previous sample.
-            // Only call it a seek if Spotify reports a position that deviates from
-            // natural progression by more than the threshold. This avoids false
-            // positives from polling jitter and rate limiting.
-            const wallElapsed = now - prevSample.at;
-            const observedDelta = state.progressMs - prevSample.position;
-            const deviation = Math.abs(observedDelta - wallElapsed);
-            const seekThreshold =
-              curStep?.type === 'track' || curStep?.type === 'playlist'
-                ? AUTOMATION_SEEK_DEVIATION_MS
-                : SEEK_DEVIATION_THRESHOLD_MS;
-            if (deviation > seekThreshold) {
-              window.dispatchEvent(
-                new CustomEvent('radio-sankt:spotify-seek-sync', {
-                  detail: {
-                    positionMs: state.progressMs,
-                    playbackUri: state.track.uri,
-                    contextUri: state.contextUri ?? undefined,
-                  },
-                }),
-              );
-            }
-          }
-
-          if (
-            playbackMatchesStep &&
-            st.automationStatus === 'playing' &&
-            state.isPlaying &&
-            curStep?.type === 'playlist' &&
-            curStep.spotifyPlaylistUri === state.contextUri
-          ) {
+        if (
+          playbackMatchesStep &&
+          st.automationStatus === 'playing' &&
+          state.isPlaying &&
+          state.track.id &&
+          prevSample &&
+          prevSample.trackId === state.track.id
+        ) {
+          // Expected forward delta ≈ wall-clock elapsed since the previous sample.
+          // Only call it a seek if Spotify reports a position that deviates from
+          // natural progression by more than the threshold. This avoids false
+          // positives from polling jitter and rate limiting.
+          const wallElapsed = now - prevSample.at;
+          const observedDelta = state.progressMs - prevSample.position;
+          const deviation = Math.abs(observedDelta - wallElapsed);
+          const seekThreshold =
+            curStep?.type === 'track' || curStep?.type === 'playlist'
+              ? AUTOMATION_SEEK_DEVIATION_MS
+              : SEEK_DEVIATION_THRESHOLD_MS;
+          if (deviation > seekThreshold) {
             window.dispatchEvent(
-              new CustomEvent('radio-sankt:automation-playlist-progress', {
+              new CustomEvent('radio-sankt:spotify-seek-sync', {
                 detail: {
-                  stepId: curStep.id,
-                  trackUri: state.track.uri,
-                  progressMs: state.progressMs,
-                  trackDurationMs: state.track.durationMs,
+                  positionMs: state.progressMs,
+                  playbackUri: state.track.uri,
+                  contextUri: state.contextUri ?? undefined,
                 },
               }),
             );
-            const stAfter = useStore.getState();
-            const remainingBlock = stAfter.stepTimeRemaining;
-            const nextOv =
-              stAfter.automationSteps[stAfter.currentStepIndex + 1]?.transitionIn === 'crossfade'
-                ? stAfter.automationSteps[stAfter.currentStepIndex + 1]!.overlapMs
-                : 0;
-            const tailMs = AUTOMATION_SPOTIFY_NEAR_END_MS + nextOv;
-            const nowMs = Date.now();
-            if (remainingBlock <= tailMs && nowMs >= automationNearEndCooldownUntil) {
-              automationNearEndCooldownUntil = nowMs + 3500;
-              window.dispatchEvent(
-                new CustomEvent('radio-sankt:automation-spotify-near-end', {
-                  detail: { stepIndex: st.currentStepIndex },
-                }),
-              );
-            }
           }
-
-          if (
-            playbackMatchesStep &&
-            st.automationStatus === 'playing' &&
-            state.isPlaying &&
-            curStep?.type === 'track' &&
-            curStep.spotifyUri === state.track.uri
-          ) {
-            const spotifyRemaining = Math.max(0, state.track.durationMs - state.progressMs);
-            const stAfter = useStore.getState();
-            stAfter.setStepTimeRemaining(Math.min(curStep.durationMs, spotifyRemaining));
-            const nextOv =
-              stAfter.automationSteps[stAfter.currentStepIndex + 1]?.transitionIn === 'crossfade'
-                ? stAfter.automationSteps[stAfter.currentStepIndex + 1]!.overlapMs
-                : 0;
-            const tailMs = AUTOMATION_SPOTIFY_NEAR_END_MS + nextOv;
-            const nowMs = Date.now();
-            if (spotifyRemaining <= tailMs && nowMs >= automationNearEndCooldownUntil) {
-              automationNearEndCooldownUntil = nowMs + 3500;
-              window.dispatchEvent(
-                new CustomEvent('radio-sankt:automation-spotify-near-end', {
-                  detail: { stepIndex: st.currentStepIndex },
-                }),
-              );
-            }
-          }
-          lastSpotifySeekSyncSample = state.track.id
-            ? { trackId: state.track.id, position: state.progressMs, at: now }
-            : null;
         }
-      } catch {
-        /* transient network errors are fine; next tick will retry */
+
+        if (
+          playbackMatchesStep &&
+          st.automationStatus === 'playing' &&
+          state.isPlaying &&
+          curStep?.type === 'playlist' &&
+          curStep.spotifyPlaylistUri === state.contextUri
+        ) {
+          const stAfter = useStore.getState();
+          const remainingBlock = stAfter.stepTimeRemaining;
+          const nextOv =
+            stAfter.automationSteps[stAfter.currentStepIndex + 1]?.transitionIn === 'crossfade'
+              ? stAfter.automationSteps[stAfter.currentStepIndex + 1]?.overlapMs ?? 0
+              : 0;
+          const tailMs = AUTOMATION_SPOTIFY_NEAR_END_MS + nextOv;
+          const nowMs = Date.now();
+          if (remainingBlock <= tailMs && nowMs >= automationNearEndCooldownUntil) {
+            automationNearEndCooldownUntil = nowMs + 3500;
+            window.dispatchEvent(
+              new CustomEvent('radio-sankt:automation-spotify-near-end', {
+                detail: { stepIndex: st.currentStepIndex },
+              }),
+            );
+          }
+        }
+
+        if (
+          playbackMatchesStep &&
+          st.automationStatus === 'playing' &&
+          state.isPlaying &&
+          curStep?.type === 'track' &&
+          curStep.spotifyUri === state.track.uri
+        ) {
+          const spotifyRemaining = Math.max(0, state.track.durationMs - state.progressMs);
+          const stAfter = useStore.getState();
+          stAfter.setStepTimeRemaining(Math.min(curStep.durationMs, spotifyRemaining));
+          const nextOv =
+            stAfter.automationSteps[stAfter.currentStepIndex + 1]?.transitionIn === 'crossfade'
+              ? stAfter.automationSteps[stAfter.currentStepIndex + 1]?.overlapMs ?? 0
+              : 0;
+          const tailMs = AUTOMATION_SPOTIFY_NEAR_END_MS + nextOv;
+          const nowMs = Date.now();
+          if (spotifyRemaining <= tailMs && nowMs >= automationNearEndCooldownUntil) {
+            automationNearEndCooldownUntil = nowMs + 3500;
+            window.dispatchEvent(
+              new CustomEvent('radio-sankt:automation-spotify-near-end', {
+                detail: { stepIndex: st.currentStepIndex },
+              }),
+            );
+          }
+        }
+        lastSpotifySeekSyncSample = state.track.id
+          ? { trackId: state.track.id, position: state.progressMs, at: now }
+          : null;
       }
     };
 
@@ -558,7 +514,7 @@ export function useSpotifyPlayer() {
     try {
       await remotePrevious(devId);
     } catch {
-      /* ignore */
+      useStore.getState().addToast('Skip failed — check Spotify connection', 'error');
     }
   }, []);
 
@@ -572,7 +528,7 @@ export function useSpotifyPlayer() {
     try {
       await remoteNext(devId);
     } catch {
-      /* ignore */
+      useStore.getState().addToast('Skip failed — check Spotify connection', 'error');
     }
   }, []);
 
@@ -612,7 +568,7 @@ export function useSpotifyPlayer() {
           }
         }
       } catch {
-        /* ignore */
+        useStore.getState().addToast('Skip failed — check Spotify connection', 'error');
       }
     },
     [setPosition],

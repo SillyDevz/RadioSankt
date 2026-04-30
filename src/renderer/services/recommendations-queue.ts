@@ -7,6 +7,7 @@ import {
   remoteResumeActiveDevice,
   spotifyUriToTrackId,
 } from '@/services/spotify-api';
+import { useStore } from '@/store';
 
 const REFILL_INTERVAL_MS = 18_000;
 const BATCH_LIMIT = 18;
@@ -20,6 +21,7 @@ const queuedSeen = new Set<string>();
 let lastKnownSeedId: string | null = null;
 let consecutiveNullTicks = 0;
 let resumeAttempts = 0;
+let consecutiveTickFailures = 0;
 
 function trimSeen(): void {
   if (queuedSeen.size <= SEEN_CAP) return;
@@ -41,6 +43,7 @@ export function stopRecommendationsContinuation(): void {
   lastKnownSeedId = null;
   consecutiveNullTicks = 0;
   resumeAttempts = 0;
+  consecutiveTickFailures = 0;
 }
 
 if (typeof window !== 'undefined') {
@@ -85,9 +88,11 @@ export async function startRecommendationsContinuation(seedTrackUri: string, dev
           }
           trimSeen();
         }
+        consecutiveTickFailures = 0;
         return;
       }
 
+      consecutiveTickFailures = 0;
       consecutiveNullTicks = 0;
       lastKnownSeedId = curId;
 
@@ -121,7 +126,11 @@ export async function startRecommendationsContinuation(seedTrackUri: string, dev
       }
       trimSeen();
     } catch {
-      /* ignore; next tick */
+      consecutiveTickFailures++;
+      if (consecutiveTickFailures >= 5) {
+        useStore.getState().addToast('Recommendations queue is having trouble', 'warning');
+        consecutiveTickFailures = 0;
+      }
     }
   };
 

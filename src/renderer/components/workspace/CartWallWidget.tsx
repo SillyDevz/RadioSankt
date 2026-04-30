@@ -238,7 +238,6 @@ export default function CartWallWidget() {
         //   2) Resume playback.
         //   3) Fade the volume back up to the user's volume.
         //   4) Clear isLive only after the fade completes.
-        window.dispatchEvent(new CustomEvent('radio-sankt:prime-spotify-playback'));
         window.dispatchEvent(new CustomEvent('radio-sankt:resume-audio-context'));
 
         const devId = useStore.getState().deviceId;
@@ -252,8 +251,6 @@ export default function CartWallWidget() {
 
         if (prevAutomationStatusBeforeLive === 'playing') {
           await engine.resume({ skipGainRecovery: true });
-        } else {
-          window.dispatchEvent(new CustomEvent('radio-sankt:spotify-resume-sdk'));
         }
         window.dispatchEvent(
           new CustomEvent('radio-sankt:live-audio', { detail: { goingLive: false, fadeMs: fadeInMs } }),
@@ -286,8 +283,6 @@ export default function CartWallWidget() {
 
         if (automationStatus === 'playing') {
           await engine.pause({ skipFade: true });
-        } else {
-          window.dispatchEvent(new CustomEvent('radio-sankt:spotify-pause-sdk'));
         }
         addToast(t('workspace.cart.youAreLive', { defaultValue: 'You are LIVE' }), 'success');
       }

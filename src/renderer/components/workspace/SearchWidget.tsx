@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useStore } from '@/store';
 import {
@@ -330,7 +330,7 @@ export default function SearchWidget() {
         <div className="text-xs text-text-secondary truncate">{track.artist}</div>
       </div>
       <span className="text-xs text-text-muted tabular-nums shrink-0">{formatDuration(track.durationMs)}</span>
-      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity shrink-0">
         <Tooltip content={t('workspace.search.addToQueue', { defaultValue: 'Add to queue' })} placement="top">
           <button
             type="button"
@@ -338,10 +338,10 @@ export default function SearchWidget() {
               e.stopPropagation();
               handleAddTrackToAutomation(track);
             }}
-            className="p-1.5 rounded-md hover:bg-bg-primary text-text-secondary hover:text-text-primary transition-colors"
+            className="p-1.5 rounded-md hover:bg-bg-primary text-text-secondary hover:text-text-primary transition-colors focus-visible:opacity-100"
             aria-label={t('workspace.search.addToProgram', { defaultValue: 'Add to program' })}
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M12 5v14" />
               <path d="M5 12h14" />
             </svg>
@@ -354,10 +354,10 @@ export default function SearchWidget() {
               e.stopPropagation();
               handlePlayNow(track);
             }}
-            className="p-1.5 rounded-md hover:bg-accent/20 text-accent transition-colors"
+            className="p-1.5 rounded-md hover:bg-accent/20 text-accent transition-colors focus-visible:opacity-100"
             aria-label={t('workspace.search.playNow', { defaultValue: 'Play now' })}
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
               <polygon points="5 3 19 12 5 21 5 3" />
             </svg>
           </button>
@@ -385,7 +385,7 @@ export default function SearchWidget() {
         <div className="text-xs text-text-secondary truncate">{t('workspace.search.localAudio', { defaultValue: 'Local Audio' })}</div>
       </div>
       <span className="text-xs text-text-muted tabular-nums shrink-0">{formatDuration(jingle.durationMs)}</span>
-      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity shrink-0">
         <Tooltip content={t('workspace.search.addToQueue', { defaultValue: 'Add to queue' })} placement="top">
           <button
             type="button"
@@ -393,10 +393,10 @@ export default function SearchWidget() {
               e.stopPropagation();
               handleAddJingleToAutomation(jingle);
             }}
-            className="p-1.5 rounded-md hover:bg-bg-primary text-text-secondary hover:text-text-primary transition-colors"
+            className="p-1.5 rounded-md hover:bg-bg-primary text-text-secondary hover:text-text-primary transition-colors focus-visible:opacity-100"
             aria-label={t('workspace.search.addToProgram', { defaultValue: 'Add to program' })}
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M12 5v14" />
               <path d="M5 12h14" />
             </svg>
@@ -410,10 +410,10 @@ export default function SearchWidget() {
               const audio = AudioEngine.get();
               if (audio) await audio.playJingle(jingle.filePath);
             }}
-            className="p-1.5 rounded-md hover:bg-accent/20 text-accent transition-colors"
+            className="p-1.5 rounded-md hover:bg-accent/20 text-accent transition-colors focus-visible:opacity-100"
             aria-label={t('workspace.search.playNow', { defaultValue: 'Play now' })}
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
               <polygon points="5 3 19 12 5 21 5 3" />
             </svg>
           </button>
@@ -422,8 +422,8 @@ export default function SearchWidget() {
     </div>
   );
 
-  const filteredJingles = jingles.filter((j) => j.name.toLowerCase().includes(query.toLowerCase()));
-  const filteredAds = ads.filter((a) => a.name.toLowerCase().includes(query.toLowerCase()));
+  const filteredJingles = useMemo(() => jingles.filter((j) => j.name.toLowerCase().includes(query.toLowerCase())), [jingles, query]);
+  const filteredAds = useMemo(() => ads.filter((a) => a.name.toLowerCase().includes(query.toLowerCase())), [ads, query]);
 
   return (
     <div className="flex flex-col h-full bg-bg-surface border border-border rounded-xl overflow-hidden shadow-sm">
@@ -477,7 +477,7 @@ export default function SearchWidget() {
       {/* Search Input */}
       {(panel === 'spotify' || panel === 'jingles' || panel === 'ads') && (
         <div className="flex items-center gap-3 px-4 py-3 border-b border-border shrink-0 bg-bg-surface">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-text-muted shrink-0">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-text-muted shrink-0" aria-hidden="true">
             <circle cx="11" cy="11" r="8" />
             <path d="m21 21-4.3-4.3" />
           </svg>
@@ -485,6 +485,7 @@ export default function SearchWidget() {
             type="text"
             value={query}
             onChange={(e) => handleSearch(e.target.value)}
+            aria-label={t('workspace.search.searchLabel', { defaultValue: 'Search' })}
             placeholder={panel === 'spotify'
               ? (connected
                 ? t('workspace.search.searchSpotify', { defaultValue: 'Search Spotify...' })
@@ -622,7 +623,7 @@ export default function SearchWidget() {
                     <div className="text-xs text-text-secondary truncate">{t('workspace.search.adClip', { defaultValue: 'Ad clip' })}</div>
                   </div>
                   <span className="text-xs text-text-muted tabular-nums shrink-0">{formatDuration(ad.durationMs)}</span>
-                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
+                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity shrink-0">
                     <Tooltip content={t('workspace.search.addToQueue', { defaultValue: 'Add to queue' })} placement="top">
                       <button
                         type="button"
@@ -630,10 +631,10 @@ export default function SearchWidget() {
                           e.stopPropagation();
                           handleAddAdToAutomation(ad);
                         }}
-                        className="p-1.5 rounded-md hover:bg-bg-primary text-text-secondary hover:text-text-primary transition-colors"
+                        className="p-1.5 rounded-md hover:bg-bg-primary text-text-secondary hover:text-text-primary transition-colors focus-visible:opacity-100"
                         aria-label={t('workspace.search.addAdToProgram', { defaultValue: 'Add ad to program' })}
                       >
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                           <path d="M12 5v14" />
                           <path d="M5 12h14" />
                         </svg>

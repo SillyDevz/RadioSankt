@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef, lazy, Suspense } from 'react';
-import { useStore } from '@/store';
+import { useStore, WidgetLayout } from '@/store';
 import type { Page, CoachMarkId, AccentColor, ThemeMode, SongTransitionMode } from '@/store';
 import { ACCENT_COLORS } from '@/store';
 import { clearSpotifyUserIdCache, getProfile } from '@/services/spotify-api';
@@ -108,7 +108,7 @@ function Layout() {
           const valid = val.filter(
             (item) => item && typeof item === 'object' && typeof item.id === 'string' && typeof item.visible === 'boolean'
           );
-          if (valid.length > 0) useStore.setState({ workspaceLayout: valid as any });
+          if (valid.length > 0) useStore.setState({ workspaceLayout: valid as WidgetLayout[] });
         }
       }),
       api.getFromStore('soundboardVolume').then((val) => {

@@ -365,28 +365,6 @@ export async function remoteResumeActiveDevice(): Promise<void> {
   await playerCommand('play', 'PUT');
 }
 
-/** Try preferred device id, then poll device from player state, then active-device resume. */
-export async function resumePlaybackBestEffort(preferredDeviceId: string | null | undefined): Promise<void> {
-  if (preferredDeviceId) {
-    try {
-      await remoteResume(preferredDeviceId);
-      return;
-    } catch {
-      /* fall through */
-    }
-  }
-  const snap = await getRemotePlaybackState();
-  if (snap?.deviceId && snap.deviceId !== preferredDeviceId) {
-    try {
-      await remoteResume(snap.deviceId);
-      return;
-    } catch {
-      /* fall through */
-    }
-  }
-  await remoteResumeActiveDevice();
-}
-
 export async function remotePause(deviceId: string): Promise<void> {
   await playerCommand('pause', 'PUT', { device_id: deviceId });
 }
@@ -410,10 +388,6 @@ let spotifyVolumeControlRejected = false;
 
 export function isSpotifyVolumeControlRejected(): boolean {
   return spotifyVolumeControlRejected;
-}
-
-export function resetSpotifyVolumeControlStatus(): void {
-  spotifyVolumeControlRejected = false;
 }
 
 /** Set volume 0-100 on the target device. Records a rejection flag when the device

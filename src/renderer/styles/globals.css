@@ -2,11 +2,6 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Electron macOS: keep nav interactive when a parent uses -webkit-app-region: drag */
-.app-region-no-drag {
-  -webkit-app-region: no-drag;
-}
-
 /* ── Dark theme (default) ──────────────────────────────────────────── */
 :root,
 [data-theme='dark'] {
@@ -68,15 +63,6 @@ button, input, a, select, textarea, label {
   background: #3a3a3a;
 }
 
-@keyframes pulse-border {
-  0%, 100% { border-color: var(--accent); box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 40%, transparent); }
-  50% { border-color: var(--accent-hover); box-shadow: 0 0 8px 2px color-mix(in srgb, var(--accent) 20%, transparent); }
-}
-
-.animate-pulse-border {
-  animation: pulse-border 2s ease-in-out infinite;
-}
-
 @keyframes fade-in {
   from { opacity: 0; }
   to { opacity: 1; }
@@ -125,7 +111,6 @@ button, input, a, select, textarea, label {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .animate-pulse-border,
   .animate-pulse-live,
   .animate-pulse,
   .animate-spin {

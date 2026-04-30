@@ -13,6 +13,9 @@ import type { AutomationStep } from '@/store';
 /** Spotify `/me/player/volume` rate-limits aggressively — throttle to ~8 calls/sec. */
 const VOLUME_RAMP_MIN_INTERVAL_MS = 120;
 
+/** Prevents concurrent ramp animations from stacking on top of each other. */
+let activeRampRaf: number | null = null;
+
 /**
  * Animate Spotify Connect device volume between two percentages over `durationMs`.
  * Used in place of Web Audio gain ramps now that audio plays through Spotify's native app.
@@ -25,6 +28,10 @@ function rampSpotifyRemoteVolume(
   toPct: number,
   durationMs: number,
 ): Promise<void> {
+  if (activeRampRaf !== null) {
+    cancelAnimationFrame(activeRampRaf);
+    activeRampRaf = null;
+  }
   return new Promise((resolve) => {
     if (durationMs <= 0) {
       void remoteSetVolumePercent(toPct, deviceId).catch(() => {});
@@ -45,13 +52,16 @@ function rampSpotifyRemoteVolume(
         void remoteSetVolumePercent(v, deviceId).catch(() => {});
       }
       if (t < 1) {
-        requestAnimationFrame(tick);
-      } else if (lastSent !== toPct) {
-        // Always land exactly on target.
-        void remoteSetVolumePercent(toPct, deviceId).catch(() => {});
+        activeRampRaf = requestAnimationFrame(tick);
+      } else {
+        activeRampRaf = null;
+        if (lastSent !== toPct) {
+          // Always land exactly on target.
+          void remoteSetVolumePercent(toPct, deviceId).catch(() => {});
+        }
       }
     };
-    requestAnimationFrame(tick);
+    activeRampRaf = requestAnimationFrame(tick);
     setTimeout(resolve, durationMs);
   });
 }
@@ -208,7 +218,6 @@ class AutomationEngine {
       this.invalidatePendingAdvance();
       this.clearCountdown();
       store.setAutomationStatus('paused');
-      window.dispatchEvent(new CustomEvent('radio-sankt:spotify-pause-sdk'));
       this.emit({ type: 'error', message: 'Playback interrupted (system sleep or network issue). Automation paused.' });
       this.scheduleAutoRecovery();
     }
@@ -636,7 +645,6 @@ class AutomationEngine {
       // If the error is connectivity/auth related, pause automation instead of rapid-skipping
       if (isConnectivityError(detail)) {
         store.setAutomationStatus('paused');
-        window.dispatchEvent(new CustomEvent('radio-sankt:spotify-pause-sdk'));
         this.scheduleAutoRecovery();
         return;
       }
@@ -958,7 +966,10 @@ class AutomationEngine {
 
       const elapsed = Date.now() - this.currentStepStartTime;
       const remaining = Math.max(durationMs - elapsed, 0);
-      st.setStepTimeRemaining(remaining);
+      const prev = st.stepTimeRemaining;
+      if (Math.abs(prev - remaining) >= 100) {
+        st.setStepTimeRemaining(remaining);
+      }
 
       if (remaining <= 0) {
         this.clearCountdown();
