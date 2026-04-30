@@ -402,7 +402,15 @@ export default function AutomationQueueWidget() {
           <div className="flex-1 flex flex-col min-h-0">
             <div className="flex-1 overflow-y-auto p-4 min-h-0 bg-bg-surface">
               <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-                <SortableContext items={steps.map((s) => s.id)} strategy={verticalListSortingStrategy}>
+                <SortableContext items={useMemo(() => {
+                  const seen = new Set<string>();
+                  return steps.filter((step) => {
+                    const isGrouped = step.type === 'track' && !!step.groupId;
+                    if (!isGrouped) return true;
+                    if (!seen.has(step.groupId!)) { seen.add(step.groupId!); return true; }
+                    return expandedGroups.has(step.groupId!);
+                  }).map((s) => s.id);
+                }, [steps, expandedGroups])} strategy={verticalListSortingStrategy}>
                   <div className="flex flex-col gap-2">
                     {steps.map((step, i) => {
                       const isGrouped = step.type === 'track' && !!step.groupId;

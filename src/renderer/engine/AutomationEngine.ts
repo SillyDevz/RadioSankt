@@ -326,7 +326,9 @@ class AutomationEngine {
       // Play inline break jingles if a break is due
       const breakPicks = this.getBreakPicksIfDue(currentIndex, cur);
       if (breakPicks.length > 0 && devId) {
+        // Pause immediately to prevent gapless bleed into next track
         await remotePause(devId).catch(() => {});
+        await remoteSetVolumePercent(this.currentVolumePct(), devId).catch(() => {});
         const breakAudio = AudioEngine.getOrInit();
         breakAudio.resumeContextIfNeeded();
         breakAudio.setVolume('B', 1);
