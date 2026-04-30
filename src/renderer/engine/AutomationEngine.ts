@@ -101,10 +101,10 @@ type Listener = (event: AutomationEvent) => void;
 const FADE_DURATION = 800;
 
 /** Fire advance when this much track/block time is left — increased for VPS latency tolerance. */
-export const AUTOMATION_SPOTIFY_NEAR_END_MS = 4000;
+export const AUTOMATION_SPOTIFY_NEAR_END_MS = 3000;
 
 /** Extra slack after our remaining estimate before forcing advance if polls stall. */
-const SPOTIFY_FALLBACK_SLACK_MS = 12_000;
+const SPOTIFY_FALLBACK_SLACK_MS = 20_000;
 
 function waitForSpotifyDeviceId(timeoutMs: number): Promise<string | null> {
   return new Promise((resolve) => {
@@ -316,7 +316,8 @@ class AutomationEngine {
             await breakAudio.playJingle(pick.filePath);
             await new Promise<void>((resolve) => {
               if (!breakAudio.isJinglePlaying()) { resolve(); return; }
-              breakAudio.onJingleEnded(() => resolve());
+              const timeout = setTimeout(() => resolve(), (pick.durationMs || 30_000) + 5_000);
+              breakAudio.onJingleEnded(() => { clearTimeout(timeout); resolve(); });
             });
           } catch { /* skip failed clip */ }
         }
@@ -463,6 +464,7 @@ class AutomationEngine {
 
       // Start from current step index (or 0)
       store.setAutomationStatus('playing');
+      this.startSilenceWatchdog();
       await this.executeStep(store.currentStepIndex);
     });
   }
@@ -532,9 +534,12 @@ class AutomationEngine {
 
     if (index >= steps.length) {
       this.emit({ type: 'finished' });
-      // Let Spotify continue from its own queue/radio; watchdog loops back if silence detected
+      // Let Spotify continue from its own queue/radio; global watchdog loops back if silence detected
       if (steps.length > 0) {
-        this.startSilenceWatchdog(steps);
+        this.invalidatePendingAdvance();
+        this.clearCountdown();
+        store.setAutomationStatus('stopped');
+        store.setIsPlaying(true);
         return;
       }
       this.stopInternal();
@@ -1060,18 +1065,22 @@ class AutomationEngine {
     }
   }
 
-  private startSilenceWatchdog(steps: AutomationStep[]): void {
+  private startSilenceWatchdog(): void {
     this.clearSilenceWatchdog();
-    this.invalidatePendingAdvance();
-    this.clearCountdown();
-
-    const store = this.getStore();
-    store.setAutomationStatus('stopped');
-    store.setIsPlaying(true);
-
     let silentTicks = 0;
 
     this.silenceWatchdogTimer = setInterval(async () => {
+      const store = this.getStore();
+      const status = store.automationStatus;
+      // Only act when automation expects music to be playing
+      if (status !== 'playing' && status !== 'stopped') return;
+      // Don't interfere during local audio steps (jingle/ad)
+      const curStep = store.automationSteps[store.currentStepIndex];
+      if (curStep && (curStep.type === 'jingle' || curStep.type === 'ad')) {
+        silentTicks = 0;
+        return;
+      }
+
       try {
         const state = await getRemotePlaybackState();
         if (state?.isPlaying) {
@@ -1080,13 +1089,21 @@ class AutomationEngine {
         }
         silentTicks++;
         if (silentTicks >= 2) {
-          this.clearSilenceWatchdog();
-          this.emit({ type: 'error', message: 'Silence detected — looping from the start.' });
-          store.setAutomationStatus('playing');
-          await this.executeStep(0);
+          silentTicks = 0;
+          this.emit({ type: 'error', message: 'Silence detected — restarting playback.' });
+          if (status === 'stopped') {
+            // Queue ended, Spotify stopped — loop from start
+            store.setAutomationStatus('playing');
+            await this.executeStep(0);
+          } else if (status === 'playing' && curStep?.type === 'track') {
+            // Mid-automation stall — re-execute current step
+            this.forceNextPlayback = true;
+            this.preloadedNextUri = null;
+            await this.executeStep(store.currentStepIndex);
+          }
         }
       } catch {
-        // Network error — don't count as silence, just retry next tick
+        // Network error — don't count as silence
       }
     }, 5_000);
   }
