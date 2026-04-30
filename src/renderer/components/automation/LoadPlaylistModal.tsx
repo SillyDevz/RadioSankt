@@ -45,9 +45,51 @@ export default function LoadPlaylistModal() {
         if (s.type === 'ad') return adIds.has(s.adId);
         return true;
       });
+
+      // Migrate legacy playlist steps into expanded track steps
+      const { getPlaylistTracks, spotifyUriToPlaylistId } = await import('@/services/spotify-api');
+      const migrated: AutomationStep[] = [];
+      for (const step of validSteps) {
+        if (step.type !== 'playlist') {
+          migrated.push(step);
+          continue;
+        }
+        const pid = spotifyUriToPlaylistId(step.spotifyPlaylistUri);
+        if (!pid) { migrated.push(step); continue; }
+        try {
+          const tracks = await getPlaylistTracks(pid);
+          if (tracks.length === 0) { migrated.push(step); continue; }
+          const groupId = crypto.randomUUID();
+          for (let i = 0; i < tracks.length; i++) {
+            migrated.push({
+              id: crypto.randomUUID(),
+              type: 'track',
+              spotifyUri: tracks[i].uri,
+              name: tracks[i].name,
+              artist: tracks[i].artist,
+              albumArt: tracks[i].albumArt,
+              durationMs: tracks[i].durationMs,
+              groupId,
+              groupContextUri: step.spotifyPlaylistUri,
+              groupName: step.name,
+              groupArt: step.albumArt,
+              groupIndex: i,
+              groupTotal: tracks.length,
+              transitionIn: step.transitionIn,
+              transitionOut: step.transitionOut,
+              overlapMs: step.overlapMs,
+              duckMusic: step.duckMusic,
+              duckLevel: step.duckLevel,
+            });
+          }
+        } catch {
+          migrated.push(step);
+        }
+      }
+
       const { default: AutomationEngine } = await import('@/engine/AutomationEngine');
       AutomationEngine.getInstance().stop();
-      setAutomationSteps(validSteps);
+      setAutomationSteps(migrated);
       setCurrentPlaylistId(row.id);
       setCurrentPlaylistName(row.name);
       setSelectedStepIndex(null);

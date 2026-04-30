@@ -277,8 +277,7 @@ export function useSpotifyPlayer() {
           !state.isPlaying &&
           stBefore.isPlaying &&
           (stBefore.automationStatus === 'playing') &&
-          !isLocalAudioStep &&
-          !engine.isPlayingIntraPlaylistBreak
+          !isLocalAudioStep
         ) {
           engine.pause();
         }

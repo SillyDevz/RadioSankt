@@ -296,20 +296,27 @@ export default function SearchWidget() {
 
   const handleAddPlaylistStep = (summary: SpotifyPlaylistSummary, tracks: SpotifySearchResult[]) => {
     if (tracks.length === 0) return;
-    const durationMs = tracks.reduce((s, t) => s + t.durationMs, 0);
-    const { addAutomationStep } = useStore.getState();
-    addAutomationStep({
+    const groupId = crypto.randomUUID();
+    const { addAutomationSteps } = useStore.getState();
+    const steps = tracks.map((track, i) => ({
       id: crypto.randomUUID(),
-      type: 'playlist',
-      spotifyPlaylistUri: summary.uri,
-      name: summary.name,
-      albumArt: summary.imageUrl,
-      durationMs,
-      trackCount: tracks.length,
+      type: 'track' as const,
+      spotifyUri: track.uri,
+      name: track.name,
+      artist: track.artist,
+      albumArt: track.albumArt,
+      durationMs: track.durationMs,
+      groupId,
+      groupContextUri: summary.uri,
+      groupName: summary.name,
+      groupArt: summary.imageUrl,
+      groupIndex: i,
+      groupTotal: tracks.length,
       ...buildSongStepTransition(songTransitionMode, crossfadeMs),
       duckMusic: false,
       duckLevel: 0.2,
-    });
+    }));
+    addAutomationSteps(steps);
     addToast(t('workspace.search.addedPlaylistBlock', { name: summary.name, defaultValue: 'Added playlist "{{name}}" as one program step' }), 'success');
   };
 

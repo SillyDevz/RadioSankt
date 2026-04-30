@@ -623,6 +623,25 @@ export async function playPlaylistContext(contextUri: string, deviceId: string, 
   apiFetch('/me/player/shuffle?state=false', { method: 'PUT' }).catch(() => {});
 }
 
+export async function playPlaylistContextAtOffset(contextUri: string, position: number, deviceId: string): Promise<void> {
+  try {
+    await transferPlaybackToDevice(deviceId);
+  } catch {
+    /* ignored */
+  }
+  const res = await apiFetch(`/me/player/play?device_id=${encodeURIComponent(deviceId)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ context_uri: contextUri, offset: { position } }),
+  });
+  if (!res.ok && res.status !== 204) {
+    const body = await res.text();
+    throw new Error(`Play failed ${res.status}: ${body}`);
+  }
+  apiFetch('/me/player/repeat?state=off', { method: 'PUT' }).catch(() => {});
+  apiFetch('/me/player/shuffle?state=false', { method: 'PUT' }).catch(() => {});
+}
+
 export interface SpotifyPlaylistSummary {
   id: string;
   uri: string;

@@ -68,7 +68,20 @@ export function buildSongStepTransition(
 }
 
 export type AutomationStep = (
-  | { type: 'track'; spotifyUri: string; name: string; artist: string; albumArt: string; durationMs: number }
+  | {
+      type: 'track';
+      spotifyUri: string;
+      name: string;
+      artist: string;
+      albumArt: string;
+      durationMs: number;
+      groupId?: string;
+      groupContextUri?: string;
+      groupName?: string;
+      groupArt?: string;
+      groupIndex?: number;
+      groupTotal?: number;
+    }
   | {
       type: 'playlist';
       spotifyPlaylistUri: string;
@@ -195,6 +208,7 @@ interface AutomationSlice {
   // Actions
   setAutomationSteps: (steps: AutomationStep[]) => void;
   addAutomationStep: (step: AutomationStep) => void;
+  addAutomationSteps: (steps: AutomationStep[]) => void;
   removeAutomationStep: (id: string) => void;
   clearAutomationSteps: () => void;
   reorderAutomationSteps: (fromIndex: number, toIndex: number) => void;
@@ -400,6 +414,7 @@ const createAutomationSlice: StateCreator<StoreState, [], [], AutomationSlice> =
         : s.selectedStepIndex,
     })),
   addAutomationStep: (step) => set((s) => ({ automationSteps: [...s.automationSteps, step] })),
+  addAutomationSteps: (steps) => set((s) => ({ automationSteps: [...s.automationSteps, ...steps] })),
   removeAutomationStep: (id) =>
     set((s) => {
       const removedIndex = s.automationSteps.findIndex((st) => st.id === id);

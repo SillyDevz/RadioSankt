@@ -4,12 +4,9 @@ import {
   getPlaylistTracks,
   getRemotePlaybackState,
   playTrack,
-  playPlaylistContext,
+  playPlaylistContextAtOffset,
   remotePause,
-  remoteNext,
-  remotePrevious,
   remoteSetVolumePercent,
-  resumePlaybackBestEffort,
   spotifyUriToPlaylistId,
 } from '@/services/spotify-api';
 import { startRecommendationsContinuation, stopRecommendationsContinuation } from '@/services/recommendations-queue';
@@ -146,17 +143,6 @@ class AutomationEngine {
   private transportLock: Promise<void> = Promise.resolve();
   /** Single-flight guard so primary timeout + near-end poll cannot double-advance the same step. */
   private stepTransitionInFlight = false;
-  /** Running elapsed credit inside the current playlist block (completed prior tracks). */
-  private playlistPriorConsumedMs = 0;
-  private playlistProgressLastUri: string | null = null;
-  private playlistProgressLastPositionMs = 0;
-  private playlistProgressLastTrackDurationMs = 0;
-  /** How many intra-playlist track advances we've already credited to songsSinceBreak for the current playlist step.
-   *  Subtracted from the whole-block credit when the block ends so we don't double count. */
-  private intraPlaylistCreditedForStepId: string | null = null;
-  private intraPlaylistCreditedCount = 0;
-  /** Serializes intra-playlist break insertions so a rapid succession of track-change events doesn't race. */
-  private intraPlaylistBreakInFlight = false;
   /** Auto-recovery watchdog: retries resume after connectivity-related pauses. */
   private autoRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
   private autoRecoveryAttempts = 0;
@@ -173,8 +159,6 @@ class AutomationEngine {
     if (typeof window === 'undefined') return;
     window.addEventListener('radio-sankt:spotify-seek-sync', this.onSpotifySeekSync);
     document.addEventListener('visibilitychange', this.onVisibilityChange);
-    window.addEventListener('radio-sankt:spotify-playlist-track-changed', this.onPlaylistTrackChanged);
-    window.addEventListener('radio-sankt:automation-playlist-progress', this.onAutomationPlaylistProgress);
     window.addEventListener('radio-sankt:automation-spotify-near-end', this.onSpotifyNearEnd);
   }
 
@@ -184,27 +168,9 @@ class AutomationEngine {
     if (store.automationStatus !== 'playing') return;
     if (typeof d?.stepIndex !== 'number' || d.stepIndex !== store.currentStepIndex) return;
     const step = store.automationSteps[store.currentStepIndex];
-    if (!step || (step.type !== 'track' && step.type !== 'playlist')) return;
+    if (!step || step.type !== 'track') return;
     const callerGen = this.advanceScheduleGen;
     void this.runStepTransition(step, store.currentStepIndex, callerGen);
-  };
-
-  private onAutomationPlaylistProgress = (e: Event) => {
-    const d = (
-      e as CustomEvent<{
-        stepId?: string;
-        trackUri?: string;
-        progressMs?: number;
-        trackDurationMs?: number;
-      }>
-    ).detail;
-    if (!d?.stepId || !d.trackUri || typeof d.progressMs !== 'number') return;
-    this.syncPlaylistBlockFromPlayback(
-      d.stepId,
-      d.trackUri,
-      d.progressMs,
-      typeof d.trackDurationMs === 'number' ? d.trackDurationMs : 0,
-    );
   };
 
   private onSpotifySeekSync = (e: Event) => {
@@ -256,206 +222,31 @@ class AutomationEngine {
     this.autoRecoveryAttempts = 0;
   }
 
-  private onPlaylistTrackChanged = (e: Event) => {
-    const d = (e as CustomEvent<{
-      stepId?: string;
-      previousTrackUri?: string;
-      newTrackUri?: string;
-      newTrackDurationMs?: number;
-    }>).detail;
-    if (!d?.stepId || !d.newTrackUri) return;
-    void this.handlePlaylistTrackChanged(d.stepId, d.newTrackUri);
-  };
-
-  /** A new song just started inside an active playlist step. Credit the finished one to
-   *  the break counter, and if a break is due, pause Spotify, run the jingles, and resume. */
-  private async handlePlaylistTrackChanged(stepId: string, newTrackUri: string): Promise<void> {
-    if (this.intraPlaylistBreakInFlight) return;
-    const store = this.getStore();
-    if (store.automationStatus !== 'playing') return;
-
-    const steps = this.getSteps();
-    const idx = store.currentStepIndex;
-    const step = steps[idx];
-    if (!step || step.type !== 'playlist' || step.id !== stepId) return;
-
-    // Track one more completed song within this playlist block.
-    if (this.intraPlaylistCreditedForStepId !== stepId) {
-      this.intraPlaylistCreditedForStepId = stepId;
-      this.intraPlaylistCreditedCount = 0;
-    }
-    this.intraPlaylistCreditedCount += 1;
-    this.songsSinceBreak += 1;
-
-    const rule = store.breakRules.find((r) => r.enabled);
-    const everySongs = rule ? Math.max(1, Math.floor(rule.everySongs)) : Infinity;
-    if (!rule || this.songsSinceBreak < everySongs) return;
-
-    // Time to insert a break between songs of the playlist.
-    const picks = this.buildBreakPicks(rule);
-    if (picks.length === 0) {
-      // Avoid re-evaluating every track forever while the pool is misconfigured.
-      this.songsSinceBreak = 0;
-      return;
-    }
-
-    this.intraPlaylistBreakInFlight = true;
-    this.songsSinceBreak = 0;
-
-    try {
-      this.invalidatePendingAdvance();
-      this.clearCountdown();
-
-      const deviceId = store.deviceId;
-      if (deviceId) {
-        try {
-          await remotePause(deviceId);
-        } catch {
-          /* ignore — resume will retry the same device */
-        }
-      }
-
-      const audio = AudioEngine.getOrInit();
-      audio.resumeContextIfNeeded();
-      audio.setVolume('B', 1);
-
-      // Play jingles sequentially on the local audio channel.
-      // Register onJingleEnded only after playJingle starts — playJingle calls stopJingle() first,
-      // which clears any handler registered beforehand (otherwise we never resume Spotify).
-      for (const pick of picks) {
-        if (pick.type !== 'jingle' && pick.type !== 'ad') continue;
-        try {
-          await audio.playJingle(pick.filePath);
-        } catch {
-          /* skip failed clip */
-        }
-        await new Promise<void>((resolve) => {
-          if (!audio.isJinglePlaying()) {
-            resolve();
-            return;
-          }
-          audio.onJingleEnded(() => resolve());
-        });
-      }
-
-      // Re-check: user may have stopped automation while jingles played.
-      const nowStore = this.getStore();
-      if (nowStore.automationStatus !== 'playing') return;
-
-      // Resume playback on Spotify (prefer cached device; fall back if id went stale).
-      try {
-        await resumePlaybackBestEffort(deviceId);
-      } catch {
-        window.dispatchEvent(new CustomEvent('radio-sankt:spotify-resume'));
-      }
-
-      // Reschedule using remaining block time — do not reset to full playlist duration or the
-      // advance timer can fire immediately when summed durationMs is shorter than real playback.
-      const newStore = this.getStore();
-      const stepsNow = newStore.automationSteps;
-      const stillIdx = newStore.currentStepIndex;
-      const stillStep = stepsNow[stillIdx];
-      if (stillStep && stillStep.type === 'playlist' && stillStep.id === stepId) {
-        const dur = stillStep.durationMs;
-        let remainingMs = newStore.stepTimeRemaining;
-        if (remainingMs <= 0 || remainingMs > dur + 2000) {
-          remainingMs = dur;
-        } else {
-          remainingMs = Math.min(dur, Math.max(0, remainingMs));
-        }
-        const elapsedIntoBlock = dur - remainingMs;
-        this.currentStepStartTime = Date.now() - elapsedIntoBlock;
-        this.startCountdown(stillStep, remainingMs);
-        this.scheduleSpotifyStepAdvance(stillStep, stillIdx);
-      }
-      // Silence the unused-param warning; newTrackUri is only used by the poller.
-      void newTrackUri;
-    } finally {
-      this.intraPlaylistBreakInFlight = false;
-    }
-  }
 
 
   /** After user seek, realign wall-clock advance timer + countdown with Spotify position. */
-  private handleSpotifySeekSync(positionMs: number, playbackUri?: string, contextUri?: string): void {
+  private handleSpotifySeekSync(positionMs: number, playbackUri?: string, _contextUri?: string): void {
     const store = this.getStore();
     if (store.automationStatus !== 'playing' && store.automationStatus !== 'paused') return;
 
     const idx = store.currentStepIndex;
     const steps = store.automationSteps;
     const step = steps[idx];
-    if (!step || (step.type !== 'track' && step.type !== 'playlist')) return;
+    if (!step || step.type !== 'track') return;
 
-    if (step.type === 'track') {
-      if (!playbackUri || playbackUri !== step.spotifyUri) return;
-      const durationMs = step.durationMs;
-      if (!durationMs) return;
+    if (!playbackUri || playbackUri !== step.spotifyUri) return;
+    const durationMs = step.durationMs;
+    if (!durationMs) return;
 
-      const pos = Math.min(Math.max(0, Math.round(positionMs)), durationMs);
-      this.currentStepStartTime = Date.now() - pos;
-      store.setStepTimeRemaining(Math.max(0, durationMs - pos));
-
-      if (store.automationStatus === 'playing') {
-        const remaining = Math.max(0, durationMs - Math.min(Math.max(0, Math.round(positionMs)), durationMs));
-        this.startCountdown(step, remaining);
-        this.scheduleSpotifyStepAdvance(step, idx);
-      }
-      return;
-    }
-
-    // Playlist block: align block countdown + timers from current track position.
-    if (!contextUri || contextUri !== step.spotifyPlaylistUri || !playbackUri) return;
-    const trackDur = store.duration > 0 ? store.duration : 0;
-    this.syncPlaylistBlockFromPlayback(step.id, playbackUri, Math.round(positionMs), trackDur);
-  }
-
-  /** Called from Spotify poll while a playlist automation step is active. */
-  private syncPlaylistBlockFromPlayback(
-    stepId: string,
-    trackUri: string,
-    progressMs: number,
-    trackDurationMs: number,
-  ): void {
-    const store = this.getStore();
-    if (store.automationStatus !== 'playing' && store.automationStatus !== 'paused') return;
-
-    const idx = store.currentStepIndex;
-    const steps = store.automationSteps;
-    const step = steps[idx];
-    if (!step || step.type !== 'playlist' || step.id !== stepId) return;
-
-    const blockDur = step.durationMs;
-    if (!blockDur) return;
-
-    const pos = Math.max(0, Math.round(progressMs));
-    if (this.playlistProgressLastUri !== null && trackUri !== this.playlistProgressLastUri) {
-      const credited =
-        this.playlistProgressLastTrackDurationMs > 0
-          ? this.playlistProgressLastTrackDurationMs
-          : this.playlistProgressLastPositionMs;
-      this.playlistPriorConsumedMs += Math.min(Math.max(0, credited), Math.max(0, blockDur - this.playlistPriorConsumedMs));
-    }
-    this.playlistProgressLastUri = trackUri;
-    this.playlistProgressLastPositionMs = pos;
-    this.playlistProgressLastTrackDurationMs =
-      trackDurationMs > 0 ? trackDurationMs : this.playlistProgressLastTrackDurationMs;
-
-    const elapsedIntoBlock = Math.min(blockDur, this.playlistPriorConsumedMs + pos);
-    const remainingMs = Math.max(0, blockDur - elapsedIntoBlock);
-    store.setStepTimeRemaining(remainingMs);
-    this.currentStepStartTime = Date.now() - (blockDur - remainingMs);
+    const pos = Math.min(Math.max(0, Math.round(positionMs)), durationMs);
+    this.currentStepStartTime = Date.now() - pos;
+    store.setStepTimeRemaining(Math.max(0, durationMs - pos));
 
     if (store.automationStatus === 'playing') {
-      this.startCountdown(step, remainingMs);
+      const remaining = Math.max(0, durationMs - Math.min(Math.max(0, Math.round(positionMs)), durationMs));
+      this.startCountdown(step, remaining);
       this.scheduleSpotifyStepAdvance(step, idx);
     }
-  }
-
-  private resetPlaylistProgressState(): void {
-    this.playlistPriorConsumedMs = 0;
-    this.playlistProgressLastUri = null;
-    this.playlistProgressLastPositionMs = 0;
-    this.playlistProgressLastTrackDurationMs = 0;
   }
 
   /** Fade/spotify ramp where configured, insert breaks, then load next step. Single-flight per advance generation. */
@@ -487,19 +278,19 @@ class AutomationEngine {
       const skipFadeForRec =
         !nextMeta &&
         store.continuePlaylistRecommendations &&
-        (cur.type === 'playlist' || cur.type === 'track');
+        cur.type === 'track';
 
       if (cur.transitionOut === 'fadeOut' && !skipFadeForRec) {
         if (jingleLike(cur)) {
           if (audio) await audio.fadeOut('B', FADE_DURATION);
-        } else if (devId && (cur.type === 'track' || cur.type === 'playlist')) {
+        } else if (devId && cur.type === 'track') {
           await rampSpotifyRemoteVolume(devId, volumeToPercent(store.volume), 0, FADE_DURATION);
         }
       }
       if (nextMeta?.transitionIn === 'crossfade') {
         if (jingleLike(cur)) {
           if (audio) await audio.fadeOut('B', FADE_DURATION);
-        } else if (devId && (cur.type === 'track' || cur.type === 'playlist')) {
+        } else if (devId && cur.type === 'track') {
           await rampSpotifyRemoteVolume(devId, volumeToPercent(store.volume), 0, FADE_DURATION);
         }
       }
@@ -526,7 +317,7 @@ class AutomationEngine {
    * Spotify steps: advance from poll (`automation-spotify-near-end`) when possible;
    * fallback fires after remaining block/song time + slack if the API goes quiet.
    */
-  private scheduleSpotifyStepAdvance(step: AutomationStep & { type: 'track' | 'playlist' }, currentIndex: number): void {
+  private scheduleSpotifyStepAdvance(step: AutomationStep & { type: 'track' }, currentIndex: number): void {
     const store = this.getStore();
     if (store.automationStatus !== 'playing') return;
 
@@ -542,7 +333,7 @@ class AutomationEngine {
       const st = this.getStore();
       const live = st.automationSteps[currentIndex];
       if (!live || live.id !== step.id || st.currentStepIndex !== currentIndex) return;
-      if (live.type !== 'track' && live.type !== 'playlist') return;
+      if (live.type !== 'track') return;
       void this.runStepTransition(live, currentIndex, advanceGen);
     }, fallbackMs);
   }
@@ -621,15 +412,12 @@ class AutomationEngine {
     this.invalidatePendingAdvance();
     this.clearCountdown();
     AudioEngine.get()?.stopJingle();
-    this.resetPlaylistProgressState();
-    this.intraPlaylistCreditedForStepId = null;
-    this.intraPlaylistCreditedCount = 0;
   }
 
-  /** Spotify/playlist steps contribute this much to `songsSinceBreak` when skipping back. */
+  /** Spotify track steps contribute 1 to `songsSinceBreak` when skipping back. */
   private breakProgressCreditForStep(step: AutomationStep | undefined): number {
-    if (!step || (step.type !== 'track' && step.type !== 'playlist')) return 0;
-    return step.type === 'playlist' ? Math.max(1, step.trackCount) : 1;
+    if (!step || step.type !== 'track') return 0;
+    return 1;
   }
 
   async play(): Promise<void> {
@@ -646,8 +434,6 @@ class AutomationEngine {
         stopRecommendationsContinuation();
         this.breakRecentKeys = [];
         this.songsSinceBreak = 0;
-        this.intraPlaylistCreditedForStepId = null;
-        this.intraPlaylistCreditedCount = 0;
       }
 
       // Start from current step index (or 0)
@@ -681,17 +467,6 @@ class AutomationEngine {
 
       const finishingStep = stepsBefore[from];
 
-      // Playlist block: skip to next track within the block, not the next step
-      if (finishingStep.type === 'playlist' && store.deviceId) {
-        const consumed = this.intraPlaylistCreditedForStepId === finishingStep.id
-          ? this.intraPlaylistCreditedCount + 1
-          : 1;
-        if (consumed < finishingStep.trackCount) {
-          await remoteNext(store.deviceId);
-          return;
-        }
-      }
-
       this.clearTransportForJump();
 
       const nextAfterBreak = this.maybeInsertBreakAfter(from, finishingStep);
@@ -717,12 +492,6 @@ class AutomationEngine {
       const from = store.currentStepIndex;
       const cur = steps[from];
 
-      // Playlist block: skip to previous track within the block
-      if (cur.type === 'playlist' && store.deviceId) {
-        await remotePrevious(store.deviceId);
-        return;
-      }
-
       const dec = this.breakProgressCreditForStep(cur);
       if (dec > 0) {
         this.songsSinceBreak = Math.max(0, this.songsSinceBreak - dec);
@@ -742,7 +511,7 @@ class AutomationEngine {
 
     if (index >= steps.length) {
       this.emit({ type: 'finished' });
-      const lastMusicStep = [...steps].reverse().find((s) => s.type === 'playlist' || s.type === 'track');
+      const lastMusicStep = [...steps].reverse().find((s) => s.type === 'track');
       if (store.deviceId && lastMusicStep) {
         try {
           const fallbackSeed = await resolveRecommendationSeedFromPrevStep(lastMusicStep);
@@ -793,18 +562,6 @@ class AutomationEngine {
       });
       store.setDuration(step.durationMs);
       store.setPosition(0);
-    } else if (step.type === 'playlist') {
-      store.setCurrentTrack({
-        id: step.spotifyPlaylistUri,
-        title: step.name,
-        artist: `Playlist · ${step.trackCount} tracks`,
-        album: '',
-        albumArt: step.albumArt,
-        duration: step.durationMs,
-        uri: step.spotifyPlaylistUri,
-      });
-      store.setDuration(step.durationMs);
-      store.setPosition(0);
     } else if (step.type === 'jingle' || step.type === 'ad') {
       store.setCurrentTrack({
         id: String(step.type === 'jingle' ? step.jingleId : step.adId),
@@ -822,7 +579,7 @@ class AutomationEngine {
       if (step.type === 'track') {
         await this.playTrackStep(step);
       } else if (step.type === 'playlist') {
-        await this.playPlaylistStep(step);
+        throw new Error('Legacy playlist steps must be migrated to expanded tracks');
       } else if (step.type === 'jingle' || step.type === 'ad') {
         this.armAutomationJingleEnded(step, index, this.advanceScheduleGen, this.getStore().deviceId);
         await this.playLocalAudioStep(step);
@@ -834,7 +591,7 @@ class AutomationEngine {
         if (step.type === 'jingle' || step.type === 'ad') {
           const audio = AudioEngine.get();
           if (audio) await audio.fadeIn('B', FADE_DURATION);
-        } else if (step.type === 'track' || step.type === 'playlist') {
+        } else if (step.type === 'track') {
           const devId = this.getStore().deviceId;
           if (devId) {
             await rampSpotifyRemoteVolume(devId, 0, volumeToPercent(this.getStore().volume), FADE_DURATION);
@@ -846,10 +603,7 @@ class AutomationEngine {
 
       this.invalidatePendingAdvance();
 
-      if (step.type === 'track' || step.type === 'playlist') {
-        if (step.type === 'playlist') {
-          this.resetPlaylistProgressState();
-        }
+      if (step.type === 'track') {
         this.currentStepStartTime = Date.now();
         this.startCountdown(step);
         this.scheduleSpotifyStepAdvance(step, index);
@@ -920,21 +674,15 @@ class AutomationEngine {
       await remoteSetVolumePercent(volumeToPercent(store.volume), deviceId).catch(() => {});
     }
 
-    await playTrack(step.spotifyUri, deviceId);
-  }
-
-  private async playPlaylistStep(step: AutomationStep & { type: 'playlist' }): Promise<void> {
-    window.dispatchEvent(new CustomEvent('radio-sankt:resume-audio-context'));
-    const deviceId = await this.ensureSpotifyDevice();
-    const store = this.getStore();
-
-    if (step.transitionIn === 'fadeIn') {
-      await remoteSetVolumePercent(0, deviceId).catch(() => {});
+    if (step.groupId && step.groupContextUri) {
+      const prevStep = store.automationSteps[store.currentStepIndex - 1];
+      const sameGroup = prevStep?.type === 'track' && prevStep.groupId === step.groupId;
+      if (!sameGroup) {
+        await playPlaylistContextAtOffset(step.groupContextUri, step.groupIndex ?? 0, deviceId);
+      }
     } else {
-      await remoteSetVolumePercent(volumeToPercent(store.volume), deviceId).catch(() => {});
+      await playTrack(step.spotifyUri, deviceId);
     }
-
-    await playPlaylistContext(step.spotifyPlaylistUri, deviceId);
   }
 
   private async playLocalAudioStep(step: AutomationStep & { type: 'jingle' | 'ad' }): Promise<void> {
@@ -1000,10 +748,6 @@ class AutomationEngine {
       AutomationEngine.instance = new AutomationEngine();
     }
     return AutomationEngine.instance;
-  }
-
-  get isPlayingIntraPlaylistBreak(): boolean {
-    return this.intraPlaylistBreakInFlight;
   }
 
   private handlePauseStep(step: AutomationStep): void {
@@ -1076,7 +820,7 @@ class AutomationEngine {
     this.currentStepStartTime = Date.now() - elapsedMs;
     this.startCountdown(step, remainingMs);
 
-    if (step.type === 'track' || step.type === 'playlist') {
+    if (step.type === 'track') {
       this.scheduleSpotifyStepAdvance(step, index);
     }
   }
@@ -1171,25 +915,9 @@ class AutomationEngine {
   }
 
   private maybeInsertBreakAfter(currentIndex: number, step: AutomationStep): number {
-    if (step.type !== 'track' && step.type !== 'playlist') return currentIndex + 1;
+    if (step.type !== 'track') return currentIndex + 1;
 
-    // For a playlist step, songs that already triggered intra-block breaks were
-    // credited in handlePlaylistTrackChanged; subtract them so we don't double count.
-    let stepCredit = step.type === 'playlist' ? Math.max(1, step.trackCount) : 1;
-    if (
-      step.type === 'playlist' &&
-      this.intraPlaylistCreditedForStepId === step.id &&
-      this.intraPlaylistCreditedCount > 0
-    ) {
-      stepCredit = Math.max(0, stepCredit - this.intraPlaylistCreditedCount);
-    }
-    this.songsSinceBreak += stepCredit;
-
-    // Clear the intra-playlist credit bookkeeping once the block ends.
-    if (step.type === 'playlist' && this.intraPlaylistCreditedForStepId === step.id) {
-      this.intraPlaylistCreditedForStepId = null;
-      this.intraPlaylistCreditedCount = 0;
-    }
+    this.songsSinceBreak += 1;
 
     const store = this.getStore();
     const rule = store.breakRules.find((r) => r.enabled);
@@ -1243,7 +971,7 @@ class AutomationEngine {
     this.countdownTimer = setInterval(() => {
       const st = useStore.getState();
       const cur = st.automationSteps[st.currentStepIndex];
-      const spotifyBacked = cur && (cur.type === 'track' || cur.type === 'playlist');
+      const spotifyBacked = cur && cur.type === 'track';
 
       if (st.automationStatus !== 'playing') {
         this.countdownHaltStartedAt = null;
@@ -1323,9 +1051,6 @@ class AutomationEngine {
     this.clearCountdown();
     this.breakRecentKeys = [];
     this.songsSinceBreak = 0;
-    this.intraPlaylistCreditedForStepId = null;
-    this.intraPlaylistCreditedCount = 0;
-    this.intraPlaylistBreakInFlight = false;
 
     AudioEngine.get()?.stopJingle();
 
@@ -1343,9 +1068,6 @@ class AutomationEngine {
     this.clearCountdown();
     this.breakRecentKeys = [];
     this.songsSinceBreak = 0;
-    this.intraPlaylistCreditedForStepId = null;
-    this.intraPlaylistCreditedCount = 0;
-    this.intraPlaylistBreakInFlight = false;
 
     const audio = AudioEngine.get();
     if (audio) {

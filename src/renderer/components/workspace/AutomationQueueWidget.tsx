@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   DndContext,
@@ -284,6 +284,7 @@ export default function AutomationQueueWidget() {
   const removeAutomationStep = useStore((s) => s.removeAutomationStep);
   const clearAutomationSteps = useStore((s) => s.clearAutomationSteps);
   const setSelectedStepIndex = useStore((s) => s.setSelectedStepIndex);
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
@@ -409,20 +410,55 @@ export default function AutomationQueueWidget() {
               <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
                 <SortableContext items={steps.map((s) => s.id)} strategy={verticalListSortingStrategy}>
                   <div className="flex flex-col gap-2">
-                    {steps.map((step, i) => (
-                      <StepCard
-                        key={step.id}
-                        step={step}
-                        isPlaying={automationStatus === 'playing' && currentStepIndex === i}
-                        isSelected={selectedStepIndex === i}
-                        onSelect={() => setSelectedStepIndex(i)}
-                        onDelete={() => removeAutomationStep(step.id)}
-                        onPlayFromHere={() => {
-                          setSelectedStepIndex(i);
-                          void engine.playFromStep(i);
-                        }}
-                      />
-                    ))}
+                    {steps.map((step, i) => {
+                      const isGrouped = step.type === 'track' && !!step.groupId;
+                      const isFirstInGroup = isGrouped && (i === 0 || steps[i - 1]?.type !== 'track' || (steps[i - 1] as any).groupId !== step.groupId);
+                      const isCollapsed = isGrouped && !expandedGroups.has(step.groupId!);
+
+                      if (isGrouped && !isFirstInGroup && isCollapsed) return null;
+
+                      const groupPlayingIndex = isFirstInGroup ? steps.findIndex((s, idx) => idx >= i && s.type === 'track' && (s as any).groupId === step.groupId && idx === currentStepIndex) : -1;
+
+                      return (
+                        <React.Fragment key={step.id}>
+                          {isFirstInGroup && (
+                            <div
+                              className={`flex items-center gap-3 px-3 py-2 rounded-lg cursor-pointer select-none transition-colors ${groupPlayingIndex >= 0 ? 'bg-accent/10 border border-accent/30' : 'bg-bg-elevated/50 border border-border/50 hover:bg-bg-elevated'}`}
+                              onClick={() => {
+                                setExpandedGroups((prev) => {
+                                  const next = new Set(prev);
+                                  if (next.has(step.groupId!)) next.delete(step.groupId!);
+                                  else next.add(step.groupId!);
+                                  return next;
+                                });
+                              }}
+                            >
+                              <img src={step.groupArt || step.albumArt} alt="" className="w-8 h-8 rounded object-cover shrink-0" />
+                              <div className="flex-1 min-w-0">
+                                <div className="text-sm font-medium text-text-primary truncate">{step.groupName || 'Playlist'}</div>
+                                <div className="text-xs text-text-secondary">{step.groupTotal} tracks</div>
+                              </div>
+                              <span className="text-xs text-text-muted">{isCollapsed ? '▶' : '▼'}</span>
+                            </div>
+                          )}
+                          {(!isGrouped || !isCollapsed) && (
+                            <div className={isGrouped ? 'ml-4' : ''}>
+                              <StepCard
+                                step={step}
+                                isPlaying={automationStatus === 'playing' && currentStepIndex === i}
+                                isSelected={selectedStepIndex === i}
+                                onSelect={() => setSelectedStepIndex(i)}
+                                onDelete={() => removeAutomationStep(step.id)}
+                                onPlayFromHere={() => {
+                                  setSelectedStepIndex(i);
+                                  void engine.playFromStep(i);
+                                }}
+                              />
+                            </div>
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
                   </div>
                 </SortableContext>
               </DndContext>
