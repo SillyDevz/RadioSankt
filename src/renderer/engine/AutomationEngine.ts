@@ -352,12 +352,25 @@ class AutomationEngine {
     const fallbackMs = remainingMs + SPOTIFY_FALLBACK_SLACK_MS;
 
     if (this.playbackFallbackTimer) clearTimeout(this.playbackFallbackTimer);
-    this.playbackFallbackTimer = setTimeout(() => {
+    this.playbackFallbackTimer = setTimeout(async () => {
       if (advanceGen !== this.advanceScheduleGen) return;
       const st = this.getStore();
       const live = st.automationSteps[currentIndex];
       if (!live || live.id !== step.id || st.currentStepIndex !== currentIndex) return;
       if (live.type !== 'track') return;
+      // Verify with Spotify that the track actually ended before advancing
+      try {
+        const state = await getRemotePlaybackState();
+        if (state?.isPlaying && state.track?.uri === step.spotifyUri) {
+          // Track is still playing — reschedule with fresh remaining time
+          const remaining = (state.track.durationMs ?? 0) - (state.progressMs ?? 0);
+          if (remaining > 1000) {
+            st.setStepTimeRemaining(remaining);
+            this.scheduleSpotifyStepAdvance(step, currentIndex);
+            return;
+          }
+        }
+      } catch { /* network error — proceed with transition */ }
       void this.runStepTransition(live, currentIndex, advanceGen);
     }, fallbackMs);
   }
