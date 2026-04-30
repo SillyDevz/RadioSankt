@@ -70,6 +70,8 @@ export function useSpotifyPlayer() {
 
   const playerRef = useRef<SpotifyPlayer | null>(null);
   const positionInterval = useRef<ReturnType<typeof setInterval> | null>(null);
+  const toggleInFlight = useRef(false);
+  const cancelWebAudioPoll = useRef<(() => void) | null>(null);
 
   const clearPositionTracking = useCallback(() => {
     if (positionInterval.current) {
@@ -93,45 +95,56 @@ export function useSpotifyPlayer() {
 
   /** Main transport: when a set is loaded, align with Spotify `isPlaying` so we never call `play()` while audio is still running (that re-executes the step and “restarts”). */
   const togglePlayback = useCallback(async () => {
-    AudioEngine.get()?.resumeContextIfNeeded();
-    void playerRef.current?.activateElement().catch(() => {});
-    const player = playerRef.current;
-    const { automationStatus, automationSteps, isPlaying } = useStore.getState();
+    if (toggleInFlight.current) return;
+    const { isLive } = useStore.getState();
+    if (isLive) return;
+    toggleInFlight.current = true;
+    try {
+      AudioEngine.get()?.resumeContextIfNeeded();
+      void playerRef.current?.activateElement().catch(() => {});
+      const player = playerRef.current;
+      const { automationStatus, automationSteps, isPlaying } = useStore.getState();
 
-    if (automationStatus === 'waitingAtPause') {
-      await AutomationEngine.getInstance().resume();
-      return;
+      if (automationStatus === 'waitingAtPause') {
+        await AutomationEngine.getInstance().resume();
+        return;
+      }
+
+      if (!player || automationStatus === 'stopped' || automationSteps.length === 0) {
+        if (player) await player.togglePlay().catch(() => {});
+        return;
+      }
+
+      const engine = AutomationEngine.getInstance();
+
+      if (isPlaying) {
+        if (automationStatus === 'playing') await engine.pause();
+        else window.dispatchEvent(new CustomEvent('radio-sankt:spotify-pause-sdk'));
+        return;
+      }
+
+      if (automationStatus === 'paused') await engine.play();
+      else window.dispatchEvent(new CustomEvent('radio-sankt:spotify-resume-sdk'));
+    } finally {
+      toggleInFlight.current = false;
     }
-
-    if (!player || automationStatus === 'stopped' || automationSteps.length === 0) {
-      if (player) await player.togglePlay().catch(() => {});
-      return;
-    }
-
-    const engine = AutomationEngine.getInstance();
-
-    if (isPlaying) {
-      if (automationStatus === 'playing') await engine.pause();
-      else window.dispatchEvent(new CustomEvent('radio-sankt:spotify-pause-sdk'));
-      return;
-    }
-
-    if (automationStatus === 'paused') await engine.play();
-    else window.dispatchEvent(new CustomEvent('radio-sankt:spotify-resume-sdk'));
   }, []);
 
-  const connectWebAudio = useCallback((_player: SpotifyPlayer) => {
+  const connectWebAudio = useCallback((_player: SpotifyPlayer): (() => void) => {
     let attempts = 0;
     const maxAttempts = 20; // 10 seconds total
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    let cancelled = false;
 
     const tryConnect = () => {
+      if (cancelled) return;
       const audioEl = document.querySelector(`audio[data-testid="audio-element"]`) as HTMLAudioElement
         || document.querySelector('audio') as HTMLAudioElement;
 
       if (!audioEl) {
         attempts++;
         if (attempts < maxAttempts) {
-          setTimeout(tryConnect, 500);
+          timeoutId = setTimeout(tryConnect, 500);
         }
         return;
       }
@@ -153,6 +166,14 @@ export function useSpotifyPlayer() {
     };
 
     tryConnect();
+
+    return () => {
+      cancelled = true;
+      if (timeoutId !== null) {
+        clearTimeout(timeoutId);
+        timeoutId = null;
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -163,7 +184,24 @@ export function useSpotifyPlayer() {
       script.id = 'spotify-sdk-script';
       script.src = 'https://sdk.scdn.co/spotify-player.js';
       script.async = true;
+
+      script.onerror = () => {
+        const { setWebPlaybackDiag, addToast } = useStore.getState();
+        setWebPlaybackDiag('error', 'Failed to load Spotify SDK');
+        addToast('Could not load Spotify SDK — check your internet connection.', 'error');
+      };
+
       document.body.appendChild(script);
+
+      setTimeout(() => {
+        if (!window.Spotify) {
+          const { webPlaybackPhase, setWebPlaybackDiag, addToast } = useStore.getState();
+          if (webPlaybackPhase === 'loading_sdk') {
+            setWebPlaybackDiag('error', 'Spotify SDK load timed out');
+            addToast('Spotify SDK took too long to load.', 'error');
+          }
+        }
+      }, 15000);
     }
   }, []);
 
@@ -205,7 +243,8 @@ export function useSpotifyPlayer() {
         setDeviceId(device_id);
         setSdkReady(true);
         setWebPlaybackDiag('ready', null);
-        connectWebAudio(player);
+        cancelWebAudioPoll.current?.();
+        cancelWebAudioPoll.current = connectWebAudio(player);
       });
 
       player.addListener('not_ready', () => {
@@ -220,6 +259,11 @@ export function useSpotifyPlayer() {
           setIsPlaying(false);
           clearPositionTracking();
           lastSpotifySeekSyncSample = null;
+          const { automationStatus } = useStore.getState();
+          if (automationStatus === 'playing' || automationStatus === 'paused') {
+            AutomationEngine.getInstance().pause();
+            addToast('Playback moved to another device — automation paused.', 'warning');
+          }
           return;
         }
 
@@ -247,7 +291,9 @@ export function useSpotifyPlayer() {
           (curStep.type === 'track' || curStep.type === 'playlist') &&
           prevSample &&
           prevSample.trackId === track.id &&
-          Math.abs(newPos - prevSample.position) > 2000
+          Math.abs(newPos - prevSample.position) > 2000 &&
+          // Ignore backward jumps (track ended and position reset to 0)
+          newPos > prevSample.position
         ) {
           AutomationEngine.getInstance();
           window.dispatchEvent(
@@ -314,6 +360,10 @@ export function useSpotifyPlayer() {
 
       player.addListener('account_error', ({ message }: { message: string }) => {
         reportSdkError('account_error', message);
+        AutomationEngine.getInstance().stop();
+        setSdkReady(false);
+        setDeviceId(null);
+        player.disconnect();
       });
 
       let lastPlaybackErrorToast = 0;
@@ -357,17 +407,28 @@ export function useSpotifyPlayer() {
     pendingSpotifyPlayerInit = initPlayer;
     if (window.Spotify) initPlayer();
 
+    const onBeforeUnload = () => {
+      playerRef.current?.disconnect();
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+
     return () => {
+      window.removeEventListener('beforeunload', onBeforeUnload);
       webPlaybackSessionGen++;
       lastSpotifySeekSyncSample = null;
       pendingSpotifyPlayerInit = null;
       clearPositionTracking();
       cancelLiveRamp();
+      cancelWebAudioPoll.current?.();
+      cancelWebAudioPoll.current = null;
       if (playerRef.current) {
         playerRef.current.disconnect();
         playerRef.current = null;
       }
-      sourceNode = null;
+      if (sourceNode) {
+        sourceNode.disconnect();
+        sourceNode = null;
+      }
     };
   }, [token]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -432,13 +493,12 @@ export function useSpotifyPlayer() {
 
   // Sync volume to gain node (channel A stays ducked while live; fade/live handler owns gain)
   useEffect(() => {
-    if (isLive) {
-      playerRef.current?.setVolume(volume).catch(() => {});
-      return;
-    }
+    if (isLive) return;
     const engine = AudioEngine.get();
     if (engine) {
-      engine.setVolume('A', volume);
+      if (!engine.isFading?.('A')) {
+        engine.setVolume('A', volume);
+      }
     }
     playerRef.current?.setVolume(volume).catch(() => {});
   }, [volume, isLive]);
@@ -514,6 +574,16 @@ export function useSpotifyPlayer() {
             detail: { positionMs: clamped, playbackUri: uri, contextUri: ctx },
           }),
         );
+      }
+
+      // Update stepTimeRemaining when seeking while automation is paused
+      if (st.automationStatus === 'paused') {
+        if (step && (step.type === 'track' || step.type === 'playlist')) {
+          const durationMs = (step as { durationMs: number }).durationMs;
+          if (durationMs) {
+            st.setStepTimeRemaining(Math.max(0, durationMs - clamped));
+          }
+        }
       }
     } catch { /* SDK disconnected */ }
   }, [setPosition]);

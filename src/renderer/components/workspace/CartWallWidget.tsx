@@ -1,10 +1,10 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useStore } from '@/store';
 import type { QuickFireSlot } from '@/store';
 import AudioEngine from '@/engine/AudioEngine';
 import AutomationEngine from '@/engine/AutomationEngine';
 import Tooltip from '@/components/Tooltip';
-import i18n from '@/i18n';
 
 import JingleManagerModal from './JingleManagerModal';
 
@@ -29,21 +29,42 @@ interface ContextMenuProps {
 }
 
 function ContextMenu({ x, y, slot, onAssign, onRename, onChangeColor, onClear, onClose }: ContextMenuProps) {
-  const ref = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
+  const [pos, setPos] = useState({ left: x, top: y });
+
+  useLayoutEffect(() => {
+    if (menuRef.current) {
+      const rect = menuRef.current.getBoundingClientRect();
+      setPos({
+        left: Math.max(0, Math.min(x, window.innerWidth - rect.width - 8)),
+        top: Math.max(0, Math.min(y, window.innerHeight - rect.height - 8)),
+      });
+    }
+  }, [x, y]);
 
   useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    const handleMouseDown = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) onCloseRef.current();
     };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [onClose]);
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onCloseRef.current();
+    };
+    document.addEventListener('mousedown', handleMouseDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleMouseDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
 
   return (
     <div
-      ref={ref}
+      ref={menuRef}
       className="fixed z-50 bg-bg-elevated border border-border rounded-lg shadow-xl py-1.5 min-w-[160px] animate-fade-in"
-      style={{ left: x, top: y }}
+      style={pos}
     >
       <button onClick={onAssign} className="w-full text-left px-3 py-2 text-sm font-medium text-text-primary hover:bg-bg-surface transition-colors">
         Assign jingle
@@ -110,6 +131,7 @@ interface SlotButtonProps {
 }
 
 function SlotButton({ slot, isPlaying, progress, onPlay, onContextMenu, onAssignClick }: SlotButtonProps) {
+  const { t } = useTranslation();
   const isEmpty = !slot.jingleId;
 
   return (
@@ -133,7 +155,7 @@ function SlotButton({ slot, isPlaying, progress, onPlay, onContextMenu, onAssign
               <path d="M12 5v14M5 12h14" />
             </svg>
           </div>
-          <span className="text-xs font-semibold text-text-secondary">{i18n.t('workspace.cart.assignClip', { defaultValue: 'Assign clip' })}</span>
+          <span className="text-xs font-semibold text-text-secondary">{t('workspace.cart.assignClip', { defaultValue: 'Assign clip' })}</span>
         </div>
       ) : (
         <div className="flex h-full flex-col justify-between">
@@ -166,7 +188,10 @@ function SlotButton({ slot, isPlaying, progress, onPlay, onContextMenu, onAssign
 
 // ── Widget Component ────────────────────────────────────────────────
 
+let prevAutomationStatusBeforeLive: string | null = null;
+
 export default function CartWallWidget() {
+  const { t } = useTranslation();
   const isLive = useStore((s) => s.isLive);
   const setIsLive = useStore((s) => s.setIsLive);
   const quickFireSlots = useStore((s) => s.quickFireSlots);
@@ -186,6 +211,7 @@ export default function CartWallWidget() {
   const [activeSlotIds, setActiveSlotIds] = useState<Set<string>>(() => new Set());
   const [slotProgress, setSlotProgress] = useState<Record<string, number>>({});
   const slotVoiceCountsRef = useRef<Record<string, number>>({});
+  const latestVoiceRef = useRef<Record<string, string>>({});
 
   useEffect(() => {
     window.electronAPI?.getFromStore('quickFireSlots').then((val) => {
@@ -195,50 +221,65 @@ export default function CartWallWidget() {
     });
   }, [setQuickFireSlots]);
 
-  const handleGoLive = useCallback(async () => {
-    const engine = AutomationEngine.getInstance();
-    const waitFade = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+  const liveTransitioning = useRef(false);
 
-    if (isLive) {
-      window.dispatchEvent(new CustomEvent('radio-sankt:prime-spotify-playback'));
-      if (automationStatus === 'paused') {
-        await engine.resume({ skipGainRecovery: true });
+  const handleGoLive = useCallback(async () => {
+    if (liveTransitioning.current) return;
+    liveTransitioning.current = true;
+    try {
+      const engine = AutomationEngine.getInstance();
+      const waitFade = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+      if (isLive) {
+        window.dispatchEvent(new CustomEvent('radio-sankt:prime-spotify-playback'));
+        if (prevAutomationStatusBeforeLive === 'playing') {
+          await engine.resume({ skipGainRecovery: true });
+        } else {
+          window.dispatchEvent(new CustomEvent('radio-sankt:spotify-resume-sdk'));
+        }
+        window.dispatchEvent(
+          new CustomEvent('radio-sankt:live-audio', { detail: { goingLive: false, fadeMs: fadeInMs } }),
+        );
+        await waitFade(fadeInMs);
+        setIsLive(false);
+        prevAutomationStatusBeforeLive = null;
+        addToast(t('workspace.cart.backToAutomation', { defaultValue: 'Back to automation' }), 'info');
       } else {
-        window.dispatchEvent(new CustomEvent('radio-sankt:spotify-resume-sdk'));
+        prevAutomationStatusBeforeLive = automationStatus;
+        setIsLive(true);
+        window.dispatchEvent(
+          new CustomEvent('radio-sankt:live-audio', { detail: { goingLive: true, fadeMs: fadeOutMs } }),
+        );
+        await waitFade(fadeOutMs);
+        if (automationStatus === 'playing') {
+          await engine.pause({ skipFade: true });
+        } else {
+          window.dispatchEvent(new CustomEvent('radio-sankt:spotify-pause-sdk'));
+        }
+        addToast(t('workspace.cart.youAreLive', { defaultValue: 'You are LIVE' }), 'success');
       }
-      window.dispatchEvent(
-        new CustomEvent('radio-sankt:live-audio', { detail: { goingLive: false, fadeMs: fadeInMs } }),
-      );
-      await waitFade(fadeInMs);
-      setIsLive(false);
-      addToast(i18n.t('workspace.cart.backToAutomation', { defaultValue: 'Back to automation' }), 'info');
-    } else {
-      setIsLive(true);
-      window.dispatchEvent(
-        new CustomEvent('radio-sankt:live-audio', { detail: { goingLive: true, fadeMs: fadeOutMs } }),
-      );
-      await waitFade(fadeOutMs);
-      if (automationStatus === 'playing') {
-        await engine.pause({ skipFade: true });
-      } else {
-        window.dispatchEvent(new CustomEvent('radio-sankt:spotify-pause-sdk'));
-      }
-      addToast(i18n.t('workspace.cart.youAreLive', { defaultValue: 'You are LIVE' }), 'success');
+    } finally {
+      liveTransitioning.current = false;
     }
   }, [isLive, automationStatus, fadeInMs, fadeOutMs, setIsLive, addToast]);
+
+  useEffect(() => {
+    const handler = () => handleGoLive();
+    window.addEventListener('radio-sankt:toggle-live', handler);
+    return () => window.removeEventListener('radio-sankt:toggle-live', handler);
+  }, [handleGoLive]);
 
   const handlePlaySlot = useCallback(async (slot: QuickFireSlot) => {
     if (!slot.jinglePath) return;
 
     const audio = AudioEngine.getOrInit();
     audio.resumeContextIfNeeded();
-    audio.setVolume('B', 1);
 
     slotVoiceCountsRef.current[slot.id] = (slotVoiceCountsRef.current[slot.id] || 0) + 1;
     setActiveSlotIds((prev) => new Set(prev).add(slot.id));
 
     try {
-      const { durationMs } = await audio.playJingleVoice(slot.jinglePath, () => {
+      const { id: voiceId, durationMs } = await audio.playJingleVoice(slot.jinglePath, () => {
         slotVoiceCountsRef.current[slot.id] = (slotVoiceCountsRef.current[slot.id] || 1) - 1;
         if (slotVoiceCountsRef.current[slot.id] <= 0) {
           delete slotVoiceCountsRef.current[slot.id];
@@ -255,9 +296,12 @@ export default function CartWallWidget() {
         }
       });
 
+      latestVoiceRef.current[slot.id] = voiceId;
+
       const start = Date.now();
       const run = () => {
         if (!slotVoiceCountsRef.current[slot.id]) return;
+        if (latestVoiceRef.current[slot.id] !== voiceId) return; // superseded
         const pct = Math.min(100, ((Date.now() - start) / durationMs) * 100);
         setSlotProgress((p) => ({ ...p, [slot.id]: pct }));
         if (pct < 100) requestAnimationFrame(run);
@@ -273,7 +317,7 @@ export default function CartWallWidget() {
           return n;
         });
       }
-      addToast(i18n.t('workspace.cart.failedPlayJingle', { defaultValue: 'Failed to play cart jingle' }), 'error');
+      addToast(t('workspace.cart.failedPlayJingle', { defaultValue: 'Failed to play cart jingle' }), 'error');
     }
   }, [addToast]);
 
@@ -307,8 +351,8 @@ export default function CartWallWidget() {
       <div className="shrink-0 border-b border-border bg-bg-elevated/20 px-6 py-4">
         <div className="flex items-center justify-between gap-4">
           <div>
-            <h2 className="text-base font-bold text-text-primary">{i18n.t('workspace.cart.title', { defaultValue: 'Soundboard' })}</h2>
-            <p className="text-xs text-text-muted">{i18n.t('workspace.cart.subtitle', { defaultValue: 'Quick-fire clips for live moments' })}</p>
+            <h2 className="text-base font-bold text-text-primary">{t('workspace.cart.title', { defaultValue: 'Soundboard' })}</h2>
+            <p className="text-xs text-text-muted">{t('workspace.cart.subtitle', { defaultValue: 'Quick-fire clips for live moments' })}</p>
           </div>
         <Tooltip content={isLive ? 'End live mode and resume automation' : 'Pauses automation and fades out music so you can speak or play content live'} placement="bottom">
           <button
@@ -322,14 +366,14 @@ export default function CartWallWidget() {
             {isLive ? (
               <>
                 <div className="h-2 w-2 rounded-full bg-white animate-pulse-live" />
-                {i18n.t('workspace.cart.onAir', { defaultValue: 'ON AIR' })}
+                {t('workspace.cart.onAir', { defaultValue: 'ON AIR' })}
               </>
             ) : (
               <>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
                   <circle cx="12" cy="12" r="10" />
                 </svg>
-                {i18n.t('workspace.cart.goLive', { defaultValue: 'GO LIVE' })}
+                {t('workspace.cart.goLive', { defaultValue: 'GO LIVE' })}
               </>
             )}
           </button>
@@ -365,18 +409,18 @@ export default function CartWallWidget() {
       {renamingSlotId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setRenamingSlotId(null)}>
           <div className="bg-bg-surface border border-border rounded-2xl p-5 w-[320px] shadow-2xl animate-slide-up" onClick={(e) => e.stopPropagation()}>
-            <label className="text-sm font-medium text-text-primary mb-3 block">{i18n.t('workspace.cart.renameSlot', { defaultValue: 'Rename slot' })}</label>
+            <label className="text-sm font-medium text-text-primary mb-3 block">{t('workspace.cart.renameSlot', { defaultValue: 'Rename slot' })}</label>
             <input
               autoFocus
               value={renameValue}
               onChange={(e) => setRenameValue(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter') handleRenameSubmit(); if (e.key === 'Escape') setRenamingSlotId(null); }}
               className="w-full bg-bg-elevated border border-border rounded-xl px-4 py-2.5 text-sm text-text-primary outline-none focus:border-accent transition-colors"
-              placeholder={i18n.t('workspace.cart.slotName', { defaultValue: 'Slot name' })}
+              placeholder={t('workspace.cart.slotName', { defaultValue: 'Slot name' })}
             />
             <div className="flex justify-end gap-3 mt-4">
-              <button onClick={() => setRenamingSlotId(null)} className="px-4 py-2 text-sm font-medium text-text-secondary hover:text-text-primary transition-colors">{i18n.t('common.cancel')}</button>
-              <button onClick={handleRenameSubmit} className="px-4 py-2 bg-accent text-bg-primary text-sm font-bold rounded-xl hover:bg-accent-hover transition-colors shadow-sm">{i18n.t('common.save')}</button>
+              <button onClick={() => setRenamingSlotId(null)} className="px-4 py-2 text-sm font-medium text-text-secondary hover:text-text-primary transition-colors">{t('common.cancel')}</button>
+              <button onClick={handleRenameSubmit} className="px-4 py-2 bg-accent text-bg-primary text-sm font-bold rounded-xl hover:bg-accent-hover transition-colors shadow-sm">{t('common.save')}</button>
             </div>
           </div>
         </div>

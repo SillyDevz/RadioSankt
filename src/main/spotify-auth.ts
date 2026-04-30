@@ -3,7 +3,7 @@ import { createServer, type Server } from 'http';
 import { URL } from 'url';
 import Store from 'electron-store';
 
-const store = new Store();
+const store = new Store({ clearInvalidConfig: true });
 
 const REDIRECT_URI = 'http://127.0.0.1:8888/callback';
 
@@ -77,7 +77,9 @@ function escapeHtml(text: string): string {
 export async function initiateAuth(mainWindow: BrowserWindow): Promise<void> {
   const clientId = store.get('spotify-client-id') as string | undefined;
   if (!clientId) {
-    mainWindow.webContents.send('spotify-auth-error', 'No Client ID configured');
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('spotify-auth-error', 'No Client ID configured');
+    }
     return;
   }
 
@@ -126,7 +128,9 @@ function startCallbackServer(
         if (error) {
           res.writeHead(200, { 'Content-Type': 'text/html' });
           res.end('<html><body style="background:#0f0f0f;color:#ef4444;font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><h2>Authorization denied. You can close this tab.</h2></body></html>');
-          mainWindow.webContents.send('spotify-auth-error', error);
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('spotify-auth-error', error);
+          }
           shutdownServer();
           return;
         }
@@ -146,15 +150,19 @@ function startCallbackServer(
 <p style="font-size:13px;color:#a3a3a3;margin:0">Keep this tab open until you’ve read it — then close it. The Radio Sankt window is already connected.</p>
 </body></html>`);
 
-            mainWindow.webContents.send('spotify-auth-complete', {
-              accessToken: tokenData.access_token,
-              expiresIn: tokenData.expires_in,
-              grantedScopes: tokenData.scope,
-            });
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('spotify-auth-complete', {
+                accessToken: tokenData.access_token,
+                expiresIn: tokenData.expires_in,
+                grantedScopes: tokenData.scope,
+              });
+            }
           } catch (err) {
             res.writeHead(200, { 'Content-Type': 'text/html' });
             res.end('<html><body style="background:#0f0f0f;color:#ef4444;font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0"><h2>Token exchange failed. You can close this tab.</h2></body></html>');
-            mainWindow.webContents.send('spotify-auth-error', String(err));
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.webContents.send('spotify-auth-error', String(err));
+            }
           }
           shutdownServer();
         }
@@ -169,7 +177,7 @@ function startCallbackServer(
   });
 }
 
-function shutdownServer(): void {
+export function shutdownServer(): void {
   if (callbackServer) {
     callbackServer.close();
     callbackServer = null;
@@ -189,11 +197,16 @@ async function exchangeCode(
     code_verifier: codeVerifier,
   });
 
-  const res = await fetch('https://accounts.spotify.com/api/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: body.toString(),
-  });
+  let res: Response;
+  try {
+    res = await fetch('https://accounts.spotify.com/api/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
+    });
+  } catch (err) {
+    throw new Error('Network error during Spotify login. Check your connection and try again.');
+  }
 
   if (!res.ok) {
     const text = await res.text();
@@ -261,7 +274,19 @@ export function consumeSpotifyScopePurgeNotice(): boolean {
   return true;
 }
 
+let refreshInFlight: Promise<string | null> | null = null;
+
 export async function refreshToken(mainWindow: BrowserWindow | null): Promise<string | null> {
+  if (refreshInFlight) return refreshInFlight;
+  refreshInFlight = doRefreshToken(mainWindow);
+  try {
+    return await refreshInFlight;
+  } finally {
+    refreshInFlight = null;
+  }
+}
+
+async function doRefreshToken(mainWindow: BrowserWindow | null): Promise<string | null> {
   ensureCurrentSpotifyScopesOrLogout();
 
   const clientId = store.get('spotify-client-id') as string | undefined;
@@ -287,7 +312,16 @@ export async function refreshToken(mainWindow: BrowserWindow | null): Promise<st
       body: body.toString(),
     });
 
-    if (!res.ok) return null;
+    if (!res.ok) {
+      if (res.status === 400 || res.status === 401) {
+        // Refresh token revoked — force re-auth
+        store.delete('spotify-tokens');
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          mainWindow.webContents.send('spotify-auth-revoked');
+        }
+      }
+      return null;
+    }
 
     const data = (await res.json()) as {
       access_token: string;
@@ -314,7 +348,7 @@ export async function refreshToken(mainWindow: BrowserWindow | null): Promise<st
       scope: data.scope,
     });
 
-    if (mainWindow) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('spotify-token-refreshed', {
         accessToken: data.access_token,
         expiresIn: data.expires_in,

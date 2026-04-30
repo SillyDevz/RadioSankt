@@ -1,5 +1,5 @@
 import type { PointerEvent as ReactPointerEvent } from 'react';
-import i18n from '@/i18n';
+import { useTranslation } from 'react-i18next';
 
 export interface ProgramWeeklySlot {
   id: number;
@@ -43,6 +43,7 @@ export function WeeklySlotBlock({
   onResizePointerDown,
   onMovePointerDown,
 }: WeeklySlotBlockProps) {
+  const { t } = useTranslation();
   return (
     <div
       className={`absolute left-2 right-2 z-[2] flex flex-col rounded-xl border border-border/65 bg-bg-elevated shadow-md touch-none select-none overflow-hidden ${
@@ -83,7 +84,7 @@ export function WeeklySlotBlock({
             className="pointer-events-none mt-0.5 inline-flex w-fit max-w-full items-center rounded border border-warning/35 bg-warning/10 px-1.5 py-0.5 text-[10px] font-medium leading-tight text-warning"
             title={shortFillTitle}
           >
-            {i18n.t('schedule.shortFillBadge', { defaultValue: 'May repeat / not fill' })}
+            {t('schedule.shortFillBadge', { defaultValue: 'May repeat / not fill' })}
           </span>
         ) : null}
         <span

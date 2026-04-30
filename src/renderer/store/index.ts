@@ -401,20 +401,51 @@ const createAutomationSlice: StateCreator<StoreState, [], [], AutomationSlice> =
     },
   ],
 
-  setAutomationSteps: (steps) => set({ automationSteps: steps }),
+  setAutomationSteps: (steps) =>
+    set((s) => ({
+      automationSteps: steps,
+      currentStepIndex: steps.length === 0 ? 0 : Math.min(s.currentStepIndex, steps.length - 1),
+      selectedStepIndex: s.selectedStepIndex !== null && s.selectedStepIndex >= steps.length
+        ? (steps.length > 0 ? steps.length - 1 : null)
+        : s.selectedStepIndex,
+    })),
   addAutomationStep: (step) => set((s) => ({ automationSteps: [...s.automationSteps, step] })),
   removeAutomationStep: (id) =>
     set((s) => {
+      const removedIndex = s.automationSteps.findIndex((st) => st.id === id);
       const steps = s.automationSteps.filter((st) => st.id !== id);
       const sel = s.selectedStepIndex;
+      let cur = s.currentStepIndex;
+
+      if (steps.length === 0) {
+        cur = 0;
+      } else if (removedIndex !== -1 && removedIndex < cur) {
+        cur = cur - 1;
+      } else if (cur >= steps.length) {
+        cur = steps.length - 1;
+      }
+
+      let nextSel = sel;
+      if (sel !== null) {
+        if (removedIndex !== -1 && removedIndex < sel) {
+          nextSel = sel - 1;
+        } else if (sel >= steps.length) {
+          nextSel = steps.length > 0 ? steps.length - 1 : null;
+        }
+      }
+
       return {
         automationSteps: steps,
-        selectedStepIndex: sel !== null && sel >= steps.length ? (steps.length > 0 ? steps.length - 1 : null) : sel,
+        currentStepIndex: cur,
+        selectedStepIndex: nextSel,
       };
     }),
   reorderAutomationSteps: (fromIndex, toIndex) =>
     set((s) => {
       const prev = [...s.automationSteps];
+      if (fromIndex < 0 || fromIndex >= prev.length || toIndex < 0 || toIndex >= prev.length) {
+        return {};
+      }
       const cur = s.currentStepIndex;
       const sel = s.selectedStepIndex;
       const currentId = cur >= 0 && cur < prev.length ? prev[cur].id : null;
@@ -478,7 +509,7 @@ const createToastSlice: StateCreator<StoreState, [], [], ToastSlice> = (set) => 
       toasts: [
         ...state.toasts,
         { id: crypto.randomUUID(), message, variant, action },
-      ],
+      ].slice(-5),
     })),
   removeToast: (id) =>
     set((state) => ({
@@ -495,6 +526,12 @@ const createJingleSlice: StateCreator<StoreState, [], [], JingleSlice> = (set) =
   updateJingleName: (id, name) =>
     set((state) => ({
       jingles: state.jingles.map((j) => (j.id === id ? { ...j, name } : j)),
+      automationSteps: state.automationSteps.map((s) =>
+        s.type === 'jingle' && s.jingleId === id ? { ...s, name } : s,
+      ),
+      quickFireSlots: state.quickFireSlots.map((s) =>
+        s.jingleId === id ? { ...s, name } : s,
+      ),
     })),
   setPlayingJingleId: (id) => set({ playingJingleId: id }),
 });
@@ -507,6 +544,9 @@ const createAdSlice: StateCreator<StoreState, [], [], AdSlice> = (set) => ({
   updateAdName: (id, name) =>
     set((state) => ({
       ads: state.ads.map((a) => (a.id === id ? { ...a, name } : a)),
+      automationSteps: state.automationSteps.map((s) =>
+        s.type === 'ad' && s.adId === id ? { ...s, name } : s,
+      ),
     })),
 });
 
@@ -591,37 +631,46 @@ const createSettingsSlice: StateCreator<StoreState, [], [], SettingsSlice> = (se
     window.electronAPI?.saveToStore('accentColor', color);
   },
   setSongTransitionMode: (mode) => {
-    set((state) => ({
-      songTransitionMode: mode,
-      automationSteps: state.automationSteps.map((step) =>
-        step.type === 'track' || step.type === 'playlist'
-          ? { ...step, ...buildSongStepTransition(mode, state.crossfadeMs) }
-          : step,
-      ),
-    }));
+    set((state) => {
+      const currentIdx = state.automationStatus !== 'stopped' ? state.currentStepIndex : -1;
+      return {
+        songTransitionMode: mode,
+        automationSteps: state.automationSteps.map((step, i) =>
+          (step.type === 'track' || step.type === 'playlist') && i !== currentIdx
+            ? { ...step, ...buildSongStepTransition(mode, state.crossfadeMs) }
+            : step,
+        ),
+      };
+    });
     window.electronAPI?.saveToStore('songTransitionMode', mode);
   },
   setFadeInMs: (ms) => {
-    set({ fadeInMs: ms });
-    window.electronAPI?.saveToStore('fadeInMs', ms);
+    const clamped = Math.max(0, Math.min(10000, Number.isFinite(ms) ? ms : 0));
+    set({ fadeInMs: clamped });
+    window.electronAPI?.saveToStore('fadeInMs', clamped);
   },
   setFadeOutMs: (ms) => {
-    set({ fadeOutMs: ms });
-    window.electronAPI?.saveToStore('fadeOutMs', ms);
+    const clamped = Math.max(0, Math.min(10000, Number.isFinite(ms) ? ms : 0));
+    set({ fadeOutMs: clamped });
+    window.electronAPI?.saveToStore('fadeOutMs', clamped);
   },
   setCrossfadeMs: (ms) => {
-    set((state) => ({
-      crossfadeMs: ms,
-      automationSteps:
-        state.songTransitionMode === 'crossfade'
-          ? state.automationSteps.map((step) =>
-              step.type === 'track' || step.type === 'playlist'
-                ? { ...step, overlapMs: Math.max(0, ms) }
-                : step,
-            )
-          : state.automationSteps,
-    }));
-    window.electronAPI?.saveToStore('crossfadeMs', ms);
+    const clamped = Math.max(0, Math.min(10000, Number.isFinite(ms) ? ms : 0));
+    set((state) => {
+      const currentIdx = state.automationStatus !== 'stopped' ? state.currentStepIndex : -1;
+      return {
+        crossfadeMs: clamped,
+        automationSteps:
+          state.songTransitionMode === 'crossfade'
+            ? state.automationSteps.map((step, i) =>
+                (step.type === 'track' || step.type === 'playlist') && i !== currentIdx
+                  ? { ...step, overlapMs: Math.max(0, clamped) }
+                  : step,
+              )
+            : state.automationSteps,
+      };
+    });
+    window.electronAPI?.saveToStore('crossfadeMs', clamped);
   },
   setDuckLevel: (level) => {
     set({ duckLevel: level });
@@ -641,9 +690,18 @@ const createSettingsSlice: StateCreator<StoreState, [], [], SettingsSlice> = (se
   },
   updateShortcut: (id, key, modifiers) =>
     set((state) => {
-      const shortcuts = state.shortcuts.map((s) =>
-        s.id === id ? { ...s, key, modifiers } : s,
-      );
+      const shortcuts = state.shortcuts.map((s) => {
+        if (s.id === id) return { ...s, key, modifiers };
+        // Clear any other shortcut that has the same key+modifiers
+        if (
+          s.key === key &&
+          s.modifiers.length === modifiers.length &&
+          s.modifiers.every((m) => modifiers.includes(m))
+        ) {
+          return { ...s, key: '', modifiers: [] };
+        }
+        return s;
+      });
       window.electronAPI?.saveToStore('shortcuts', shortcuts);
       return { shortcuts };
     }),

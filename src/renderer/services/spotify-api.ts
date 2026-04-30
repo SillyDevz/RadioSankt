@@ -21,6 +21,19 @@ async function resolveRecordedOAuthScopes(): Promise<string> {
 
 const API_BASE = 'https://api.spotify.com/v1';
 
+/** Deduplicates concurrent token refresh calls from the renderer process. */
+let refreshPromise: Promise<string | null> | null = null;
+
+function refreshTokenOnce(): Promise<string | null> {
+  if (!window.electronAPI?.refreshSpotifyToken) return Promise.resolve(null);
+  if (!refreshPromise) {
+    refreshPromise = window.electronAPI.refreshSpotifyToken().finally(() => {
+      refreshPromise = null;
+    });
+  }
+  return refreshPromise;
+}
+
 /** Cleared on Spotify disconnect so the next session resolves the correct user id. */
 let spotifyUserIdCache: string | null = null;
 
@@ -29,6 +42,7 @@ export function clearSpotifyUserIdCache(): void {
 }
 
 async function getToken(): Promise<string> {
+  if (!window.electronAPI?.getSpotifyToken) throw new Error('Electron API not available');
   const token = await window.electronAPI.getSpotifyToken();
   if (!token) throw new Error('No Spotify token available');
   return token.trim();
@@ -63,33 +77,67 @@ function scopesFromAccessTokenJwt(accessToken: string): string[] | null {
 
 async function apiFetch(path: string, options: RequestInit = {}): Promise<Response> {
   const token = await getToken();
-  const res = await fetch(`${API_BASE}${path}`, spotifyBearerInit(token, options));
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  try {
+    const res = await fetch(`${API_BASE}${path}`, {
+      ...spotifyBearerInit(token, options),
+      signal: controller.signal,
+    });
 
-  if (res.status === 401) {
-    // Try refresh once
-    const newToken = await window.electronAPI.refreshSpotifyToken();
-    if (newToken) {
-      return fetch(`${API_BASE}${path}`, spotifyBearerInit(newToken, options));
+    if (res.status === 401) {
+      clearTimeout(timeout);
+      const newToken = await refreshTokenOnce();
+      if (newToken) {
+        const retryController = new AbortController();
+        const retryTimeout = setTimeout(() => retryController.abort(), 15000);
+        try {
+          return await fetch(`${API_BASE}${path}`, {
+            ...spotifyBearerInit(newToken, options),
+            signal: retryController.signal,
+          });
+        } finally {
+          clearTimeout(retryTimeout);
+        }
+      }
     }
-  }
 
-  return res;
+    if (res.status === 429) {
+      clearTimeout(timeout);
+      const retryAfter = parseInt(res.headers.get('Retry-After') || '2', 10);
+      await new Promise((r) => setTimeout(r, retryAfter * 1000));
+      const retryController = new AbortController();
+      const retryTimeout = setTimeout(() => retryController.abort(), 15000);
+      try {
+        return await fetch(`${API_BASE}${path}`, {
+          ...spotifyBearerInit(token, options),
+          signal: retryController.signal,
+        });
+      } finally {
+        clearTimeout(retryTimeout);
+      }
+    }
+
+    return res;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function mapTrackItem(track: {
   uri: string;
   name: string;
-  artists: Array<{ name: string }>;
-  album: { name: string; images: Array<{ url: string }> };
-  duration_ms: number;
+  artists?: Array<{ name: string }> | null;
+  album?: { name?: string; images?: Array<{ url: string }> } | null;
+  duration_ms?: number;
 }): SpotifySearchResult {
   return {
     uri: track.uri,
-    name: track.name,
-    artist: track.artists.map((a) => a.name).join(', '),
-    album: track.album.name,
-    albumArt: track.album.images[0]?.url || '',
-    durationMs: track.duration_ms,
+    name: track.name || '',
+    artist: Array.isArray(track.artists) ? track.artists.map((a) => a.name).join(', ') : '',
+    album: track.album?.name || '',
+    albumArt: track.album?.images?.[0]?.url || '',
+    durationMs: track.duration_ms ?? 0,
   };
 }
 
@@ -176,6 +224,10 @@ export type ActivePlaybackUris = { itemUri: string | null; contextUri: string | 
 export async function getActivePlaybackUris(): Promise<ActivePlaybackUris | null> {
   const res = await apiFetch('/me/player');
   if (res.status === 204) return null;
+  if (res.status === 429) {
+    const retryAfter = parseInt(res.headers.get('Retry-After') || '2', 10);
+    throw new Error(`RATE_LIMITED:${retryAfter}`);
+  }
   if (!res.ok) return null;
   try {
     const data = (await res.json()) as { item?: { uri?: string }; context?: { uri?: string } };
@@ -188,36 +240,59 @@ export async function getActivePlaybackUris(): Promise<ActivePlaybackUris | null
   }
 }
 
-async function waitForActiveTrackUri(expectedUri: string, timeoutMs: number): Promise<void> {
+async function waitForActiveTrackUri(expectedUri: string, timeoutMs: number, signal?: AbortSignal): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const snap = await getActivePlaybackUris();
-    if (snap?.itemUri === expectedUri) return;
+    if (signal?.aborted) return;
+    try {
+      const snap = await getActivePlaybackUris();
+      if (signal?.aborted) return;
+      if (snap?.itemUri === expectedUri) return;
+    } catch (err) {
+      if (err instanceof Error && err.message.startsWith('RATE_LIMITED:')) {
+        const secs = parseInt(err.message.split(':')[1], 10) || 2;
+        await new Promise((r) => setTimeout(r, secs * 1000));
+      }
+      // continue loop
+    }
     await new Promise((r) => setTimeout(r, 280));
+    if (signal?.aborted) return;
   }
   throw new Error(
     'Spotify did not switch to the requested track (Web Playback offline, wrong device, or Premium issue).',
   );
 }
 
-async function waitForActivePlaylistContext(expectedContextUri: string, timeoutMs: number): Promise<void> {
+async function waitForActivePlaylistContext(expectedContextUri: string, timeoutMs: number, signal?: AbortSignal): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const snap = await getActivePlaybackUris();
-    if (snap?.contextUri === expectedContextUri) return;
+    if (signal?.aborted) return;
+    try {
+      const snap = await getActivePlaybackUris();
+      if (signal?.aborted) return;
+      if (snap?.contextUri === expectedContextUri) return;
+    } catch (err) {
+      if (err instanceof Error && err.message.startsWith('RATE_LIMITED:')) {
+        const secs = parseInt(err.message.split(':')[1], 10) || 2;
+        await new Promise((r) => setTimeout(r, secs * 1000));
+      }
+      // continue loop
+    }
     await new Promise((r) => setTimeout(r, 280));
+    if (signal?.aborted) return;
   }
   throw new Error(
     'Spotify did not start the requested playlist (Web Playback offline, wrong device, or Premium issue).',
   );
 }
 
-export async function playTrack(uri: string, deviceId: string): Promise<void> {
+export async function playTrack(uri: string, deviceId: string, signal?: AbortSignal): Promise<void> {
   try {
     await transferPlaybackToDevice(deviceId);
   } catch (err) {
     console.warn('[Spotify] transfer before play (ignored):', err);
   }
+  if (signal?.aborted) return;
   const res = await apiFetch(`/me/player/play?device_id=${encodeURIComponent(deviceId)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -227,15 +302,18 @@ export async function playTrack(uri: string, deviceId: string): Promise<void> {
     const body = await res.text();
     throw new Error(`Play failed ${res.status}: ${body}`);
   }
-  await waitForActiveTrackUri(uri, 12_000);
+  await waitForActiveTrackUri(uri, 12_000, signal);
+  // Disable repeat so single-track queues don't loop when the track ends
+  apiFetch('/me/player/repeat?state=off', { method: 'PUT' }).catch(() => {});
 }
 
-export async function playPlaylistContext(contextUri: string, deviceId: string): Promise<void> {
+export async function playPlaylistContext(contextUri: string, deviceId: string, signal?: AbortSignal): Promise<void> {
   try {
     await transferPlaybackToDevice(deviceId);
   } catch (err) {
     console.warn('[Spotify] transfer before play (ignored):', err);
   }
+  if (signal?.aborted) return;
   const res = await apiFetch(`/me/player/play?device_id=${encodeURIComponent(deviceId)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -245,7 +323,11 @@ export async function playPlaylistContext(contextUri: string, deviceId: string):
     const body = await res.text();
     throw new Error(`Play failed ${res.status}: ${body}`);
   }
-  await waitForActivePlaylistContext(contextUri, 12_000);
+  await waitForActivePlaylistContext(contextUri, 12_000, signal);
+  // Disable repeat so the playlist doesn't loop when it finishes
+  apiFetch('/me/player/repeat?state=off', { method: 'PUT' }).catch(() => {});
+  // Disable shuffle so the DJ's intended track order is respected
+  apiFetch('/me/player/shuffle?state=false', { method: 'PUT' }).catch(() => {});
 }
 
 export interface SpotifyPlaylistSummary {
@@ -279,28 +361,36 @@ export async function getMyPlaylists(
     );
   }
 
-  let res = await fetch(`${API_BASE}/me/playlists${query}`, spotifyBearerInit(token));
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}/me/playlists${query}`, spotifyBearerInit(token));
 
-  if (res.status === 401 || res.status === 403) {
-    const refreshed = await window.electronAPI.refreshSpotifyToken();
-    if (refreshed) {
-      token = refreshed.trim();
-      res = await fetch(`${API_BASE}/me/playlists${query}`, spotifyBearerInit(token));
-    }
-  }
-
-  if (res.status === 403) {
-    const meRes = await fetch(`${API_BASE}/me`, spotifyBearerInit(token));
-    if (meRes.ok) {
-      const me = (await meRes.json()) as { id?: string };
-      if (me.id) {
-        const alt = await fetch(
-          `${API_BASE}/users/${encodeURIComponent(me.id)}/playlists${query}`,
-          spotifyBearerInit(token),
-        );
-        if (alt.ok) res = alt;
+    if (res.status === 401 || res.status === 403) {
+      const refreshed = await refreshTokenOnce();
+      if (refreshed) {
+        token = refreshed.trim();
+        res = await fetch(`${API_BASE}/me/playlists${query}`, spotifyBearerInit(token));
       }
     }
+
+    if (res.status === 403) {
+      const meRes = await fetch(`${API_BASE}/me`, spotifyBearerInit(token));
+      if (meRes.ok) {
+        const me = (await meRes.json()) as { id?: string };
+        if (me.id) {
+          const alt = await fetch(
+            `${API_BASE}/users/${encodeURIComponent(me.id)}/playlists${query}`,
+            spotifyBearerInit(token),
+          );
+          if (alt.ok) res = alt;
+        }
+      }
+    }
+  } catch (err) {
+    if (err instanceof TypeError) {
+      throw new Error('Network error: unable to reach Spotify.');
+    }
+    throw err;
   }
 
   if (!res.ok) {
@@ -362,13 +452,39 @@ export async function getPlaylistTracks(playlistId: string): Promise<SpotifySear
     if (market) params.set('market', market);
 
     let token = await getToken();
-    let res = await fetch(`${API_BASE}${pathBase}?${params}`, spotifyBearerInit(token));
-    if (res.status === 401 || res.status === 403) {
-      const refreshed = await window.electronAPI.refreshSpotifyToken();
-      if (refreshed) {
-        token = refreshed.trim();
-        res = await fetch(`${API_BASE}${pathBase}?${params}`, spotifyBearerInit(token));
+    let res: Response;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+    try {
+      res = await fetch(`${API_BASE}${pathBase}?${params}`, {
+        ...spotifyBearerInit(token),
+        signal: controller.signal,
+      });
+      if (res.status === 401 || res.status === 403) {
+        const refreshed = await refreshTokenOnce();
+        if (refreshed) {
+          token = refreshed.trim();
+          clearTimeout(timeout);
+          const retryController = new AbortController();
+          const retryTimeout = setTimeout(() => retryController.abort(), 15000);
+          try {
+            res = await fetch(`${API_BASE}${pathBase}?${params}`, {
+              ...spotifyBearerInit(token),
+              signal: retryController.signal,
+            });
+          } finally {
+            clearTimeout(retryTimeout);
+          }
+        }
       }
+    } catch (err) {
+      clearTimeout(timeout);
+      if (err instanceof TypeError) {
+        throw new Error('Network error: unable to reach Spotify.');
+      }
+      throw err;
+    } finally {
+      clearTimeout(timeout);
     }
     if (!res.ok) {
       const errorBody = await res.text();
@@ -379,8 +495,9 @@ export async function getPlaylistTracks(playlistId: string): Promise<SpotifySear
     for (const row of batch) {
       const t = rowPlaybackEntity(row);
       if (!t || typeof t !== 'object') continue;
-      const tr = t as { type?: string; uri?: string };
+      const tr = t as { type?: string; uri?: string; is_playable?: boolean };
       if (tr.type !== 'track' || !tr.uri) continue;
+      if (tr.is_playable === false) continue;
       out.push(mapTrackItem(t as Parameters<typeof mapTrackItem>[0]));
     }
     offset += batch.length;

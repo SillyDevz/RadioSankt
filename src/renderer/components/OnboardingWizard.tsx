@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useStore } from '@/store';
 import { openExternal } from '@/utils/openExternal';
 import { useTranslation } from 'react-i18next';
@@ -122,6 +122,9 @@ function StepSpotify({ onNext, onSkip }: { onNext: () => void; onSkip: () => voi
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => { if (copyTimerRef.current) clearTimeout(copyTimerRef.current); }, []);
 
   // Track auth results for local UI state (store updates handled by Layout)
   useEffect(() => {
@@ -164,7 +167,8 @@ function StepSpotify({ onNext, onSkip }: { onNext: () => void; onSkip: () => voi
   const handleCopy = () => {
     navigator.clipboard.writeText('http://127.0.0.1:8888/callback');
     setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    copyTimerRef.current = setTimeout(() => setCopied(false), 2000);
   };
 
   return (
@@ -319,6 +323,7 @@ function StepJingles({ onNext }: { onNext: () => void }) {
   const { t } = useTranslation();
   const addJingle = useStore((s) => s.addJingle);
   const [pickedFile, setPickedFile] = useState<{ name: string; durationMs: number } | null>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
 
   const handlePick = async () => {
     const result = await window.electronAPI.openFileDialog({
@@ -328,20 +333,22 @@ function StepJingles({ onNext }: { onNext: () => void }) {
 
     if (result.canceled || !result.filePaths.length) return;
 
+    setFileError(null);
     const filePath = result.filePaths[0];
+    const buffer = await window.electronAPI.readFileBuffer(filePath);
+    const ctx = new AudioContext();
     try {
-      const buffer = await window.electronAPI.readFileBuffer(filePath);
-      const ctx = new AudioContext();
       const audioBuffer = await ctx.decodeAudioData(buffer);
       const durationMs = Math.round(audioBuffer.duration * 1000);
-      await ctx.close();
 
       const name = filePath.split('/').pop()?.replace(/\.[^.]+$/, '') || 'Untitled';
       const jingle = await window.electronAPI.saveJingle(name, filePath, durationMs);
       addJingle(jingle);
       setPickedFile({ name, durationMs });
     } catch {
-      // Failed to add
+      setFileError(t('onboarding.jingles.invalidFile', { defaultValue: 'Could not read audio file. The file may be corrupt or in an unsupported format.' }));
+    } finally {
+      await ctx.close();
     }
   };
 
@@ -376,15 +383,20 @@ function StepJingles({ onNext }: { onNext: () => void }) {
           </svg>
         </div>
       ) : (
-        <button
-          onClick={handlePick}
-          className="px-5 py-2.5 bg-bg-elevated border border-border rounded-lg text-sm text-text-secondary hover:text-text-primary hover:border-text-muted transition-colors flex items-center gap-2"
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            <path d="M12 5v14M5 12h14" />
-          </svg>
-          {t('onboarding.jingles.addFile')}
-        </button>
+        <>
+          <button
+            onClick={handlePick}
+            className="px-5 py-2.5 bg-bg-elevated border border-border rounded-lg text-sm text-text-secondary hover:text-text-primary hover:border-text-muted transition-colors flex items-center gap-2"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+            {t('onboarding.jingles.addFile')}
+          </button>
+          {fileError && (
+            <p className="text-xs text-danger mt-1">{fileError}</p>
+          )}
+        </>
       )}
 
       <div className="flex items-center gap-4 pt-4">

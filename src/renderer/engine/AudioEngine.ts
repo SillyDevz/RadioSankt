@@ -8,10 +8,14 @@ class AudioEngine {
 
   private gainA: GainNode;
   private gainB: GainNode;
+  private cartGain: GainNode;
   private analyserA: AnalyserNode;
   private analyserB: AnalyserNode;
 
   private preDuckVolume: Record<Channel, number> = { A: 1, B: 1 };
+  private ducked: Record<Channel, boolean> = { A: false, B: false };
+  private fadeGeneration: Record<Channel, number> = { A: 0, B: 0 };
+  private fadingChannels: Record<Channel, boolean> = { A: false, B: false };
 
   // Jingle playback state (single voice — automation / preview)
   private jingleSource: AudioBufferSourceNode | null = null;
@@ -19,6 +23,7 @@ class AudioEngine {
   private jingleStartTime = 0;
   private jinglePlaying = false;
   private jingleOnEnded: (() => void) | null = null;
+  private jingleGeneration = 0;
 
   /** Cart-wall polyphony: multiple buffer sources into channel B */
   private cartVoices = new Map<string, AudioBufferSourceNode>();
@@ -42,6 +47,10 @@ class AudioEngine {
     this.analyserB.fftSize = 256;
     this.gainB.connect(this.analyserB);
     this.analyserB.connect(this.masterGain);
+
+    // Cart wall — bypasses gainB so automation fades/crossfades don't affect cart voices
+    this.cartGain = ctx.createGain();
+    this.cartGain.connect(this.masterGain);
   }
 
   static init(ctx: AudioContext): AudioEngine {
@@ -64,9 +73,9 @@ class AudioEngine {
   }
 
   /** Spotify routes through this graph; browsers/Electron may suspend the context until resumed. */
-  resumeContextIfNeeded(): void {
+  async resumeContextIfNeeded(): Promise<void> {
     if (this.ctx.state === 'suspended') {
-      void this.ctx.resume();
+      await this.ctx.resume();
     }
   }
 
@@ -78,29 +87,51 @@ class AudioEngine {
 
   setVolume(channel: Channel, value: number): void {
     const gain = this.getGainNode(channel);
-    gain.gain.value = value;
+    const now = this.ctx.currentTime;
+    gain.gain.cancelScheduledValues(now);
+    gain.gain.setValueAtTime(value, now);
     this.preDuckVolume[channel] = value;
+    this.ducked[channel] = false;
+    this.fadeGeneration[channel]++;
+    this.fadingChannels[channel] = false;
   }
 
   // ── Fades ───────────────────────────────────────────────────────────
 
   fadeIn(channel: Channel, durationMs: number, targetGain = 1): Promise<void> {
     return new Promise((resolve) => {
+      const gen = ++this.fadeGeneration[channel];
+      this.fadingChannels[channel] = true;
       const gain = this.getGainNode(channel);
       const now = this.ctx.currentTime;
-      gain.gain.setValueAtTime(0, now);
+      gain.gain.cancelScheduledValues(now);
+      gain.gain.setValueAtTime(gain.gain.value, now);
       gain.gain.linearRampToValueAtTime(targetGain, now + durationMs / 1000);
-      setTimeout(resolve, durationMs);
+      setTimeout(() => {
+        if (this.fadeGeneration[channel] === gen) {
+          this.fadingChannels[channel] = false;
+        }
+        resolve();
+      }, durationMs);
     });
   }
 
   fadeOut(channel: Channel, durationMs: number): Promise<void> {
     return new Promise((resolve) => {
+      this.ducked[channel] = false;
+      const gen = ++this.fadeGeneration[channel];
+      this.fadingChannels[channel] = true;
       const gain = this.getGainNode(channel);
       const now = this.ctx.currentTime;
+      gain.gain.cancelScheduledValues(now);
       gain.gain.setValueAtTime(gain.gain.value, now);
       gain.gain.linearRampToValueAtTime(0, now + durationMs / 1000);
-      setTimeout(resolve, durationMs);
+      setTimeout(() => {
+        if (this.fadeGeneration[channel] === gen) {
+          this.fadingChannels[channel] = false;
+        }
+        resolve();
+      }, durationMs);
     });
   }
 
@@ -115,26 +146,50 @@ class AudioEngine {
 
   duck(channel: Channel, targetVolume: number, durationMs: number): Promise<void> {
     return new Promise((resolve) => {
+      const gen = ++this.fadeGeneration[channel];
+      this.fadingChannels[channel] = true;
       const gain = this.getGainNode(channel);
-      this.preDuckVolume[channel] = gain.gain.value;
+      if (!this.ducked[channel]) {
+        this.preDuckVolume[channel] = gain.gain.value;
+        this.ducked[channel] = true;
+      }
       const now = this.ctx.currentTime;
+      gain.gain.cancelScheduledValues(now);
       gain.gain.setValueAtTime(gain.gain.value, now);
       gain.gain.linearRampToValueAtTime(targetVolume, now + durationMs / 1000);
-      setTimeout(resolve, durationMs);
+      setTimeout(() => {
+        if (this.fadeGeneration[channel] === gen) {
+          this.fadingChannels[channel] = false;
+        }
+        resolve();
+      }, durationMs);
     });
   }
 
   unduck(channel: Channel, durationMs: number): Promise<void> {
     return new Promise((resolve) => {
+      const gen = ++this.fadeGeneration[channel];
+      this.fadingChannels[channel] = true;
       const gain = this.getGainNode(channel);
       const now = this.ctx.currentTime;
+      gain.gain.cancelScheduledValues(now);
       gain.gain.setValueAtTime(gain.gain.value, now);
       gain.gain.linearRampToValueAtTime(this.preDuckVolume[channel], now + durationMs / 1000);
-      setTimeout(resolve, durationMs);
+      this.ducked[channel] = false;
+      setTimeout(() => {
+        if (this.fadeGeneration[channel] === gen) {
+          this.fadingChannels[channel] = false;
+        }
+        resolve();
+      }, durationMs);
     });
   }
 
   // ── Levels ──────────────────────────────────────────────────────────
+
+  isFading(channel: Channel): boolean {
+    return this.fadingChannels[channel];
+  }
 
   getLevel(channel: Channel): number {
     const analyser = channel === 'A' ? this.analyserA : this.analyserB;
@@ -151,16 +206,23 @@ class AudioEngine {
   // ── Jingle playback ────────────────────────────────────────────────
 
   async playJingle(filePath: string): Promise<void> {
+    await this.resumeContextIfNeeded();
     this.stopJingle();
+    const gen = ++this.jingleGeneration;
 
     const arrayBuffer = await window.electronAPI.readFileBuffer(filePath);
+    if (gen !== this.jingleGeneration) return;
+
     this.jingleBuffer = await this.ctx.decodeAudioData(arrayBuffer);
+    if (gen !== this.jingleGeneration) return;
 
     this.jingleSource = this.ctx.createBufferSource();
     this.jingleSource.buffer = this.jingleBuffer;
     this.jingleSource.connect(this.gainB);
 
     this.jingleSource.onended = () => {
+      if (this.jingleGeneration !== gen) return;
+      this.jingleSource?.disconnect();
       this.jinglePlaying = false;
       this.jingleSource = null;
       this.jingleOnEnded?.();
@@ -174,13 +236,15 @@ class AudioEngine {
 
   /** Extra cart voices on channel B; does not stop automation jingle or other cart voices. */
   async playJingleVoice(filePath: string, onEnded?: () => void): Promise<{ id: string; durationMs: number }> {
+    await this.resumeContextIfNeeded();
     const arrayBuffer = await window.electronAPI.readFileBuffer(filePath);
     const buffer = await this.ctx.decodeAudioData(arrayBuffer);
     const id = crypto.randomUUID();
     const source = this.ctx.createBufferSource();
     source.buffer = buffer;
-    source.connect(this.gainB);
+    source.connect(this.cartGain);
     source.onended = () => {
+      source.disconnect();
       this.cartVoices.delete(id);
       onEnded?.();
     };
@@ -196,18 +260,31 @@ class AudioEngine {
       } catch {
         // already stopped
       }
+      this.jingleSource.disconnect();
       this.jingleSource = null;
     }
+    this.jinglePlaying = false;
+    this.jingleOnEnded = null;
+  }
+
+  /** Stop all cart wall voices. Use only for full teardown, not from automation transport. */
+  stopAllCartVoices(): void {
     this.cartVoices.forEach((src) => {
       try {
         src.stop();
       } catch {
         /* already stopped */
       }
+      src.disconnect();
     });
     this.cartVoices.clear();
-    this.jinglePlaying = false;
-    this.jingleOnEnded = null;
+  }
+
+  /** Set cart wall volume independently from channel gains. */
+  setCartVolume(value: number): void {
+    const now = this.ctx.currentTime;
+    this.cartGain.gain.cancelScheduledValues(now);
+    this.cartGain.gain.setValueAtTime(value, now);
   }
 
   isJinglePlaying(): boolean {

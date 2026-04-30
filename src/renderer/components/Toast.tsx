@@ -101,7 +101,7 @@ function ToastContainer() {
         }
       `}</style>
       {/* 5.5rem = h-now-playing (88px); +12px gap above play bar */}
-      <div className="pointer-events-none fixed bottom-[calc(5.5rem+0.75rem)] right-4 z-[9999] flex flex-col gap-2">
+      <div className="pointer-events-none fixed bottom-[calc(5.5rem+0.75rem)] right-4 z-[9999] flex flex-col gap-2" role="status" aria-live="polite" aria-atomic="false">
         {toasts.map((toast) => (
           <ToastItem key={toast.id} toast={toast} />
         ))}

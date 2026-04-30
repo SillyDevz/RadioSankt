@@ -1,4 +1,4 @@
-import { useRef, useCallback } from 'react';
+import { useRef, useCallback, useState } from 'react';
 import { useStore, type Page, type Track } from '@/store';
 import { useSpotifyPlayer } from '@/hooks/useSpotifyPlayer';
 import Tooltip from './Tooltip';
@@ -8,24 +8,22 @@ function MainNav() {
   const { t } = useTranslation();
   const currentPage = useStore((s) => s.currentPage);
   const setCurrentPage = useStore((s) => s.setCurrentPage);
-  const Item = ({ page, label }: { page: Page; label: string }) => (
-    <button
-      type="button"
-      onClick={() => setCurrentPage(page)}
-      className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
-        currentPage === page
-          ? 'bg-bg-elevated text-text-primary'
-          : 'text-text-muted hover:text-text-secondary hover:bg-bg-elevated/60'
-      }`}
-    >
-      {label}
-    </button>
-  );
   return (
     <div className="flex items-center gap-0.5 shrink-0" role="navigation" aria-label={t('nav.main')}>
-      <Item page="studio" label={t('nav.studio')} />
-      <Item page="program" label={t('nav.program')} />
-      <Item page="settings" label={t('nav.settings')} />
+      {(['studio', 'program', 'settings'] as const).map((page) => (
+        <button
+          key={page}
+          type="button"
+          onClick={() => setCurrentPage(page)}
+          className={`px-2.5 py-1 rounded-md text-xs font-medium transition-colors ${
+            currentPage === page
+              ? 'bg-bg-elevated text-text-primary'
+              : 'text-text-muted hover:text-text-secondary hover:bg-bg-elevated/60'
+          }`}
+        >
+          {t(`nav.${page}`)}
+        </button>
+      ))}
     </div>
   );
 }
@@ -64,9 +62,9 @@ export default function NowPlayingBar() {
   const setVolume = useStore((s) => s.setVolume);
   const isLive = useStore((s) => s.isLive);
   const automationStatus = useStore((s) => s.automationStatus);
-  const automationSteps = useStore((s) => s.automationSteps);
+  const hasAutomationSteps = useStore((s) => s.automationSteps.length > 0);
   const automationTransport = automationStatus !== 'stopped';
-  const hasAutomationQueue = automationSteps.length > 0 && automationStatus !== 'stopped';
+  const hasAutomationQueue = hasAutomationSteps && automationStatus !== 'stopped';
   /** Matches `togglePlayback`: pause when automation is on-air or Spotify still playing while automation is paused. */
   const transportShowsPause =
     hasAutomationQueue &&
@@ -75,25 +73,44 @@ export default function NowPlayingBar() {
 
   const { togglePlay, previousTrack, nextTrack, seek } = useSpotifyPlayer();
   const seekTrackRef = useRef<HTMLDivElement>(null);
+  const isDragging = useRef(false);
+  const [dragPosition, setDragPosition] = useState<number | null>(null);
+  const [transitioning, setTransitioning] = useState(false);
+  const prevVolumeRef = useRef(0.8);
 
-  const progress = duration > 0 ? (position / duration) * 100 : 0;
+  const guardedAction = useCallback(async (action: () => Promise<void>) => {
+    if (transitioning) return;
+    setTransitioning(true);
+    try { await action(); }
+    finally { setTransitioning(false); }
+  }, [transitioning]);
+
+  const displayPosition = dragPosition ?? position;
+  const progress = duration > 0 ? (displayPosition / duration) * 100 : 0;
 
   const seekFromClientX = useCallback(
     (clientX: number) => {
       const el = seekTrackRef.current;
-      if (!el || !duration) return;
+      const currentDuration = useStore.getState().duration;
+      if (!el || !currentDuration) return;
       const rect = el.getBoundingClientRect();
       if (rect.width <= 0) return;
       const pct = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
-      seek(pct * duration);
+      const pos = pct * currentDuration;
+      if (isDragging.current) {
+        setDragPosition(pos);
+      } else {
+        seek(pos);
+      }
     },
-    [duration, seek]
+    [seek]
   );
 
   const onSeekPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (!duration) return;
     e.preventDefault();
     e.currentTarget.setPointerCapture(e.pointerId);
+    isDragging.current = true;
     seekFromClientX(e.clientX);
   };
 
@@ -105,6 +122,20 @@ export default function NowPlayingBar() {
   const onSeekPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.currentTarget.hasPointerCapture(e.pointerId)) {
       e.currentTarget.releasePointerCapture(e.pointerId);
+      if (dragPosition != null) {
+        seek(dragPosition);
+      }
+      isDragging.current = false;
+      setDragPosition(null);
+    }
+  };
+
+  const toggleMute = () => {
+    if (volume > 0) {
+      prevVolumeRef.current = volume;
+      setVolume(0);
+    } else {
+      setVolume(prevVolumeRef.current);
     }
   };
 
@@ -167,8 +198,9 @@ export default function NowPlayingBar() {
               >
                 <button
                   type="button"
-                  onClick={previousTrack}
-                  className="grid size-10 shrink-0 place-items-center rounded-full leading-none text-text-secondary transition-colors hover:bg-bg-elevated hover:text-text-primary"
+                  onClick={() => guardedAction(previousTrack)}
+                  disabled={transitioning}
+                  className={`grid size-10 shrink-0 place-items-center rounded-full leading-none text-text-secondary transition-colors hover:bg-bg-elevated hover:text-text-primary${transitioning ? ' opacity-50 pointer-events-none' : ''}`}
                   aria-label={t('nowPlaying.prevTrack')}
                 >
                   <svg className="block shrink-0" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
@@ -196,8 +228,9 @@ export default function NowPlayingBar() {
               >
                 <button
                   type="button"
-                  onClick={togglePlay}
-                  className="grid size-10 shrink-0 place-items-center rounded-full leading-none bg-text-primary text-bg-primary shadow-sm transition-transform hover:scale-105"
+                  onClick={() => guardedAction(togglePlay)}
+                  disabled={transitioning}
+                  className={`grid size-10 shrink-0 place-items-center rounded-full leading-none bg-text-primary text-bg-primary shadow-sm transition-transform hover:scale-105${transitioning ? ' opacity-50 pointer-events-none' : ''}`}
                   aria-label={
                     automationStatus === 'waitingAtPause'
                       ? t('nowPlaying.continueAutomation')
@@ -228,8 +261,9 @@ export default function NowPlayingBar() {
               >
                 <button
                   type="button"
-                  onClick={nextTrack}
-                  className="grid size-10 shrink-0 place-items-center rounded-full leading-none text-text-secondary transition-colors hover:bg-bg-elevated hover:text-text-primary"
+                  onClick={() => guardedAction(nextTrack)}
+                  disabled={transitioning}
+                  className={`grid size-10 shrink-0 place-items-center rounded-full leading-none text-text-secondary transition-colors hover:bg-bg-elevated hover:text-text-primary${transitioning ? ' opacity-50 pointer-events-none' : ''}`}
                   aria-label={t('nowPlaying.nextTrack')}
                 >
                   <svg className="block shrink-0" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
@@ -244,7 +278,7 @@ export default function NowPlayingBar() {
           {/* Seek bar */}
           <div className="flex w-full shrink-0 min-h-8 items-center gap-2.5 leading-none">
             <span className="flex h-8 shrink-0 items-center text-xs font-medium tabular-nums text-text-muted w-10 justify-end">
-              {formatTime(position)}
+              {formatTime(displayPosition)}
             </span>
             <Tooltip
               content={t('nowPlaying.seekHelp')}
@@ -295,7 +329,7 @@ export default function NowPlayingBar() {
         <Tooltip content={t('nowPlaying.masterVolumeTooltip')} placement="top">
           <div className="flex items-center gap-2">
             <button
-              onClick={() => setVolume(volume > 0 ? 0 : 0.8)}
+              onClick={toggleMute}
               className="p-1 text-text-secondary hover:text-text-primary transition-colors"
               aria-label={volume > 0 ? t('nowPlaying.mute') : t('nowPlaying.unmute')}
             >

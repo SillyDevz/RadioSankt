@@ -14,10 +14,24 @@ export interface AutomationSessionSnapshot {
   breakRules?: BreakRule[];
 }
 
+const VALID_STEP_TYPES = new Set(['track', 'playlist', 'jingle', 'ad', 'pause']);
+
 function parseSnapshot(raw: unknown): AutomationSessionSnapshot | null {
   if (!raw || typeof raw !== 'object') return null;
   const o = raw as Record<string, unknown>;
   if (o.v !== 1 || !Array.isArray(o.automationSteps)) return null;
+
+  const validSteps = (o.automationSteps as unknown[]).filter((s): s is AutomationStep => {
+    if (!s || typeof s !== 'object') return false;
+    const step = s as Record<string, unknown>;
+    if (typeof step.id !== 'string' || !step.id) return false;
+    if (typeof step.type !== 'string' || !VALID_STEP_TYPES.has(step.type)) return false;
+    if (step.type === 'track' && typeof step.spotifyUri !== 'string') return false;
+    if (step.type === 'playlist' && typeof step.spotifyPlaylistUri !== 'string') return false;
+    if ((step.type === 'jingle' || step.type === 'ad') && typeof step.filePath !== 'string') return false;
+    return true;
+  });
+
   const normalizedBreakRules = Array.isArray(o.breakRules)
     ? (o.breakRules as Array<Record<string, unknown>>).map((r, i) => ({
         id: typeof r.id === 'string' && r.id ? r.id : `rule-${i}`,
@@ -35,7 +49,7 @@ function parseSnapshot(raw: unknown): AutomationSessionSnapshot | null {
     : undefined;
   return {
     v: 1,
-    automationSteps: o.automationSteps as AutomationStep[],
+    automationSteps: validSteps,
     currentPlaylistId: typeof o.currentPlaylistId === 'number' ? o.currentPlaylistId : null,
     currentPlaylistName: typeof o.currentPlaylistName === 'string' ? o.currentPlaylistName : null,
     breakRules: normalizedBreakRules as BreakRule[] | undefined,
@@ -125,6 +139,23 @@ function schedulePersist(): void {
   }, DEBOUNCE_MS);
 }
 
+/**
+ * Flush any pending debounced session persist immediately.
+ * Call on app quit or before auto-update restart to avoid data loss.
+ */
+export function flushSessionNow(): void {
+  if (persistTimer) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
+  const snap = snapshotFromState();
+  const ser = JSON.stringify(snap);
+  if (ser !== lastSerialized) {
+    lastSerialized = ser;
+    window.electronAPI?.saveToStore(SESSION_KEY, snap);
+  }
+}
+
 export function initAutomationSessionPersistence(): () => void {
   const unsub = useStore.subscribe((state, prev) => {
     if (
@@ -139,8 +170,11 @@ export function initAutomationSessionPersistence(): () => void {
     schedulePersist();
   });
 
+  window.addEventListener('beforeunload', flushSessionNow);
+
   return () => {
     unsub();
+    window.removeEventListener('beforeunload', flushSessionNow);
     if (persistTimer) clearTimeout(persistTimer);
   };
 }
@@ -193,6 +227,9 @@ async function loadAndPlayFromPlaylist(
   label: string | null,
   maxDurationMs: number | null,
 ): Promise<void> {
+  // Stop any running automation first to clear stale timers
+  await AutomationEngine.getInstance().stop();
+
   const api = window.electronAPI;
   if (!api) return;
   const pl = await api.loadPlaylist(playlistId);
@@ -202,7 +239,16 @@ async function loadAndPlayFromPlaylist(
   }
   let steps: AutomationStep[];
   try {
-    steps = JSON.parse(pl.steps) as AutomationStep[];
+    const parsed = JSON.parse(pl.steps);
+    steps = (Array.isArray(parsed) ? parsed : []).filter((s: any): s is AutomationStep => {
+      if (!s || typeof s !== 'object') return false;
+      if (typeof s.id !== 'string' || !s.id) return false;
+      if (typeof s.type !== 'string' || !VALID_STEP_TYPES.has(s.type)) return false;
+      if (s.type === 'track' && typeof s.spotifyUri !== 'string') return false;
+      if (s.type === 'playlist' && typeof s.spotifyPlaylistUri !== 'string') return false;
+      if ((s.type === 'jingle' || s.type === 'ad') && typeof s.filePath !== 'string') return false;
+      return true;
+    });
   } catch {
     useStore.getState().addToast('Scheduled set data was invalid.', 'error');
     return;

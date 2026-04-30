@@ -12,50 +12,79 @@ export function getDatabase(): Database.Database {
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
 
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS jingles (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
-      filePath TEXT NOT NULL,
-      durationMs INTEGER NOT NULL DEFAULT 0,
-      createdAt TEXT NOT NULL DEFAULT (datetime('now'))
-    )
-  `);
+  // Schema creation wrapped in a transaction to avoid partial state on crash
+  const initSchema = db.transaction(() => {
+    db!.exec(`
+      CREATE TABLE IF NOT EXISTS jingles (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        filePath TEXT NOT NULL,
+        durationMs INTEGER NOT NULL DEFAULT 0,
+        createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+      )
+    `);
 
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS ads (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
-      filePath TEXT NOT NULL,
-      durationMs INTEGER NOT NULL DEFAULT 0,
-      createdAt TEXT NOT NULL DEFAULT (datetime('now'))
-    )
-  `);
+    db!.exec(`
+      CREATE TABLE IF NOT EXISTS ads (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        filePath TEXT NOT NULL,
+        durationMs INTEGER NOT NULL DEFAULT 0,
+        createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+      )
+    `);
 
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS automation_playlists (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
-      steps TEXT NOT NULL DEFAULT '[]',
-      createdAt TEXT NOT NULL DEFAULT (datetime('now')),
-      updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
-    )
-  `);
+    db!.exec(`
+      CREATE TABLE IF NOT EXISTS automation_playlists (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        steps TEXT NOT NULL DEFAULT '[]',
+        createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+        updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+      )
+    `);
 
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS program_weekly_slots (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      playlistId INTEGER NOT NULL,
-      dayOfWeek INTEGER NOT NULL,
-      startMinute INTEGER NOT NULL,
-      durationMinutes INTEGER NOT NULL DEFAULT 60,
-      maxDurationMs INTEGER,
-      label TEXT,
-      createdAt TEXT NOT NULL DEFAULT (datetime('now')),
-      FOREIGN KEY (playlistId) REFERENCES automation_playlists(id) ON DELETE CASCADE
-    )
-  `);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_weekly_dow_start ON program_weekly_slots(dayOfWeek, startMinute)`);
+    db!.exec(`
+      CREATE TABLE IF NOT EXISTS program_weekly_slots (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        playlistId INTEGER NOT NULL,
+        dayOfWeek INTEGER NOT NULL,
+        startMinute INTEGER NOT NULL,
+        durationMinutes INTEGER NOT NULL DEFAULT 60,
+        maxDurationMs INTEGER,
+        label TEXT,
+        createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+        FOREIGN KEY (playlistId) REFERENCES automation_playlists(id) ON DELETE CASCADE
+      )
+    `);
+
+    db!.exec(`CREATE INDEX IF NOT EXISTS idx_weekly_dow_start ON program_weekly_slots(dayOfWeek, startMinute)`);
+  });
+  initSchema();
+
+  // Schema versioning for future migrations
+  db.exec(`CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL)`);
+  const row = db.prepare('SELECT version FROM schema_version').get() as { version: number } | undefined;
+  const currentVersion = row?.version ?? 0;
+
+  const migrations: Array<() => void> = [
+    // v1: initial schema (tables already created above via IF NOT EXISTS)
+    () => {},
+  ];
+
+  if (currentVersion < migrations.length) {
+    const runMigrations = db.transaction(() => {
+      for (let i = currentVersion; i < migrations.length; i++) {
+        migrations[i]();
+      }
+      if (currentVersion === 0) {
+        db!.prepare('INSERT INTO schema_version (version) VALUES (?)').run(migrations.length);
+      } else {
+        db!.prepare('UPDATE schema_version SET version = ?').run(migrations.length);
+      }
+    });
+    runMigrations();
+  }
 
   return db;
 }
