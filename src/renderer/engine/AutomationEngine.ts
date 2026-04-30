@@ -719,13 +719,8 @@ class AutomationEngine {
 
       // Playlist block: skip to previous track within the block
       if (cur.type === 'playlist' && store.deviceId) {
-        const consumed = this.intraPlaylistCreditedForStepId === cur.id
-          ? this.intraPlaylistCreditedCount
-          : 0;
-        if (consumed > 0) {
-          await remotePrevious(store.deviceId);
-          return;
-        }
+        await remotePrevious(store.deviceId);
+        return;
       }
 
       const dec = this.breakProgressCreditForStep(cur);
