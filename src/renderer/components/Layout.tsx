@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef, lazy, Suspense } from 'react';
 import { useStore } from '@/store';
-import type { Page, CoachMarkId, AccentColor, ThemeMode, ShortcutBinding, SongTransitionMode } from '@/store';
+import type { Page, CoachMarkId, AccentColor, ThemeMode, SongTransitionMode } from '@/store';
 import { ACCENT_COLORS } from '@/store';
 import { clearSpotifyUserIdCache, getProfile } from '@/services/spotify-api';
 import MacTitleBarInset from './MacTitleBarInset';
@@ -18,6 +18,7 @@ import {
   runScheduleTick,
 } from '@/services/automation-session';
 import AutomationEngine from '@/engine/AutomationEngine';
+import '@/services/recommendations-queue';
 import i18n, { isAppLanguage } from '@/i18n';
 import { useTranslation } from 'react-i18next';
 
@@ -99,10 +100,8 @@ function Layout() {
       api.getFromStore('followProgramSchedule').then((val) => {
         if (typeof val === 'boolean') useStore.setState({ followProgramSchedule: val });
       }),
-      api.getFromStore('shortcuts').then((val) => {
-        if (Array.isArray(val) && val.every((s) => s && typeof s.id === 'string' && typeof s.key === 'string' && Array.isArray(s.modifiers))) {
-          useStore.setState({ shortcuts: val as ShortcutBinding[] });
-        }
+      api.getFromStore('continuePlaylistRecommendations').then((val) => {
+        if (typeof val === 'boolean') useStore.setState({ continuePlaylistRecommendations: val });
       }),
       api.getFromStore('workspaceLayout').then((val) => {
         if (Array.isArray(val)) {
@@ -111,6 +110,9 @@ function Layout() {
           );
           if (valid.length > 0) useStore.setState({ workspaceLayout: valid as any });
         }
+      }),
+      api.getFromStore('soundboardVolume').then((val) => {
+        if (typeof val === 'number') useStore.setState({ soundboardVolume: Math.max(0, Math.min(1, val)) });
       }),
       api.getSpotifyClientId().then((id) => {
         if (id) useStore.setState({ clientId: id });

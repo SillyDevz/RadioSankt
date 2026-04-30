@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, components, session } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell, session } from 'electron';
 import { autoUpdater } from 'electron-updater';
 import Store from 'electron-store';
 import { join, resolve, normalize } from 'path';
@@ -39,37 +39,20 @@ import {
 
 const store = new Store({ clearInvalidConfig: true });
 let mainWindow: BrowserWindow | null = null;
+const GITHUB_OWNER = 'SillyDevz';
+const GITHUB_REPO = 'RadioSankt';
 
 type MainLocale = 'en' | 'pt';
-type MainI18nKey =
-  | 'spotify.scopeReset'
-  | 'widevine.title'
-  | 'widevine.message'
-  | 'widevine.commonCauses'
-  | 'widevine.versionHint';
+type MainI18nKey = 'spotify.scopeReset';
 
 const MAIN_I18N: Record<MainLocale, Record<MainI18nKey, string>> = {
   en: {
     'spotify.scopeReset':
       'Spotify login was reset: this version needs playlist permission. Open Settings and connect again.',
-    'widevine.title': 'Widevine (DRM)',
-    'widevine.message':
-      'The Widevine CDM is not usable. Spotify in-app playback needs a working CDM from Google Component Updater.',
-    'widevine.commonCauses':
-      'Common causes:\n• Using an old Electron/Chromium line.\n• Network / proxy blocking component downloads.\n• Linux: after first CDM download, fully quit and reopen the app.',
-    'widevine.versionHint':
-      'Your node_modules/electron package should show a 41.x.x+wvcus style version in package.json.',
   },
   pt: {
     'spotify.scopeReset':
       'O login do Spotify foi redefinido: esta versão precisa de permissão de playlist. Abra Configurações e conecte novamente.',
-    'widevine.title': 'Widevine (DRM)',
-    'widevine.message':
-      'O CDM Widevine não está utilizável. A reprodução no Spotify dentro do app precisa do CDM do Google Component Updater.',
-    'widevine.commonCauses':
-      'Causas comuns:\n• Usar uma versão antiga de Electron/Chromium.\n• Rede/proxy bloqueando download de componentes.\n• Linux: após o primeiro download do CDM, feche totalmente e abra novamente.',
-    'widevine.versionHint':
-      'Seu pacote node_modules/electron deve mostrar versão no formato 41.x.x+wvcus no package.json.',
   },
 };
 
@@ -87,6 +70,88 @@ function windowIconPath(): string | undefined {
   const fromPublic = join(app.getAppPath(), 'public/icon.png');
   if (existsSync(fromPublic)) return fromPublic;
   return undefined;
+}
+
+function normalizeVersion(version: string): string {
+  return version.trim().replace(/^v/i, '');
+}
+
+function compareSemver(a: string, b: string): number {
+  const parse = (value: string) =>
+    normalizeVersion(value)
+      .split('.')
+      .map((part) => Number.parseInt(part, 10))
+      .map((part) => (Number.isFinite(part) ? part : 0));
+  const [a0, a1, a2] = parse(a);
+  const [b0, b1, b2] = parse(b);
+  if (a0 !== b0) return a0 - b0;
+  if (a1 !== b1) return a1 - b1;
+  return a2 - b2;
+}
+
+function isGithubLatest404(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes('404') && /github\.com/i.test(message);
+}
+
+function updaterAccessMessage(): string {
+  return 'Update feed is not publicly accessible (GitHub returned 404). Make the releases repository public or configure a token-backed update provider.';
+}
+
+async function resolveLatestReleaseVersion(): Promise<string | null> {
+  const userAgent = `${app.getName()}/${app.getVersion()}`;
+  const releasesUrl = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases?per_page=20`;
+  const latestApiUrl = `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`;
+  const latestWebUrl = `https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/releases/latest`;
+  const headers = { Accept: 'application/vnd.github+json', 'User-Agent': userAgent };
+  try {
+    const releasesRes = await fetch(releasesUrl, { headers });
+    logUpdater(`[updater] fallback releases api status=${releasesRes.status}`);
+    if (releasesRes.ok) {
+      const releases = (await releasesRes.json()) as Array<{
+        draft?: boolean;
+        prerelease?: boolean;
+        tag_name?: string;
+      }>;
+      const release = releases.find((item) => !item.draft && !item.prerelease && typeof item.tag_name === 'string');
+      if (release?.tag_name) return normalizeVersion(release.tag_name);
+    }
+  } catch (error) {
+    logUpdater(`[updater] fallback releases api error=${error instanceof Error ? error.message : String(error)}`);
+  }
+  try {
+    const latestApiRes = await fetch(latestApiUrl, { headers });
+    logUpdater(`[updater] fallback latest api status=${latestApiRes.status}`);
+    if (latestApiRes.ok) {
+      const latest = (await latestApiRes.json()) as { tag_name?: string };
+      if (latest.tag_name) return normalizeVersion(latest.tag_name);
+    }
+  } catch (error) {
+    logUpdater(`[updater] fallback latest api error=${error instanceof Error ? error.message : String(error)}`);
+  }
+  try {
+    const latestWebRes = await fetch(latestWebUrl, {
+      headers: { 'User-Agent': userAgent },
+      redirect: 'manual',
+    });
+    logUpdater(`[updater] fallback latest web status=${latestWebRes.status}`);
+    const location = latestWebRes.headers.get('location');
+    if (location) {
+      const match = location.match(/\/tag\/([^/?#]+)/i);
+      if (match?.[1]) return normalizeVersion(decodeURIComponent(match[1]));
+    }
+  } catch (error) {
+    logUpdater(`[updater] fallback latest web error=${error instanceof Error ? error.message : String(error)}`);
+  }
+  return null;
+}
+
+function logUpdater(message: string): void {
+  const line = `[${new Date().toISOString()}] ${message}`;
+  console.info(line);
+  void fs
+    .appendFile(join(app.getPath('userData'), 'updater.log'), `${line}\n`, 'utf-8')
+    .catch(() => {});
 }
 
 /** macOS Dock shows Electron’s icon in dev unless we set it (BrowserWindow `icon` does not). */
@@ -135,8 +200,6 @@ function createWindow(): void {
       preload: join(__dirname, '../preload/index.js'),
       nodeIntegration: false,
       contextIsolation: true,
-      // Widevine / EME (Spotify Web Playback) does not initialize with a sandboxed renderer on ECS.
-      sandbox: false,
     },
   });
 
@@ -205,7 +268,11 @@ function registerIpcHandlers(): void {
     > => {
       if (!app.isPackaged) return { ok: false, reason: 'development' };
       try {
+        logUpdater('[updater] manual check started');
         const result = await autoUpdater.checkForUpdates();
+        logUpdater(
+          `[updater] autoUpdater response available=${String(result?.isUpdateAvailable)} version=${result?.updateInfo?.version ?? 'null'}`,
+        );
         if (result == null) return { ok: false, reason: 'updater_inactive' };
         return {
           ok: true,
@@ -213,10 +280,32 @@ function registerIpcHandlers(): void {
           remoteVersion: result.updateInfo?.version ?? null,
         };
       } catch (e) {
+        const errorMessage = e instanceof Error ? e.message : String(e);
+        logUpdater(`[updater] manual check error ${errorMessage}`);
+        if (isGithubLatest404(e)) {
+          logUpdater('[updater] github 404 detected, trying fallback');
+          const remoteVersion = await resolveLatestReleaseVersion();
+          if (remoteVersion) {
+            logUpdater(
+              `[updater] fallback resolved remoteVersion=${remoteVersion} currentVersion=${app.getVersion()}`,
+            );
+            return {
+              ok: true,
+              isUpdateAvailable: compareSemver(app.getVersion(), remoteVersion) < 0,
+              remoteVersion,
+            };
+          }
+          logUpdater('[updater] fallback did not resolve any release version');
+          return {
+            ok: false,
+            reason: 'error',
+            message: updaterAccessMessage(),
+          };
+        }
         return {
           ok: false,
           reason: 'error',
-          message: e instanceof Error ? e.message : String(e),
+          message: errorMessage,
         };
       }
     },
@@ -478,39 +567,11 @@ if (!gotLock) {
   });
 }
 
+
 app.whenReady().then(async () => {
   allowPlaybackPermissions();
   getDatabase();
   registerIpcHandlers();
-
-  const widevineId = components.WIDEVINE_CDM_ID;
-  console.log('[Widevine] userData:', app.getPath('userData'));
-  console.log('[Widevine] WIDEVINE_CDM_ID:', widevineId);
-  console.log('[Widevine] component updates enabled:', components.updatesEnabled);
-
-  try {
-    await components.whenReady([widevineId]);
-    const st = components.status()[widevineId];
-    console.log('[Widevine] component status:', st);
-    if (!st?.version) {
-      throw new Error(
-        `Widevine CDM has no version (status: ${JSON.stringify(st)}). Component Updater could not install DRM — often fixed by upgrading to a supported Castlabs Electron line (see package.json).`,
-      );
-    }
-  } catch (e) {
-    console.error('[Widevine] CDM setup failed:', e);
-    const detail = formatWidevineFailure(e);
-    void dialog.showMessageBox({
-      type: 'warning',
-      title: tr('widevine.title'),
-      message: tr('widevine.message'),
-      detail: `${detail}
-
-${tr('widevine.commonCauses')}
-
-${tr('widevine.versionHint')}`,
-    });
-  }
 
   applyDarwinDockIcon();
   createWindow();

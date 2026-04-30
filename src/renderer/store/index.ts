@@ -34,14 +34,8 @@ export interface SpotifySearchResult {
   durationMs: number;
 }
 
-/** Lifecycle of the embedded Spotify Web Playback SDK (see Settings for diagnostics). */
-export type WebPlaybackPhase =
-  | 'idle'
-  | 'loading_sdk'
-  | 'initializing'
-  | 'connecting'
-  | 'ready'
-  | 'error';
+/** Lifecycle of the Spotify Connect remote-control link (see Settings for diagnostics). */
+export type WebPlaybackPhase = 'idle' | 'initializing' | 'ready' | 'error';
 
 export interface Toast {
   id: string;
@@ -130,21 +124,6 @@ export const ACCENT_COLORS: Record<AccentColor, { primary: string; hover: string
   red: { primary: '#ef4444', hover: '#f87171' },
 };
 
-export interface ShortcutBinding {
-  id: string;
-  label: string;
-  key: string;
-  modifiers: string[];
-}
-
-export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
-  { id: 'play-pause', label: 'Play / Pause automation', key: 'Space', modifiers: [] },
-  { id: 'stop', label: 'Stop automation', key: 'S', modifiers: [] },
-  { id: 'continue', label: 'Continue at pause', key: 'C', modifiers: [] },
-  { id: 'search', label: 'Open Spotify search', key: 'K', modifiers: ['Meta'] },
-  { id: 'live', label: 'Toggle live mode', key: 'L', modifiers: [] },
-];
-
 // ── Slice interfaces ───────────────────────────────────────────────────
 
 interface UISlice {
@@ -163,6 +142,8 @@ interface SpotifySlice {
   token: string | null;
   clientId: string | null;
   deviceId: string | null;
+  /** Human-readable name of the active Spotify Connect device (e.g. "MacBook Pro"). */
+  deviceName: string | null;
   sdkReady: boolean;
   webPlaybackPhase: WebPlaybackPhase;
   webPlaybackLastError: string | null;
@@ -175,6 +156,7 @@ interface SpotifySlice {
   setToken: (token: string | null) => void;
   setClientId: (id: string | null) => void;
   setDeviceId: (id: string | null) => void;
+  setDeviceName: (name: string | null) => void;
   setSdkReady: (ready: boolean) => void;
   setWebPlaybackDiag: (phase: WebPlaybackPhase, lastError?: string | null) => void;
   setSearchResults: (results: SpotifySearchResult[]) => void;
@@ -214,6 +196,7 @@ interface AutomationSlice {
   setAutomationSteps: (steps: AutomationStep[]) => void;
   addAutomationStep: (step: AutomationStep) => void;
   removeAutomationStep: (id: string) => void;
+  clearAutomationSteps: () => void;
   reorderAutomationSteps: (fromIndex: number, toIndex: number) => void;
   updateAutomationStep: (id: string, updates: Partial<AutomationStep>) => void;
   setSelectedStepIndex: (index: number | null) => void;
@@ -258,8 +241,10 @@ export type CoachMarkId = 'automation-drag' | 'automation-pause' | 'live-golive'
 
 interface LiveSlice {
   isLive: boolean;
+  soundboardVolume: number;
   quickFireSlots: QuickFireSlot[];
   setIsLive: (live: boolean) => void;
+  setSoundboardVolume: (volume: number) => void;
   setQuickFireSlots: (slots: QuickFireSlot[]) => void;
   updateQuickFireSlot: (id: string, updates: Partial<QuickFireSlot>) => void;
   clearQuickFireSlot: (id: string) => void;
@@ -277,7 +262,8 @@ interface SettingsSlice {
   autoUpdate: boolean;
   /** When true, automation loads and plays the set for each weekly block at its start time (app must stay open). */
   followProgramSchedule: boolean;
-  shortcuts: ShortcutBinding[];
+  /** After the program ends on a playlist step, seed Spotify recommendations from the last track and keep queue topped up. */
+  continuePlaylistRecommendations: boolean;
   setTheme: (theme: ThemeMode) => void;
   setLanguage: (language: AppLanguage) => void;
   setAccentColor: (color: AccentColor) => void;
@@ -288,8 +274,7 @@ interface SettingsSlice {
   setDuckLevel: (level: number) => void;
   setAutoUpdate: (auto: boolean) => void;
   setFollowProgramSchedule: (on: boolean) => void;
-  setShortcuts: (shortcuts: ShortcutBinding[]) => void;
-  updateShortcut: (id: string, key: string, modifiers: string[]) => void;
+  setContinuePlaylistRecommendations: (on: boolean) => void;
 }
 
 interface OnboardingSlice {
@@ -330,6 +315,7 @@ const createSpotifySlice: StateCreator<StoreState, [], [], SpotifySlice> = (set)
   token: null,
   clientId: null,
   deviceId: null,
+  deviceName: null,
   sdkReady: false,
   webPlaybackPhase: 'idle',
   webPlaybackLastError: null,
@@ -341,6 +327,7 @@ const createSpotifySlice: StateCreator<StoreState, [], [], SpotifySlice> = (set)
   setToken: (token) => set({ token }),
   setClientId: (id) => set({ clientId: id }),
   setDeviceId: (id) => set({ deviceId: id }),
+  setDeviceName: (name) => set({ deviceName: name }),
   setSdkReady: (ready) => set({ sdkReady: ready }),
   setWebPlaybackDiag: (phase, lastError = null) =>
     set({
@@ -349,19 +336,22 @@ const createSpotifySlice: StateCreator<StoreState, [], [], SpotifySlice> = (set)
     }),
   setSearchResults: (results) => set({ searchResults: results }),
   setSpotifyGrantedScopes: (spotifyGrantedScopes) => set({ spotifyGrantedScopes }),
-  disconnectSpotify: () =>
+  disconnectSpotify: () => {
+    window.dispatchEvent(new CustomEvent('radio-sankt:stop-recommendations'));
     set({
       connected: false,
       user: null,
       userAvatar: null,
       token: null,
       deviceId: null,
+      deviceName: null,
       sdkReady: false,
       webPlaybackPhase: 'idle',
       webPlaybackLastError: null,
       searchResults: [],
       spotifyGrantedScopes: null,
-    }),
+    });
+  },
 });
 
 const createPlayerSlice: StateCreator<StoreState, [], [], PlayerSlice> = (set) => ({
@@ -440,6 +430,16 @@ const createAutomationSlice: StateCreator<StoreState, [], [], AutomationSlice> =
         selectedStepIndex: nextSel,
       };
     }),
+  clearAutomationSteps: () => {
+    window.dispatchEvent(new CustomEvent('radio-sankt:stop-recommendations'));
+    set({
+      automationSteps: [],
+      selectedStepIndex: null,
+      currentStepIndex: 0,
+      automationStatus: 'stopped',
+      stepTimeRemaining: 0,
+    });
+  },
   reorderAutomationSteps: (fromIndex, toIndex) =>
     set((s) => {
       const prev = [...s.automationSteps];
@@ -585,8 +585,13 @@ function createDefaultQuickFireSlots(): QuickFireSlot[] {
 
 const createLiveSlice: StateCreator<StoreState, [], [], LiveSlice> = (set) => ({
   isLive: false,
+  soundboardVolume: 1,
   quickFireSlots: createDefaultQuickFireSlots(),
   setIsLive: (live) => set({ isLive: live }),
+  setSoundboardVolume: (volume) => {
+    set({ soundboardVolume: volume });
+    window.electronAPI?.saveToStore('soundboardVolume', volume);
+  },
   setQuickFireSlots: (slots) => set({ quickFireSlots: slots }),
   updateQuickFireSlot: (id, updates) =>
     set((state) => {
@@ -617,7 +622,7 @@ const createSettingsSlice: StateCreator<StoreState, [], [], SettingsSlice> = (se
   duckLevel: 20,
   autoUpdate: true,
   followProgramSchedule: true,
-  shortcuts: [...DEFAULT_SHORTCUTS],
+  continuePlaylistRecommendations: false,
   setLanguage: (language) => {
     set({ language });
     window.electronAPI?.saveToStore('language', language);
@@ -684,27 +689,10 @@ const createSettingsSlice: StateCreator<StoreState, [], [], SettingsSlice> = (se
     set({ followProgramSchedule: on });
     window.electronAPI?.saveToStore('followProgramSchedule', on);
   },
-  setShortcuts: (shortcuts) => {
-    set({ shortcuts });
-    window.electronAPI?.saveToStore('shortcuts', shortcuts);
+  setContinuePlaylistRecommendations: (on) => {
+    set({ continuePlaylistRecommendations: on });
+    window.electronAPI?.saveToStore('continuePlaylistRecommendations', on);
   },
-  updateShortcut: (id, key, modifiers) =>
-    set((state) => {
-      const shortcuts = state.shortcuts.map((s) => {
-        if (s.id === id) return { ...s, key, modifiers };
-        // Clear any other shortcut that has the same key+modifiers
-        if (
-          s.key === key &&
-          s.modifiers.length === modifiers.length &&
-          s.modifiers.every((m) => modifiers.includes(m))
-        ) {
-          return { ...s, key: '', modifiers: [] };
-        }
-        return s;
-      });
-      window.electronAPI?.saveToStore('shortcuts', shortcuts);
-      return { shortcuts };
-    }),
 });
 
 // ── Store ──────────────────────────────────────────────────────────────

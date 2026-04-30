@@ -12,6 +12,11 @@ import {
 import { buildSongStepTransition, type SpotifySearchResult } from '@/store';
 import Tooltip from '@/components/Tooltip';
 import AudioEngine from '@/engine/AudioEngine';
+import { basename, stripExtension } from '@/utils/path';
+
+function prettyAssetName(name: string): string {
+  return /[\\/]/.test(name) ? stripExtension(basename(name)) : name;
+}
 
 function formatDuration(ms: number): string {
   const s = Math.floor(ms / 1000);
@@ -160,18 +165,30 @@ export default function SearchWidget() {
       tick();
     });
 
-  const handlePlayNow = async (uri: string) => {
-    window.dispatchEvent(new CustomEvent('radio-sankt:prime-spotify-playback'));
+  const NO_DEVICE_MESSAGE =
+    'No Spotify device available — open the Spotify app on this computer (or any signed-in device) and try again.';
+
+  const handlePlayNow = async (track: SpotifySearchResult) => {
+    window.dispatchEvent(new CustomEvent('radio-sankt:resume-audio-context'));
     let devId = useStore.getState().deviceId || (await waitForDeviceId(15_000));
     if (!devId) {
-      addToast(
-        'Web Playback is not connected — Spotify Premium is required. Wait until the in-app player connects, or disconnect and reconnect Spotify in Settings.',
-        'warning',
-      );
+      addToast(NO_DEVICE_MESSAGE, 'warning');
       return;
     }
+    // Optimistically fill NowPlaying so the user sees feedback immediately.
+    useStore.getState().setCurrentTrack({
+      id: track.uri,
+      title: track.name,
+      artist: track.artist,
+      album: track.album,
+      albumArt: track.albumArt,
+      duration: track.durationMs,
+      uri: track.uri,
+    });
+    useStore.getState().setDuration(track.durationMs);
+    useStore.getState().setPosition(0);
     try {
-      await playTrack(uri, devId);
+      await playTrack(track.uri, devId);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error('[SearchWidget] playTrack', msg);
@@ -179,18 +196,24 @@ export default function SearchWidget() {
     }
   };
 
-  const handlePlayPlaylistNow = async (contextUri: string) => {
-    window.dispatchEvent(new CustomEvent('radio-sankt:prime-spotify-playback'));
+  const handlePlayPlaylistNow = async (summary: SpotifyPlaylistSummary) => {
+    window.dispatchEvent(new CustomEvent('radio-sankt:resume-audio-context'));
     let devId = useStore.getState().deviceId || (await waitForDeviceId(15_000));
     if (!devId) {
-      addToast(
-        'Web Playback is not connected — Spotify Premium is required. Wait until the in-app player connects, or disconnect and reconnect Spotify in Settings.',
-        'warning',
-      );
+      addToast(NO_DEVICE_MESSAGE, 'warning');
       return;
     }
+    useStore.getState().setCurrentTrack({
+      id: summary.uri,
+      title: summary.name,
+      artist: `Playlist · ${summary.trackCount} tracks`,
+      album: '',
+      albumArt: summary.imageUrl,
+      duration: 0,
+      uri: summary.uri,
+    });
     try {
-      await playPlaylistContext(contextUri, devId);
+      await playPlaylistContext(summary.uri, devId);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       console.error('[SearchWidget] playPlaylistContext', msg);
@@ -293,7 +316,7 @@ export default function SearchWidget() {
   const renderTrackRow = (track: SpotifySearchResult, key: string) => (
     <div
       key={key}
-      onDoubleClick={() => handlePlayNow(track.uri)}
+      onDoubleClick={() => handlePlayNow(track)}
       className="flex items-center gap-3 px-4 py-2 hover:bg-bg-elevated transition-colors group cursor-default"
     >
       <img
@@ -328,7 +351,7 @@ export default function SearchWidget() {
             type="button"
             onClick={(e) => {
               e.stopPropagation();
-              handlePlayNow(track.uri);
+              handlePlayNow(track);
             }}
             className="p-1.5 rounded-md hover:bg-accent/20 text-accent transition-colors"
             aria-label={t('workspace.search.playNow', { defaultValue: 'Play now' })}
@@ -357,7 +380,7 @@ export default function SearchWidget() {
         </svg>
       </div>
       <div className="flex-1 min-w-0">
-        <div className="text-sm font-medium text-text-primary truncate">{jingle.name}</div>
+        <div className="text-sm font-medium text-text-primary truncate">{prettyAssetName(jingle.name)}</div>
         <div className="text-xs text-text-secondary truncate">{t('workspace.search.localAudio', { defaultValue: 'Local Audio' })}</div>
       </div>
       <span className="text-xs text-text-muted tabular-nums shrink-0">{formatDuration(jingle.durationMs)}</span>
@@ -594,7 +617,7 @@ export default function SearchWidget() {
                     </svg>
                   </div>
                   <div className="flex-1 min-w-0">
-                    <div className="text-sm font-medium text-text-primary truncate">{ad.name}</div>
+                    <div className="text-sm font-medium text-text-primary truncate">{prettyAssetName(ad.name)}</div>
                     <div className="text-xs text-text-secondary truncate">{t('workspace.search.adClip', { defaultValue: 'Ad clip' })}</div>
                   </div>
                   <span className="text-xs text-text-muted tabular-nums shrink-0">{formatDuration(ad.durationMs)}</span>
@@ -696,7 +719,7 @@ export default function SearchWidget() {
                 <Tooltip content={t('workspace.playlists.playWholeNow', { defaultValue: 'Play the whole playlist now on the in-app player' })} placement="bottom">
                   <button
                     type="button"
-                    onClick={() => handlePlayPlaylistNow(selectedPlaylist.uri)}
+                    onClick={() => handlePlayPlaylistNow(selectedPlaylist)}
                     className="px-3 py-1.5 rounded-md text-xs font-medium bg-bg-elevated hover:bg-border text-text-primary transition-colors ml-auto"
                   >
                     {t('workspace.search.playNow', { defaultValue: 'Play now' })}

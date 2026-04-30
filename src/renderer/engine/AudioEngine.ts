@@ -1,3 +1,12 @@
+/**
+ * Local audio mixer for jingles, ads, and cart-wall hot keys.
+ *
+ * Prior to the Spotify Connect migration this engine also mixed the Spotify
+ * Web Playback SDK's `<audio>` element on a second channel. In Spotify
+ * Connect mode Spotify audio is rendered by the Spotify desktop app itself,
+ * so the engine only needs one channel now.
+ */
+
 type Channel = 'A' | 'B';
 
 class AudioEngine {
@@ -17,7 +26,7 @@ class AudioEngine {
   private fadeGeneration: Record<Channel, number> = { A: 0, B: 0 };
   private fadingChannels: Record<Channel, boolean> = { A: false, B: false };
 
-  // Jingle playback state (single voice — automation / preview)
+  // Single-voice jingle playback (used by the automation engine).
   private jingleSource: AudioBufferSourceNode | null = null;
   private jingleBuffer: AudioBuffer | null = null;
   private jingleStartTime = 0;
@@ -25,7 +34,7 @@ class AudioEngine {
   private jingleOnEnded: (() => void) | null = null;
   private jingleGeneration = 0;
 
-  /** Cart-wall polyphony: multiple buffer sources into channel B */
+  /** Cart-wall polyphony: multiple buffer sources mix in concurrently. */
   private cartVoices = new Map<string, AudioBufferSourceNode>();
 
   private constructor(ctx: AudioContext) {
@@ -79,11 +88,11 @@ class AudioEngine {
     }
   }
 
-  getGainNode(channel: Channel): GainNode {
+  // ── Volume ──────────────────────────────────────────────────────────
+
+  private getGainNode(channel: Channel): GainNode {
     return channel === 'A' ? this.gainA : this.gainB;
   }
-
-  // ── Volume ──────────────────────────────────────────────────────────
 
   setVolume(channel: Channel, value: number): void {
     const gain = this.getGainNode(channel);
@@ -96,7 +105,11 @@ class AudioEngine {
     this.fadingChannels[channel] = false;
   }
 
-  // ── Fades ───────────────────────────────────────────────────────────
+  setCartVolume(value: number): void {
+    const now = this.ctx.currentTime;
+    this.cartGain.gain.cancelScheduledValues(now);
+    this.cartGain.gain.setValueAtTime(value, now);
+  }
 
   fadeIn(channel: Channel, durationMs: number, targetGain = 1): Promise<void> {
     return new Promise((resolve) => {
@@ -234,7 +247,7 @@ class AudioEngine {
     this.jingleSource.start();
   }
 
-  /** Extra cart voices on channel B; does not stop automation jingle or other cart voices. */
+  /** Extra cart voices; do not stop the automation jingle or other cart voices. */
   async playJingleVoice(filePath: string, onEnded?: () => void): Promise<{ id: string; durationMs: number }> {
     await this.resumeContextIfNeeded();
     const arrayBuffer = await window.electronAPI.readFileBuffer(filePath);
@@ -280,17 +293,37 @@ class AudioEngine {
     this.cartVoices.clear();
   }
 
-  /** Set cart wall volume independently from channel gains. */
-  setCartVolume(value: number): void {
-    const now = this.ctx.currentTime;
-    this.cartGain.gain.cancelScheduledValues(now);
-    this.cartGain.gain.setValueAtTime(value, now);
+  /** Stop automation/cart jingle voice only (cart-wall polyphony keeps playing). */
+  stopAutomationJingle(): void {
+    if (this.jingleSource) {
+      try {
+        this.jingleSource.stop();
+      } catch {
+        /* already stopped */
+      }
+      this.jingleSource = null;
+    }
+    this.jingleBuffer = null;
+    this.jinglePlaying = false;
+    this.jingleOnEnded = null;
+  }
+
+  stopCartVoices(): void {
+    this.cartVoices.forEach((src) => {
+      try {
+        src.stop();
+      } catch {
+        /* already stopped */
+      }
+    });
+    this.cartVoices.clear();
   }
 
   isJinglePlaying(): boolean {
     return this.jinglePlaying;
   }
 
+  /** Must be called after `playJingle` has started — `playJingle` clears this via `stopJingle()` first. */
   onJingleEnded(cb: () => void): void {
     this.jingleOnEnded = cb;
   }

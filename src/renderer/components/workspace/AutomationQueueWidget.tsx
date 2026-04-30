@@ -78,6 +78,8 @@ function QueueHeader() {
   const { t } = useTranslation();
   const setSavePlaylistModalOpen = useStore((s) => s.setSavePlaylistModalOpen);
   const setLoadPlaylistModalOpen = useStore((s) => s.setLoadPlaylistModalOpen);
+  const continuePlaylistRecommendations = useStore((s) => s.continuePlaylistRecommendations);
+  const setContinuePlaylistRecommendations = useStore((s) => s.setContinuePlaylistRecommendations);
   const breakRule = useStore((s) => s.breakRules[0]);
   const updateBreakRule = useStore((s) => s.updateBreakRule);
   const jingles = useStore((s) => s.jingles);
@@ -111,6 +113,15 @@ function QueueHeader() {
           </button>
         </div>
       </div>
+      <label className="flex cursor-pointer select-none items-start gap-2 text-xs text-text-secondary">
+        <input
+          type="checkbox"
+          className={checkboxClassName}
+          checked={continuePlaylistRecommendations}
+          onChange={(e) => setContinuePlaylistRecommendations(e.target.checked)}
+        />
+        <span className="leading-snug">{t('automation.queue.continueRecommendations', { defaultValue: 'Continue with playlist recommendations when queue ends' })}</span>
+      </label>
       {breakRule && (
         <>
           <div className="space-y-1 text-xs">
@@ -141,87 +152,118 @@ function QueueHeader() {
               })}
             </p>
           </div>
+
           {showConfig && (
-            <div className="flex flex-wrap items-center gap-2 text-xs pt-1">
-              <span className="text-text-muted">{t('automation.queue.every', { defaultValue: 'Every' })}</span>
-              <input type="number" min={1} value={breakRule.everySongs} onChange={(e) => updateBreakRule(breakRule.id, { everySongs: Math.max(1, Number(e.target.value) || 1) })} className="w-14 bg-bg-elevated border border-border rounded px-2 py-1 text-text-primary" />
-              <span className="text-text-muted">
-                {t('automation.queue.songsPlay', { defaultValue: 'songs, play' })}
-              </span>
-              <input type="number" min={1} value={breakRule.itemsPerBreak} onChange={(e) => updateBreakRule(breakRule.id, { itemsPerBreak: Math.max(1, Number(e.target.value) || 1) })} className="w-14 bg-bg-elevated border border-border rounded px-2 py-1 text-text-primary" />
-              <span className="text-text-muted">
-                {t('automation.queue.clipsAvoid', { defaultValue: 'clips, avoid repeating last' })}
-              </span>
-              <input type="number" min={0} value={breakRule.avoidRecent} onChange={(e) => updateBreakRule(breakRule.id, { avoidRecent: Math.max(0, Number(e.target.value) || 0) })} className="w-14 bg-bg-elevated border border-border rounded px-2 py-1 text-text-primary" />
-              <button
-                type="button"
-                onClick={() => hasJingles && setShowJinglePool((v) => !v)}
-                disabled={!hasJingles}
-                className="px-2 py-1 rounded bg-bg-elevated border border-border text-text-secondary hover:text-text-primary disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {t('automation.queue.jinglePool', { count: selectedJingleIds.length, defaultValue: 'Jingle pool ({{count}})' })}
-              </button>
-              <button
-                type="button"
-                onClick={() => hasAds && setShowAdPool((v) => !v)}
-                disabled={!hasAds}
-                className="px-2 py-1 rounded bg-bg-elevated border border-border text-text-secondary hover:text-text-primary disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {t('automation.queue.adPool', { count: selectedAdIds.length, defaultValue: 'Ad pool ({{count}})' })}
-              </button>
+            <>
+              {/* Rule numbers */}
+              <div className="flex flex-wrap items-center gap-2 text-xs pt-1">
+                <span className="text-text-muted">{t('automation.queue.every', { defaultValue: 'Every' })}</span>
+                <input type="number" min={1} value={breakRule.everySongs} onChange={(e) => updateBreakRule(breakRule.id, { everySongs: Math.max(1, Number(e.target.value) || 1) })} className="w-14 bg-bg-elevated border border-border rounded px-2 py-1 text-text-primary" />
+                <span className="text-text-muted">
+                  {t('automation.queue.songsPlay', { defaultValue: 'songs, play' })}
+                </span>
+                <input type="number" min={1} value={breakRule.itemsPerBreak} onChange={(e) => updateBreakRule(breakRule.id, { itemsPerBreak: Math.max(1, Number(e.target.value) || 1) })} className="w-14 bg-bg-elevated border border-border rounded px-2 py-1 text-text-primary" />
+                <span className="text-text-muted">
+                  {t('automation.queue.clipsAvoid', { defaultValue: 'clips, avoid repeating last' })}
+                </span>
+                <input type="number" min={0} value={breakRule.avoidRecent} onChange={(e) => updateBreakRule(breakRule.id, { avoidRecent: Math.max(0, Number(e.target.value) || 0) })} className="w-14 bg-bg-elevated border border-border rounded px-2 py-1 text-text-primary" />
+              </div>
+
+              {/* Warnings */}
               {breakRule.enabled && selectedJingleIds.length + selectedAdIds.length === 0 && (
-                <span className="text-amber-400">{t('automation.queue.pickOneClip', { defaultValue: 'Pick at least one clip in the pools' })}</span>
+                <p className="text-xs text-amber-400">{t('automation.queue.pickOneClip', { defaultValue: 'Pick at least one clip in the pools' })}</p>
               )}
               {breakRule.enabled && !hasJingles && !hasAds && (
-                <span className="text-text-muted">{t('automation.queue.noClipsYet', { defaultValue: 'No clips in the library yet - add jingles or ads from Search, then Manage.' })}</span>
+                <p className="text-xs text-text-muted">{t('automation.queue.noClipsYet', { defaultValue: 'No clips in the library yet - add jingles or ads from Search, then Manage.' })}</p>
               )}
-            </div>
+              <p className="text-[11px] text-text-muted leading-snug">
+                {t('automation.queue.breakHint', {
+                  defaultValue:
+                    'Breaks are inserted between tracks while automation is running. Add songs to the queue and press Play.',
+                })}
+              </p>
+
+              {/* Pools — stacked below the phrase, each taking its own row. */}
+              <div className="flex flex-col gap-2">
+                <PoolSection
+                  label={t('automation.queue.jinglePool', { count: selectedJingleIds.length, defaultValue: 'Jingle pool ({{count}})' })}
+                  items={jingles}
+                  selectedIds={selectedJingleIds}
+                  expanded={showJinglePool}
+                  onToggleExpanded={() => hasJingles && setShowJinglePool((v) => !v)}
+                  disabled={!hasJingles}
+                  onChange={(nextIds) => updateBreakRule(breakRule.id, { selectedJingleIds: nextIds })}
+                />
+                <PoolSection
+                  label={t('automation.queue.adPool', { count: selectedAdIds.length, defaultValue: 'Ad pool ({{count}})' })}
+                  items={ads}
+                  selectedIds={selectedAdIds}
+                  expanded={showAdPool}
+                  onToggleExpanded={() => hasAds && setShowAdPool((v) => !v)}
+                  disabled={!hasAds}
+                  onChange={(nextIds) => updateBreakRule(breakRule.id, { selectedAdIds: nextIds })}
+                />
+              </div>
+            </>
           )}
         </>
       )}
-      {breakRule && showConfig && showJinglePool && hasJingles && (
-        <div className="max-h-36 overflow-y-auto rounded border border-border p-2 grid grid-cols-2 gap-1 text-xs">
-          {jingles.map((j) => {
-            const checked = selectedJingleIds.includes(j.id);
+    </div>
+  );
+}
+
+interface PoolSectionProps {
+  label: string;
+  items: Array<{ id: number; name: string }>;
+  selectedIds: number[];
+  expanded: boolean;
+  onToggleExpanded: () => void;
+  disabled: boolean;
+  onChange: (nextIds: number[]) => void;
+}
+
+function PoolSection({ label, items, selectedIds, expanded, onToggleExpanded, disabled, onChange }: PoolSectionProps) {
+  return (
+    <div className="rounded-lg border border-border bg-bg-elevated/30">
+      <button
+        type="button"
+        onClick={onToggleExpanded}
+        disabled={disabled}
+        className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left text-xs font-medium text-text-secondary hover:text-text-primary disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        <span className="truncate">{label}</span>
+        {!disabled && (
+          <svg
+            width="10"
+            height="10"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={`shrink-0 transition-transform ${expanded ? 'rotate-180' : ''}`}
+          >
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+        )}
+      </button>
+      {expanded && items.length > 0 && (
+        <div className="border-t border-border px-3 py-2 grid grid-cols-2 gap-1 text-xs max-h-40 overflow-y-auto">
+          {items.map((it) => {
+            const checked = selectedIds.includes(it.id);
+            const prettyName = /[\\/]/.test(it.name) ? it.name.split(/[\\/]+/).pop()?.replace(/\.[^.]+$/, '') ?? it.name : it.name;
             return (
-              <label key={j.id} className="flex cursor-pointer select-none items-center gap-2 text-text-secondary">
+              <label key={it.id} className="flex cursor-pointer select-none items-center gap-2 text-text-secondary">
                 <input
                   type="checkbox"
                   className={checkboxClassName}
                   checked={checked}
                   onChange={(e) =>
-                    updateBreakRule(breakRule.id, {
-                      selectedJingleIds: e.target.checked
-                        ? [...selectedJingleIds, j.id]
-                        : selectedJingleIds.filter((id) => id !== j.id),
-                    })
+                    onChange(e.target.checked ? [...selectedIds, it.id] : selectedIds.filter((id) => id !== it.id))
                   }
                 />
-                <span className="truncate">{j.name}</span>
-              </label>
-            );
-          })}
-        </div>
-      )}
-      {breakRule && showConfig && showAdPool && hasAds && (
-        <div className="max-h-36 overflow-y-auto rounded border border-border p-2 grid grid-cols-2 gap-1 text-xs">
-          {ads.map((a) => {
-            const checked = selectedAdIds.includes(a.id);
-            return (
-              <label key={a.id} className="flex cursor-pointer select-none items-center gap-2 text-text-secondary">
-                <input
-                  type="checkbox"
-                  className={checkboxClassName}
-                  checked={checked}
-                  onChange={(e) =>
-                    updateBreakRule(breakRule.id, {
-                      selectedAdIds: e.target.checked
-                        ? [...selectedAdIds, a.id]
-                        : selectedAdIds.filter((id) => id !== a.id),
-                    })
-                  }
-                />
-                <span className="truncate">{a.name}</span>
+                <span className="truncate" title={prettyName}>{prettyName}</span>
               </label>
             );
           })}
@@ -240,6 +282,7 @@ export default function AutomationQueueWidget() {
   const isPlayingSpotify = useStore((s) => s.isPlaying);
   const reorderAutomationSteps = useStore((s) => s.reorderAutomationSteps);
   const removeAutomationStep = useStore((s) => s.removeAutomationStep);
+  const clearAutomationSteps = useStore((s) => s.clearAutomationSteps);
   const setSelectedStepIndex = useStore((s) => s.setSelectedStepIndex);
 
   const sensors = useSensors(
@@ -348,6 +391,15 @@ export default function AutomationQueueWidget() {
                 ▶ {t('common.continue').toUpperCase()}
               </button>
             )}
+
+            <button
+              type="button"
+              onClick={clearAutomationSteps}
+              className="px-3 py-1.5 bg-bg-elevated hover:bg-border text-text-primary rounded-lg text-xs font-medium transition-colors"
+              aria-label={t('automation.queue.clear', { defaultValue: 'Clear' })}
+            >
+              {t('automation.queue.clear', { defaultValue: 'Clear' })}
+            </button>
 
             <StepCountdown steps={steps} />
           </div>

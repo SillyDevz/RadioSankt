@@ -4,6 +4,7 @@ import { useStore } from '@/store';
 import type { QuickFireSlot } from '@/store';
 import AudioEngine from '@/engine/AudioEngine';
 import AutomationEngine from '@/engine/AutomationEngine';
+import { remoteSetVolumePercent } from '@/services/spotify-api';
 import Tooltip from '@/components/Tooltip';
 
 import JingleManagerModal from './JingleManagerModal';
@@ -202,6 +203,8 @@ export default function CartWallWidget() {
   const addToast = useStore((s) => s.addToast);
   const fadeOutMs = useStore((s) => s.fadeOutMs);
   const fadeInMs = useStore((s) => s.fadeInMs);
+  const soundboardVolume = useStore((s) => s.soundboardVolume);
+  const setSoundboardVolume = useStore((s) => s.setSoundboardVolume);
 
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; slotId: string } | null>(null);
   const [assigningSlotId, setAssigningSlotId] = useState<string | null>(null);
@@ -221,6 +224,11 @@ export default function CartWallWidget() {
     });
   }, [setQuickFireSlots]);
 
+  useEffect(() => {
+    const audio = AudioEngine.getOrInit();
+    audio.setCartVolume(soundboardVolume);
+  }, [soundboardVolume]);
+
   const liveTransitioning = useRef(false);
 
   const handleGoLive = useCallback(async () => {
@@ -231,7 +239,23 @@ export default function CartWallWidget() {
       const waitFade = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
       if (isLive) {
+        // Going OFFLINE:
+        //   1) Force the Spotify device volume to 0 so resume doesn't spike at full.
+        //   2) Resume playback.
+        //   3) Fade the volume back up to the user's volume.
+        //   4) Clear isLive only after the fade completes.
         window.dispatchEvent(new CustomEvent('radio-sankt:prime-spotify-playback'));
+        window.dispatchEvent(new CustomEvent('radio-sankt:resume-audio-context'));
+
+        const devId = useStore.getState().deviceId;
+        if (devId) {
+          try {
+            await remoteSetVolumePercent(0, devId);
+          } catch {
+            /* ignore */
+          }
+        }
+
         if (prevAutomationStatusBeforeLive === 'playing') {
           await engine.resume({ skipGainRecovery: true });
         } else {
@@ -245,12 +269,27 @@ export default function CartWallWidget() {
         prevAutomationStatusBeforeLive = null;
         addToast(t('workspace.cart.backToAutomation', { defaultValue: 'Back to automation' }), 'info');
       } else {
+        // Going LIVE:
+        //   1) Mark isLive so the volume-sync effect stops fighting us.
+        //   2) Fade the Spotify device volume down to 0.
+        //   3) Force volume to 0 (in case the ramp got rate-limited).
+        //   4) Pause playback.
         prevAutomationStatusBeforeLive = automationStatus;
         setIsLive(true);
         window.dispatchEvent(
           new CustomEvent('radio-sankt:live-audio', { detail: { goingLive: true, fadeMs: fadeOutMs } }),
         );
         await waitFade(fadeOutMs);
+
+        const devId = useStore.getState().deviceId;
+        if (devId) {
+          try {
+            await remoteSetVolumePercent(0, devId);
+          } catch {
+            /* ignore */
+          }
+        }
+
         if (automationStatus === 'playing') {
           await engine.pause({ skipFade: true });
         } else {
@@ -321,6 +360,15 @@ export default function CartWallWidget() {
     }
   }, [addToast]);
 
+  const handleStopAll = useCallback(() => {
+    const audio = AudioEngine.get();
+    if (!audio) return;
+    audio.stopCartVoices();
+    slotVoiceCountsRef.current = {};
+    setActiveSlotIds(new Set());
+    setSlotProgress({});
+  }, []);
+
   const handleContextMenu = (e: React.MouseEvent, slotId: string) => {
     e.preventDefault();
     setContextMenu({ x: e.clientX, y: e.clientY, slotId });
@@ -354,30 +402,51 @@ export default function CartWallWidget() {
             <h2 className="text-base font-bold text-text-primary">{t('workspace.cart.title', { defaultValue: 'Soundboard' })}</h2>
             <p className="text-xs text-text-muted">{t('workspace.cart.subtitle', { defaultValue: 'Quick-fire clips for live moments' })}</p>
           </div>
-        <Tooltip content={isLive ? 'End live mode and resume automation' : 'Pauses automation and fades out music so you can speak or play content live'} placement="bottom">
-          <button
-            onClick={handleGoLive}
-            className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-bold tracking-wide transition-all duration-200 ${
-              isLive
-                ? 'bg-accent text-white shadow-md hover:bg-accent-hover'
-                : 'bg-danger text-white hover:bg-red-600'
-            }`}
-          >
-            {isLive ? (
-              <>
-                <div className="h-2 w-2 rounded-full bg-white animate-pulse-live" />
-                {t('workspace.cart.onAir', { defaultValue: 'ON AIR' })}
-              </>
-            ) : (
-              <>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
-                  <circle cx="12" cy="12" r="10" />
-                </svg>
-                {t('workspace.cart.goLive', { defaultValue: 'GO LIVE' })}
-              </>
-            )}
-          </button>
-        </Tooltip>
+          <div className="flex items-center gap-3">
+            <div className="hidden md:flex items-center gap-2 rounded-xl border border-border bg-bg-surface px-3 py-2">
+              <span className="text-xs font-medium text-text-secondary">{t('workspace.cart.soundboardVolume', { defaultValue: 'Soundboard volume' })}</span>
+              <input
+                type="range"
+                min={0}
+                max={1}
+                step={0.01}
+                value={soundboardVolume}
+                onChange={(e) => setSoundboardVolume(parseFloat(e.target.value))}
+                className="w-24 accent-accent"
+                aria-label={t('workspace.cart.soundboardVolume', { defaultValue: 'Soundboard volume' })}
+              />
+            </div>
+            <button
+              onClick={handleStopAll}
+              className="rounded-xl border border-border bg-bg-surface px-3 py-2 text-xs font-bold text-text-primary transition-colors hover:bg-bg-elevated"
+            >
+              {t('workspace.cart.stopAll', { defaultValue: 'STOP SFX' })}
+            </button>
+            <Tooltip content={isLive ? 'End live mode and resume automation' : 'Pauses automation and fades out music so you can speak or play content live'} placement="bottom">
+              <button
+                onClick={handleGoLive}
+                className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-xs font-bold tracking-wide transition-all duration-200 ${
+                  isLive
+                    ? 'bg-accent text-white shadow-md hover:bg-accent-hover'
+                    : 'bg-danger text-white hover:bg-red-600'
+                }`}
+              >
+                {isLive ? (
+                  <>
+                    <div className="h-2 w-2 rounded-full bg-white animate-pulse-live" />
+                    {t('workspace.cart.onAir', { defaultValue: 'ON AIR' })}
+                  </>
+                ) : (
+                  <>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor">
+                      <circle cx="12" cy="12" r="10" />
+                    </svg>
+                    {t('workspace.cart.goLive', { defaultValue: 'GO LIVE' })}
+                  </>
+                )}
+              </button>
+            </Tooltip>
+          </div>
         </div>
       </div>
 

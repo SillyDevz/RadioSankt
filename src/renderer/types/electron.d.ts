@@ -119,65 +119,6 @@ interface ElectronAPI {
   deleteWeeklySlot?: (id: number) => Promise<void>;
 }
 
-// Spotify Web Playback SDK types
-interface SpotifyPlayer {
-  connect: () => Promise<boolean>;
-  disconnect: () => void;
-  addListener: (event: string, callback: (data: any) => void) => boolean; // eslint-disable-line @typescript-eslint/no-explicit-any
-  removeListener: (event: string, callback?: (data: any) => void) => boolean; // eslint-disable-line @typescript-eslint/no-explicit-any
-  getCurrentState: () => Promise<SpotifyPlaybackState | null>;
-  setName: (name: string) => Promise<void>;
-  getVolume: () => Promise<number>;
-  setVolume: (volume: number) => Promise<void>;
-  pause: () => Promise<void>;
-  resume: () => Promise<void>;
-  togglePlay: () => Promise<void>;
-  seek: (positionMs: number) => Promise<void>;
-  previousTrack: () => Promise<void>;
-  nextTrack: () => Promise<void>;
-  activateElement: () => Promise<void>;
-  _options?: { id?: string };
-}
-
-interface SpotifyPlaybackState {
-  context: { uri: string; metadata: Record<string, unknown> };
-  disallows: Record<string, boolean>;
-  paused: boolean;
-  position: number;
-  duration: number;
-  repeat_mode: number;
-  shuffle: boolean;
-  track_window: {
-    current_track: SpotifyTrack;
-    previous_tracks: SpotifyTrack[];
-    next_tracks: SpotifyTrack[];
-  };
-}
-
-interface SpotifyTrack {
-  uri: string;
-  id: string;
-  type: string;
-  media_type: string;
-  name: string;
-  is_playable: boolean;
-  album: {
-    uri: string;
-    name: string;
-    images: Array<{ url: string; height: number; width: number }>;
-  };
-  artists: Array<{ uri: string; name: string }>;
-  duration_ms: number;
-}
-
 interface Window {
   electronAPI: ElectronAPI;
-  Spotify: {
-    Player: new (options: {
-      name: string;
-      getOAuthToken: (cb: (token: string) => void) => void;
-      volume?: number;
-    }) => SpotifyPlayer;
-  };
-  onSpotifyWebPlaybackSDKReady: () => void;
 }

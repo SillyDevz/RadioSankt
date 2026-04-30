@@ -1,5 +1,9 @@
 appId: com.radiosankt.app
 productName: Radio Sankt
+# electron-updater fetches assets by the exact URL written in latest.yml, but
+# GitHub releases normalize spaces in uploaded file names to dots. Use an
+# artifactName without spaces so both sides match.
+artifactName: radio-sankt-${version}-${os}-${arch}.${ext}
 icon: public/icon.png
 electronDist: node_modules/electron/dist
 directories:
@@ -24,6 +28,7 @@ mac:
 win:
   target:
     - nsis
+  artifactName: radio-sankt-setup-${version}.${ext}
 linux:
   target:
     - AppImage
