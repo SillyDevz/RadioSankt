@@ -156,8 +156,10 @@ export function useSpotifyPlayer() {
       }
 
       const engine = AutomationEngine.getInstance();
+      const curAutoStep = automationSteps[useStore.getState().currentStepIndex];
+      const isLocalAudio = curAutoStep?.type === 'jingle' || curAutoStep?.type === 'ad';
 
-      if (isPlaying) {
+      if (isPlaying || (automationStatus === 'playing' && isLocalAudio)) {
         if (automationStatus === 'playing') await engine.pause();
         else window.dispatchEvent(new CustomEvent('radio-sankt:spotify-pause'));
         return;
@@ -228,6 +230,10 @@ export function useSpotifyPlayer() {
             setDeviceId(null);
             setDeviceName(null);
             setSdkReady(false);
+            const { automationStatus } = useStore.getState();
+            if (automationStatus === 'playing') {
+              AutomationEngine.getInstance().pause({ autoRecover: true });
+            }
           }
           transferAttemptedFor = null;
           const now = Date.now();
@@ -261,11 +267,15 @@ export function useSpotifyPlayer() {
 
         // Playback-stolen detection: if Spotify reports paused but automation thinks it's
         // playing, another device/user paused playback — pause automation to stay in sync.
+        // Skip when the current step is a jingle/ad — we intentionally pause Spotify for those.
         const stBefore = useStore.getState();
+        const curAutoStep = stBefore.automationSteps[stBefore.currentStepIndex];
+        const isLocalAudioStep = curAutoStep?.type === 'jingle' || curAutoStep?.type === 'ad';
         if (
           !state.isPlaying &&
           stBefore.isPlaying &&
-          (stBefore.automationStatus === 'playing')
+          (stBefore.automationStatus === 'playing') &&
+          !isLocalAudioStep
         ) {
           AutomationEngine.getInstance().pause();
         }
@@ -309,6 +319,7 @@ export function useSpotifyPlayer() {
             curStep.type === 'playlist' &&
             state.contextUri === curStep.spotifyPlaylistUri &&
             st.automationStatus === 'playing' &&
+            state.isPlaying &&
             state.track.uri
           ) {
             if (
