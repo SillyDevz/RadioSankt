@@ -430,13 +430,13 @@ async function waitForPlaybackCondition(
         await new Promise((r) => setTimeout(r, secs * 1000));
       }
     }
-    await new Promise((r) => setTimeout(r, 280));
+    await new Promise((r) => setTimeout(r, 500));
     if (signal?.aborted) return;
   }
   throw new Error(errorMsg);
 }
 
-async function waitForActiveTrackUri(expectedUri: string, timeoutMs: number, signal?: AbortSignal): Promise<void> {
+export async function waitForActiveTrackUri(expectedUri: string, timeoutMs: number, signal?: AbortSignal): Promise<void> {
   return waitForPlaybackCondition(
     (snap) => snap?.itemUri === expectedUri,
     timeoutMs,

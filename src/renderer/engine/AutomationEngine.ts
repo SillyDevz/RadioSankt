@@ -6,6 +6,8 @@ import {
   playPlaylistContextAtOffset,
   remotePause,
   remoteSetVolumePercent,
+  addTrackToQueue,
+  waitForActiveTrackUri,
 } from '@/services/spotify-api';
 import { startRecommendationsContinuation, stopRecommendationsContinuation } from '@/services/recommendations-queue';
 import type { AutomationStep } from '@/store';
@@ -99,8 +101,8 @@ type Listener = (event: AutomationEvent) => void;
 
 const FADE_DURATION = 800;
 
-/** Fire advance when this much track/block time is left so ~1.5s polls still catch before Spotify skips. */
-export const AUTOMATION_SPOTIFY_NEAR_END_MS = 2200;
+/** Fire advance when this much track/block time is left — increased for VPS latency tolerance. */
+export const AUTOMATION_SPOTIFY_NEAR_END_MS = 4000;
 
 /** Extra slack after our remaining estimate before forcing advance if polls stall. */
 const SPOTIFY_FALLBACK_SLACK_MS = 12_000;
@@ -163,10 +165,12 @@ class AutomationEngine {
   private stepTransitionInFlight = false;
   /** Forces the next playTrackStep to call the Spotify API even if the step is in the same group. */
   private forceNextPlayback = false;
+  /** URI preloaded into Spotify's native queue for gapless transition. */
+  private preloadedNextUri: string | null = null;
   /** Auto-recovery watchdog: retries resume after connectivity-related pauses. */
   private autoRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
   private autoRecoveryAttempts = 0;
-  private static readonly AUTO_RECOVERY_DELAYS = [30_000, 60_000, 120_000];
+  private static readonly AUTO_RECOVERY_DELAYS = [5_000, 10_000, 15_000, 20_000, 30_000];
 
   private serialized<T>(fn: () => Promise<T>): Promise<T> {
     const prev = this.transportLock;
@@ -236,11 +240,7 @@ class AutomationEngine {
       this.autoRecoveryAttempts++;
       this.emit({ type: 'error', message: `Auto-recovery attempt ${this.autoRecoveryAttempts}...` });
       void this.resume().catch(() => {
-        if (this.autoRecoveryAttempts < delays.length) {
-          this.scheduleAutoRecovery();
-        } else {
-          this.emit({ type: 'error', message: 'Auto-recovery failed. Manual resume required.' });
-        }
+        this.scheduleAutoRecovery();
       });
     }, delay);
   }
@@ -326,6 +326,7 @@ class AutomationEngine {
       // Play inline break jingles if a break is due
       const breakPicks = this.getBreakPicksIfDue(currentIndex, cur);
       if (breakPicks.length > 0 && devId) {
+        this.preloadedNextUri = null;
         // Pause immediately to prevent gapless bleed into next track
         await remotePause(devId).catch(() => {});
         await remoteSetVolumePercent(this.currentVolumePct(), devId).catch(() => {});
@@ -457,6 +458,7 @@ class AutomationEngine {
     this.invalidatePendingAdvance();
     this.clearCountdown();
     this.forceNextPlayback = true;
+    this.preloadedNextUri = null;
     AudioEngine.get()?.stopJingle();
   }
 
@@ -649,6 +651,7 @@ class AutomationEngine {
         this.currentStepStartTime = Date.now();
         this.startCountdown(step);
         this.scheduleSpotifyStepAdvance(step, index);
+        this.preloadNextTrack(step, index);
       } else if (step.type === 'jingle' || step.type === 'ad') {
         const decodedMs = Math.round(AudioEngine.get()?.getCurrentJingleDuration() ?? step.durationMs);
         store.setDuration(Math.max(decodedMs, step.durationMs));
@@ -705,12 +708,39 @@ class AutomationEngine {
       const sameGroup = prevStep?.type === 'track' && prevStep.groupId === step.groupId;
       if (!sameGroup || this.forceNextPlayback) {
         this.forceNextPlayback = false;
+        this.preloadedNextUri = null;
         await playPlaylistContextAtOffset(step.groupContextUri, step.groupIndex ?? 0, deviceId);
       }
+    } else if (this.preloadedNextUri === step.spotifyUri) {
+      this.preloadedNextUri = null;
+      this.forceNextPlayback = false;
+      await waitForActiveTrackUri(step.spotifyUri, 3_000).catch(() => {});
     } else {
       this.forceNextPlayback = false;
+      this.preloadedNextUri = null;
       await playTrack(step.spotifyUri, deviceId);
     }
+  }
+
+  private preloadNextTrack(currentStep: AutomationStep & { type: 'track' }, currentIndex: number): void {
+    const steps = this.getSteps();
+    const next = steps[currentIndex + 1];
+    if (!next || next.type !== 'track') {
+      this.preloadedNextUri = null;
+      return;
+    }
+    if (next.groupId && next.groupContextUri) {
+      this.preloadedNextUri = null;
+      return;
+    }
+    if (currentStep.groupId && currentStep.groupId === next.groupId) {
+      this.preloadedNextUri = null;
+      return;
+    }
+    this.preloadedNextUri = next.spotifyUri;
+    void addTrackToQueue(next.spotifyUri).catch(() => {
+      this.preloadedNextUri = null;
+    });
   }
 
   private async playLocalAudioStep(step: AutomationStep & { type: 'jingle' | 'ad' }): Promise<void> {

@@ -9,12 +9,11 @@ import {
 } from '@/services/spotify-api';
 import { useStore } from '@/store';
 
-const REFILL_INTERVAL_MS = 18_000;
+const REFILL_INTERVAL_MS = 10_000;
 const BATCH_LIMIT = 18;
 const ADD_PER_TICK = 15;
 const SEEN_CAP = 400;
-const MAX_NULL_TICKS = 3;
-const MAX_RESUME_ATTEMPTS = 2;
+const MAX_NULL_TICKS = 2;
 
 let refillTimer: ReturnType<typeof setInterval> | null = null;
 const queuedSeen = new Set<string>();
@@ -97,13 +96,8 @@ export async function startRecommendationsContinuation(seedTrackUri: string, dev
       lastKnownSeedId = curId;
 
       if (state && !state.isPlaying) {
-        const progressMs = state.progressMs ?? 0;
-        const durationMs = state.track?.durationMs ?? 0;
-        const nearEnd = durationMs > 0 && (durationMs - progressMs) < 5000;
-        if (nearEnd || resumeAttempts < MAX_RESUME_ATTEMPTS) {
-          resumeAttempts++;
-          try { await remoteResumeActiveDevice(); } catch { /* best effort */ }
-        }
+        resumeAttempts++;
+        try { await remoteResumeActiveDevice(); } catch { /* best effort */ }
       } else if (state?.isPlaying) {
         resumeAttempts = 0;
       }
