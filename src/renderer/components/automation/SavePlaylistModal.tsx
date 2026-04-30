@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useStore } from '@/store';
+import ModalShell from '@/components/ModalShell';
 
 export default function SavePlaylistModal() {
   const open = useStore((s) => s.savePlaylistModalOpen);
@@ -16,14 +17,7 @@ export default function SavePlaylistModal() {
   const [name, setName] = useState('');
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') { setOpen(false); setName(''); } };
-    document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
-  }, [open, setOpen]);
-
-  if (!open) return null;
+  const handleClose = () => { setOpen(false); setName(''); };
 
   const handleSave = async () => {
     if (saving) return;
@@ -52,12 +46,7 @@ export default function SavePlaylistModal() {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={() => { setOpen(false); setName(''); }}>
-      <div className="absolute inset-0 bg-black/60" />
-      <div
-        className="relative w-full max-w-sm bg-bg-surface border border-border rounded-lg shadow-2xl overflow-hidden"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <ModalShell open={open} onClose={handleClose} className="w-full max-w-sm overflow-hidden">
         <div className="px-4 py-3 border-b border-border">
           <h2 className="text-sm font-semibold text-text-primary">
             {currentPlaylistId
@@ -82,7 +71,7 @@ export default function SavePlaylistModal() {
           </div>
           <div className="flex justify-end gap-2">
             <button
-              onClick={() => { setOpen(false); setName(''); }}
+              onClick={handleClose}
               className="px-3 py-1.5 bg-bg-elevated hover:bg-border text-text-primary rounded text-xs transition-colors"
             >
               {t('common.cancel')}
@@ -98,7 +87,6 @@ export default function SavePlaylistModal() {
             </button>
           </div>
         </div>
-      </div>
-    </div>
+    </ModalShell>
   );
 }

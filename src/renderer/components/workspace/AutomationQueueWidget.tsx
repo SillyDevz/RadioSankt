@@ -21,15 +21,9 @@ import Tooltip from '@/components/Tooltip';
 import EmptyState from '@/components/automation/EmptyState';
 import SavePlaylistModal from '@/components/automation/SavePlaylistModal';
 import LoadPlaylistModal from '@/components/automation/LoadPlaylistModal';
+import { formatDurationCeil } from '@/utils/formatTime';
 
 const checkboxClassName = 'shrink-0 cursor-pointer rounded border-border w-3.5 h-3.5 accent-accent';
-
-function formatTime(ms: number): string {
-  const totalSec = Math.max(0, Math.ceil(ms / 1000));
-  const m = Math.floor(totalSec / 60);
-  const s = totalSec % 60;
-  return `${m}:${s.toString().padStart(2, '0')}`;
-}
 
 function stepDurationMs(step: AutomationStep | undefined): number {
   if (!step || step.type === 'pause') return 0;
@@ -67,7 +61,7 @@ function StepCountdown({ steps }: { steps: AutomationStep[] }) {
       </div>
       {isPlaying && (
         <span className="text-xs font-medium text-text-secondary tabular-nums whitespace-nowrap">
-          -{formatTime(stepTimeRemaining)}
+          -{formatDurationCeil(stepTimeRemaining)}
         </span>
       )}
     </div>

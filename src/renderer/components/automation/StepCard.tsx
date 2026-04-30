@@ -5,13 +5,7 @@ import { useTranslation } from 'react-i18next';
 import type { AutomationStep } from '@/store';
 import Tooltip from '@/components/Tooltip';
 import { basename, stripExtension } from '@/utils/path';
-
-function formatDuration(ms: number): string {
-  const s = Math.floor(ms / 1000);
-  const m = Math.floor(s / 60);
-  const sec = s % 60;
-  return `${m}:${sec.toString().padStart(2, '0')}`;
-}
+import { formatDuration } from '@/utils/formatTime';
 
 const fallbackIcons: Record<string, string> = {
   track: '\u{1F3B5}',

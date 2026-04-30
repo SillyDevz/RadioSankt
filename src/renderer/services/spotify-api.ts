@@ -75,6 +75,19 @@ function scopesFromAccessTokenJwt(accessToken: string): string[] | null {
   }
 }
 
+async function throwIfNotOk(res: Response, label: string): Promise<void> {
+  if (!res.ok && res.status !== 204) {
+    const body = await res.text();
+    throw new Error(`${label} ${res.status}: ${body}`);
+  }
+}
+
+async function playerCommand(action: string, method: 'PUT' | 'POST', params?: Record<string, string>): Promise<void> {
+  const query = params ? '?' + new URLSearchParams(params).toString() : '';
+  const res = await apiFetch(`/me/player/${action}${query}`, { method });
+  await throwIfNotOk(res, `Spotify ${action}`);
+}
+
 async function apiFetch(path: string, options: RequestInit = {}): Promise<Response> {
   const token = await getToken();
   const controller = new AbortController();
@@ -212,10 +225,7 @@ export async function transferPlaybackToDevice(deviceId: string): Promise<void> 
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ device_ids: [deviceId], play: false }),
   });
-  if (!res.ok && res.status !== 204) {
-    const body = await res.text();
-    throw new Error(`Transfer failed ${res.status}: ${body}`);
-  }
+  await throwIfNotOk(res, 'Transfer failed');
 }
 
 export type ActivePlaybackUris = { itemUri: string | null; contextUri: string | null };
@@ -347,24 +357,12 @@ export async function getRemotePlaybackState(): Promise<SpotifyRemoteState | nul
 
 /** Resume playback on a device (optionally with specific content). */
 export async function remoteResume(deviceId: string): Promise<void> {
-  const res = await apiFetch(`/me/player/play?device_id=${encodeURIComponent(deviceId)}`, {
-    method: 'PUT',
-  });
-  if (!res.ok && res.status !== 204) {
-    const body = await res.text();
-    throw new Error(`Spotify resume ${res.status}: ${body}`);
-  }
+  await playerCommand('play', 'PUT', { device_id: deviceId });
 }
 
 /** Resume on whichever device Spotify considers active (no `device_id`). Use when cached ids may be stale. */
 export async function remoteResumeActiveDevice(): Promise<void> {
-  const res = await apiFetch('/me/player/play', {
-    method: 'PUT',
-  });
-  if (!res.ok && res.status !== 204) {
-    const body = await res.text();
-    throw new Error(`Spotify resume (active) ${res.status}: ${body}`);
-  }
+  await playerCommand('play', 'PUT');
 }
 
 /** Try preferred device id, then poll device from player state, then active-device resume. */
@@ -390,45 +388,20 @@ export async function resumePlaybackBestEffort(preferredDeviceId: string | null 
 }
 
 export async function remotePause(deviceId: string): Promise<void> {
-  const res = await apiFetch(`/me/player/pause?device_id=${encodeURIComponent(deviceId)}`, {
-    method: 'PUT',
-  });
-  if (!res.ok && res.status !== 204) {
-    const body = await res.text();
-    throw new Error(`Spotify pause ${res.status}: ${body}`);
-  }
+  await playerCommand('pause', 'PUT', { device_id: deviceId });
 }
 
 export async function remoteNext(deviceId: string): Promise<void> {
-  const res = await apiFetch(`/me/player/next?device_id=${encodeURIComponent(deviceId)}`, {
-    method: 'POST',
-  });
-  if (!res.ok && res.status !== 204) {
-    const body = await res.text();
-    throw new Error(`Spotify next ${res.status}: ${body}`);
-  }
+  await playerCommand('next', 'POST', { device_id: deviceId });
 }
 
 export async function remotePrevious(deviceId: string): Promise<void> {
-  const res = await apiFetch(`/me/player/previous?device_id=${encodeURIComponent(deviceId)}`, {
-    method: 'POST',
-  });
-  if (!res.ok && res.status !== 204) {
-    const body = await res.text();
-    throw new Error(`Spotify previous ${res.status}: ${body}`);
-  }
+  await playerCommand('previous', 'POST', { device_id: deviceId });
 }
 
 export async function remoteSeek(positionMs: number, deviceId: string): Promise<void> {
   const pos = Math.max(0, Math.round(positionMs));
-  const res = await apiFetch(
-    `/me/player/seek?position_ms=${pos}&device_id=${encodeURIComponent(deviceId)}`,
-    { method: 'PUT' },
-  );
-  if (!res.ok && res.status !== 204) {
-    const body = await res.text();
-    throw new Error(`Spotify seek ${res.status}: ${body}`);
-  }
+  await playerCommand('seek', 'PUT', { position_ms: String(pos), device_id: deviceId });
 }
 
 /** Whether the last Spotify volume call observed was rejected by the target device.
@@ -464,82 +437,66 @@ export async function remoteSetVolumePercent(volumePercent: number, deviceId: st
   spotifyVolumeControlRejected = false;
 }
 
-async function waitForActiveTrackUri(expectedUri: string, timeoutMs: number, signal?: AbortSignal): Promise<void> {
+async function waitForPlaybackCondition(
+  predicate: (snap: ActivePlaybackUris | null) => boolean,
+  timeoutMs: number,
+  errorMsg: string,
+  signal?: AbortSignal,
+): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     if (signal?.aborted) return;
     try {
       const snap = await getActivePlaybackUris();
       if (signal?.aborted) return;
-      if (snap?.itemUri === expectedUri) return;
+      if (snap && predicate(snap)) return;
     } catch (err) {
       if (err instanceof Error && err.message.startsWith('RATE_LIMITED:')) {
         const secs = parseInt(err.message.split(':')[1], 10) || 2;
         await new Promise((r) => setTimeout(r, secs * 1000));
       }
-      // continue loop
     }
     await new Promise((r) => setTimeout(r, 280));
     if (signal?.aborted) return;
   }
-  throw new Error(
+  throw new Error(errorMsg);
+}
+
+async function waitForActiveTrackUri(expectedUri: string, timeoutMs: number, signal?: AbortSignal): Promise<void> {
+  return waitForPlaybackCondition(
+    (snap) => snap?.itemUri === expectedUri,
+    timeoutMs,
     'Spotify did not switch to the requested track (Web Playback offline, wrong device, or Premium issue).',
+    signal,
   );
 }
 
 async function waitForActivePlaylistContext(expectedContextUri: string, timeoutMs: number, signal?: AbortSignal): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (signal?.aborted) return;
-    try {
-      const snap = await getActivePlaybackUris();
-      if (signal?.aborted) return;
-      if (snap?.contextUri === expectedContextUri) return;
-    } catch (err) {
-      if (err instanceof Error && err.message.startsWith('RATE_LIMITED:')) {
-        const secs = parseInt(err.message.split(':')[1], 10) || 2;
-        await new Promise((r) => setTimeout(r, secs * 1000));
-      }
-      // continue loop
-    }
-    await new Promise((r) => setTimeout(r, 280));
-    if (signal?.aborted) return;
-  }
-  throw new Error(
+  return waitForPlaybackCondition(
+    (snap) => snap?.contextUri === expectedContextUri,
+    timeoutMs,
     'Spotify did not start the requested playlist (Web Playback offline, wrong device, or Premium issue).',
+    signal,
   );
 }
 
-export function spotifyUriToTrackId(uri: string): string | null {
+function spotifyUriToResourceId(uri: string, resourceType: string): string | null {
   const u = uri.trim();
-  const colon = /^spotify:track:([a-zA-Z0-9]+)$/.exec(u);
-  if (colon) return colon[1];
+  const colonMatch = new RegExp(`^spotify:${resourceType}:([a-zA-Z0-9]+)$`).exec(u);
+  if (colonMatch) return colonMatch[1];
   try {
     const url = new URL(u);
     const parts = url.pathname.split('/').filter(Boolean);
-    const ti = parts.indexOf('track');
-    if (ti !== -1 && parts[ti + 1]) return parts[ti + 1];
-  } catch {
-    /* ignore */
-  }
+    const idx = parts.indexOf(resourceType);
+    if (idx !== -1 && parts[idx + 1]) return parts[idx + 1];
+  } catch { /* not a URL */ }
   return null;
 }
 
+export const spotifyUriToTrackId = (uri: string): string | null => spotifyUriToResourceId(uri, 'track');
+
 /** Spotify playlist id from `spotify:playlist:…` or open.spotify.com playlist URL. */
-export function spotifyUriToPlaylistId(uri: string): string | null {
-  const u = uri.trim();
-  const colon = /^spotify:playlist:([a-zA-Z0-9]+)$/.exec(u);
-  if (colon) return colon[1];
-  try {
-    const url = new URL(u);
-    const parts = url.pathname.split('/').filter(Boolean);
-    const pi = parts.indexOf('playlist');
-    if (pi !== -1 && parts[pi + 1]) return parts[pi + 1];
-  } catch {
-    /* ignore */
-  }
-  return null;
-}
+export const spotifyUriToPlaylistId = (uri: string): string | null => spotifyUriToResourceId(uri, 'playlist');
 
 export async function fetchRecommendationTrackUris(
   seedTrackId: string,
@@ -562,6 +519,24 @@ export async function fetchRecommendationTrackUris(
   return raw.map((t) => t.uri).filter((u): u is string => typeof u === 'string' && u.startsWith('spotify:track:'));
 }
 
+async function startPlayback(
+  deviceId: string,
+  body: object,
+  opts?: { signal?: AbortSignal; waitFn?: () => Promise<void>; disableRepeat?: boolean; disableShuffle?: boolean },
+): Promise<void> {
+  try { await transferPlaybackToDevice(deviceId); } catch { /* ignored */ }
+  if (opts?.signal?.aborted) return;
+  const res = await apiFetch(`/me/player/play?device_id=${encodeURIComponent(deviceId)}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  await throwIfNotOk(res, 'Play failed');
+  if (opts?.waitFn) await opts.waitFn();
+  if (opts?.disableRepeat) apiFetch('/me/player/repeat?state=off', { method: 'PUT' }).catch(() => {});
+  if (opts?.disableShuffle) apiFetch('/me/player/shuffle?state=false', { method: 'PUT' }).catch(() => {});
+}
+
 export async function playTrack(uri: string, deviceId: string, signal?: AbortSignal): Promise<void> {
   await playTrackUris([uri], deviceId, signal);
 }
@@ -571,75 +546,33 @@ export async function playTrackUris(uris: string[], deviceId: string, signal?: A
   const list = uris.filter((u) => typeof u === 'string' && u.startsWith('spotify:track:')).slice(0, 50);
   if (list.length === 0) throw new Error('No track URIs to play');
 
-  try {
-    await transferPlaybackToDevice(deviceId);
-  } catch (err) {
-    console.warn('[Spotify] transfer before play (ignored):', err);
-  }
-  if (signal?.aborted) return;
-  const res = await apiFetch(`/me/player/play?device_id=${encodeURIComponent(deviceId)}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ uris: list }),
+  await startPlayback(deviceId, { uris: list }, {
+    signal,
+    waitFn: () => waitForActiveTrackUri(list[0], 12_000, signal),
+    disableRepeat: true,
   });
-  if (!res.ok && res.status !== 204) {
-    const body = await res.text();
-    throw new Error(`Play failed ${res.status}: ${body}`);
-  }
-  await waitForActiveTrackUri(list[0], 12_000, signal);
-  // Disable repeat so single-track queues don't loop when the track ends
-  apiFetch('/me/player/repeat?state=off', { method: 'PUT' }).catch(() => {});
 }
 
 export async function addTrackToQueue(uri: string): Promise<void> {
   if (!uri.startsWith('spotify:track:')) return;
   const res = await apiFetch(`/me/player/queue?uri=${encodeURIComponent(uri)}`, { method: 'POST' });
-  if (!res.ok && res.status !== 204) {
-    const body = await res.text();
-    throw new Error(`Spotify queue ${res.status}: ${body}`);
-  }
+  await throwIfNotOk(res, 'Spotify queue');
 }
 
 export async function playPlaylistContext(contextUri: string, deviceId: string, signal?: AbortSignal): Promise<void> {
-  try {
-    await transferPlaybackToDevice(deviceId);
-  } catch (err) {
-    console.warn('[Spotify] transfer before play (ignored):', err);
-  }
-  if (signal?.aborted) return;
-  const res = await apiFetch(`/me/player/play?device_id=${encodeURIComponent(deviceId)}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ context_uri: contextUri, offset: { position: 0 } }),
+  await startPlayback(deviceId, { context_uri: contextUri, offset: { position: 0 } }, {
+    signal,
+    waitFn: () => waitForActivePlaylistContext(contextUri, 12_000, signal),
+    disableRepeat: true,
+    disableShuffle: true,
   });
-  if (!res.ok && res.status !== 204) {
-    const body = await res.text();
-    throw new Error(`Play failed ${res.status}: ${body}`);
-  }
-  await waitForActivePlaylistContext(contextUri, 12_000, signal);
-  // Disable repeat so the playlist doesn't loop when it finishes
-  apiFetch('/me/player/repeat?state=off', { method: 'PUT' }).catch(() => {});
-  // Disable shuffle so the DJ's intended track order is respected
-  apiFetch('/me/player/shuffle?state=false', { method: 'PUT' }).catch(() => {});
 }
 
 export async function playPlaylistContextAtOffset(contextUri: string, position: number, deviceId: string): Promise<void> {
-  try {
-    await transferPlaybackToDevice(deviceId);
-  } catch {
-    /* ignored */
-  }
-  const res = await apiFetch(`/me/player/play?device_id=${encodeURIComponent(deviceId)}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ context_uri: contextUri, offset: { position } }),
+  await startPlayback(deviceId, { context_uri: contextUri, offset: { position } }, {
+    disableRepeat: true,
+    disableShuffle: true,
   });
-  if (!res.ok && res.status !== 204) {
-    const body = await res.text();
-    throw new Error(`Play failed ${res.status}: ${body}`);
-  }
-  apiFetch('/me/player/repeat?state=off', { method: 'PUT' }).catch(() => {});
-  apiFetch('/me/player/shuffle?state=false', { method: 'PUT' }).catch(() => {});
 }
 
 export interface SpotifyPlaylistSummary {

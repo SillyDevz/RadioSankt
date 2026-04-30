@@ -8,13 +8,7 @@ import { remoteSetVolumePercent } from '@/services/spotify-api';
 import Tooltip from '@/components/Tooltip';
 
 import JingleManagerModal from './JingleManagerModal';
-
-function formatTime(ms: number): string {
-  const s = Math.floor(ms / 1000);
-  const m = Math.floor(s / 60);
-  const sec = s % 60;
-  return `${m}:${sec.toString().padStart(2, '0')}`;
-}
+import { formatDuration } from '@/utils/formatTime';
 
 // ── Context menu & Modals ──────────────────────────────────────────
 
@@ -165,7 +159,7 @@ function SlotButton({ slot, isPlaying, progress, onPlay, onContextMenu, onAssign
               {slot.name}
             </span>
             <span className={`rounded-md px-1.5 py-0.5 text-[10px] font-semibold tabular-nums ${isPlaying ? 'bg-white/20 text-white' : 'bg-bg-surface/80 text-text-secondary'}`}>
-              {formatTime(slot.durationMs)}
+              {formatDuration(slot.durationMs)}
             </span>
           </div>
           <span className={`text-xs font-medium ${isPlaying ? 'text-white/90' : 'text-text-secondary'}`}>

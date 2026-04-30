@@ -3,6 +3,7 @@ import { useStore, type Page, type Track } from '@/store';
 import { useSpotifyPlayer } from '@/hooks/useSpotifyPlayer';
 import Tooltip from './Tooltip';
 import { useTranslation } from 'react-i18next';
+import { formatDuration as formatTime } from '@/utils/formatTime';
 
 function MainNav() {
   const { t } = useTranslation();
@@ -43,13 +44,6 @@ function playbackSource(track: Track, t: (key: string) => string): { label: stri
     className:
       'shrink-0 rounded border border-border bg-bg-elevated px-1.5 py-0.5 text-[9px] font-semibold text-text-secondary',
   };
-}
-
-function formatTime(ms: number): string {
-  const s = Math.floor(ms / 1000);
-  const m = Math.floor(s / 60);
-  const sec = s % 60;
-  return `${m}:${sec.toString().padStart(2, '0')}`;
 }
 
 export default function NowPlayingBar() {

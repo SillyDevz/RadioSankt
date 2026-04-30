@@ -13,16 +13,10 @@ import { buildSongStepTransition, type SpotifySearchResult } from '@/store';
 import Tooltip from '@/components/Tooltip';
 import AudioEngine from '@/engine/AudioEngine';
 import { basename, stripExtension } from '@/utils/path';
+import { formatDuration } from '@/utils/formatTime';
 
 function prettyAssetName(name: string): string {
   return /[\\/]/.test(name) ? stripExtension(basename(name)) : name;
-}
-
-function formatDuration(ms: number): string {
-  const s = Math.floor(ms / 1000);
-  const m = Math.floor(s / 60);
-  const sec = s % 60;
-  return `${m}:${sec.toString().padStart(2, '0')}`;
 }
 
 const PLAYLIST_PLACEHOLDER = '\u{1F4DC}';

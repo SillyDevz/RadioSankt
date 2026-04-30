@@ -6,14 +6,10 @@ import Tooltip from '@/components/Tooltip';
 import CoachMark from '@/components/CoachMark';
 import i18n from '@/i18n';
 import { basename } from '@/utils/path';
+import { formatDuration } from '@/utils/formatTime';
 
 type LibraryKind = 'jingles' | 'ads';
 type AudioAsset = { id: number; name: string; filePath: string; durationMs: number };
-
-function formatDuration(ms: number): string {
-  const s = Math.floor(ms / 1000);
-  return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`;
-}
 
 export default function JingleManagerModal({
   mode = 'manage',

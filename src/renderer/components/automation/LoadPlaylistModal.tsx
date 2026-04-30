@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useStore } from '@/store';
 import type { AutomationStep } from '@/store';
+import ModalShell from '@/components/ModalShell';
 
 export default function LoadPlaylistModal() {
   const { t, i18n } = useTranslation();
@@ -16,19 +17,10 @@ export default function LoadPlaylistModal() {
   const addToast = useStore((s) => s.addToast);
 
   useEffect(() => {
-    if (!open) return;
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
-    document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
-  }, [open, setOpen]);
-
-  useEffect(() => {
     if (open) {
       window.electronAPI.listPlaylists().then(setSavedPlaylists);
     }
   }, [open, setSavedPlaylists]);
-
-  if (!open) return null;
 
   const handleLoad = async (id: number) => {
     try {
@@ -124,12 +116,7 @@ export default function LoadPlaylistModal() {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={() => setOpen(false)}>
-      <div className="absolute inset-0 bg-black/60" />
-      <div
-        className="relative w-full max-w-md bg-bg-surface border border-border rounded-lg shadow-2xl overflow-hidden"
-        onClick={(e) => e.stopPropagation()}
-      >
+    <ModalShell open={open} onClose={() => setOpen(false)} className="w-full max-w-md overflow-hidden">
         <div className="px-4 py-3 border-b border-border flex items-center justify-between">
           <h2 className="text-sm font-semibold text-text-primary">{t('automation.playlist.modalTitle', { defaultValue: 'Automation sets' })}</h2>
           <button onClick={() => setOpen(false)} className="text-text-muted hover:text-text-primary">
@@ -175,7 +162,6 @@ export default function LoadPlaylistModal() {
             </div>
           ))}
         </div>
-      </div>
-    </div>
+    </ModalShell>
   );
 }

@@ -1,13 +1,11 @@
 import AudioEngine from './AudioEngine';
 import { useStore } from '@/store';
 import {
-  getPlaylistTracks,
   getRemotePlaybackState,
   playTrack,
   playPlaylistContextAtOffset,
   remotePause,
   remoteSetVolumePercent,
-  spotifyUriToPlaylistId,
 } from '@/services/spotify-api';
 import { startRecommendationsContinuation, stopRecommendationsContinuation } from '@/services/recommendations-queue';
 import type { AutomationStep } from '@/store';
@@ -62,6 +60,25 @@ function volumeToPercent(v: number): number {
   return Math.round(Math.max(0, Math.min(1, v)) * 100);
 }
 
+function isConnectivityError(message: string): boolean {
+  return (
+    message.includes('Web Playback is not connected') ||
+    message.includes('No Spotify device') ||
+    message.includes('aborted') ||
+    message.includes('network') ||
+    message.includes('Failed to fetch') ||
+    message.includes('Premium') ||
+    message.includes('401') ||
+    message.includes('403') ||
+    message.includes('429') ||
+    message.includes('500') ||
+    message.includes('502') ||
+    message.includes('503') ||
+    message.includes('504') ||
+    message.includes('RATE_LIMITED')
+  );
+}
+
 type AutomationEvent =
   | { type: 'stepChanged'; index: number }
   | { type: 'waitingAtPause'; step: AutomationStep }
@@ -97,20 +114,11 @@ function waitForSpotifyDeviceId(timeoutMs: number): Promise<string | null> {
   });
 }
 
-/** Last playable track in the automation playlist step (stable seed when `/me/player` is flaky). */
+/** Stable seed URI from the previous step (when `/me/player` is flaky). */
 async function resolveRecommendationSeedFromPrevStep(prevStep: AutomationStep | undefined): Promise<string | null> {
   if (!prevStep) return null;
   if (prevStep.type === 'track') return prevStep.spotifyUri;
-  if (prevStep.type !== 'playlist') return null;
-  const pid = spotifyUriToPlaylistId(prevStep.spotifyPlaylistUri);
-  if (!pid) return null;
-  try {
-    const tracks = await getPlaylistTracks(pid);
-    const last = tracks[tracks.length - 1];
-    return last?.uri?.startsWith('spotify:track:') ? last.uri : null;
-  } catch {
-    return null;
-  }
+  return null;
 }
 
 /** Poll Spotify player between tracks (204/no item); fall back to playlist-derived seed. */
@@ -153,6 +161,18 @@ class AutomationEngine {
     let resolve!: () => void;
     this.transportLock = new Promise<void>((r) => { resolve = r; });
     return prev.then(fn).finally(() => resolve());
+  }
+
+  private currentVolumePct(): number {
+    return volumeToPercent(this.getStore().volume);
+  }
+
+  private async fadeOutCurrentStep(cur: AutomationStep, audio: AudioEngine | null, devId: string | null): Promise<void> {
+    if (cur.type === 'jingle' || cur.type === 'ad') {
+      if (audio) await audio.fadeOut('B', FADE_DURATION);
+    } else if (devId && cur.type === 'track') {
+      await rampSpotifyRemoteVolume(devId, this.currentVolumePct(), 0, FADE_DURATION);
+    }
   }
 
   constructor() {
@@ -273,7 +293,6 @@ class AutomationEngine {
       const nextMeta = steps[currentIndex + 1];
       const audio = AudioEngine.get();
       const devId = store.deviceId;
-      const jingleLike = (s: AutomationStep | undefined) => s?.type === 'jingle' || s?.type === 'ad';
 
       const skipFadeForRec =
         !nextMeta &&
@@ -281,18 +300,10 @@ class AutomationEngine {
         cur.type === 'track';
 
       if (cur.transitionOut === 'fadeOut' && !skipFadeForRec) {
-        if (jingleLike(cur)) {
-          if (audio) await audio.fadeOut('B', FADE_DURATION);
-        } else if (devId && cur.type === 'track') {
-          await rampSpotifyRemoteVolume(devId, volumeToPercent(store.volume), 0, FADE_DURATION);
-        }
+        await this.fadeOutCurrentStep(cur, audio, devId);
       }
       if (nextMeta?.transitionIn === 'crossfade') {
-        if (jingleLike(cur)) {
-          if (audio) await audio.fadeOut('B', FADE_DURATION);
-        } else if (devId && cur.type === 'track') {
-          await rampSpotifyRemoteVolume(devId, volumeToPercent(store.volume), 0, FADE_DURATION);
-        }
+        await this.fadeOutCurrentStep(cur, audio, devId);
       }
 
       if (cur.type === 'jingle' || cur.type === 'ad') {
@@ -594,7 +605,7 @@ class AutomationEngine {
         } else if (step.type === 'track') {
           const devId = this.getStore().deviceId;
           if (devId) {
-            await rampSpotifyRemoteVolume(devId, 0, volumeToPercent(this.getStore().volume), FADE_DURATION);
+            await rampSpotifyRemoteVolume(devId, 0, this.currentVolumePct(), FADE_DURATION);
           }
         }
       }
@@ -623,22 +634,7 @@ class AutomationEngine {
         message: detail ? `Failed to play step: ${stepName} — ${detail}` : `Failed to play step: ${stepName}`,
       });
       // If the error is connectivity/auth related, pause automation instead of rapid-skipping
-      const isConnectivityError =
-        detail.includes('Web Playback is not connected') ||
-        detail.includes('No Spotify device') ||
-        detail.includes('aborted') ||
-        detail.includes('network') ||
-        detail.includes('Failed to fetch') ||
-        detail.includes('Premium') ||
-        detail.includes('401') ||
-        detail.includes('403') ||
-        detail.includes('429') ||
-        detail.includes('500') ||
-        detail.includes('502') ||
-        detail.includes('503') ||
-        detail.includes('504') ||
-        detail.includes('RATE_LIMITED');
-      if (isConnectivityError) {
+      if (isConnectivityError(detail)) {
         store.setAutomationStatus('paused');
         window.dispatchEvent(new CustomEvent('radio-sankt:spotify-pause-sdk'));
         this.scheduleAutoRecovery();
@@ -671,7 +667,7 @@ class AutomationEngine {
     if (step.transitionIn === 'fadeIn') {
       await remoteSetVolumePercent(0, deviceId).catch(() => {});
     } else {
-      await remoteSetVolumePercent(volumeToPercent(store.volume), deviceId).catch(() => {});
+      await remoteSetVolumePercent(this.currentVolumePct(), deviceId).catch(() => {});
     }
 
     if (step.groupId && step.groupContextUri) {
@@ -695,7 +691,7 @@ class AutomationEngine {
     }
 
     if (step.duckMusic && deviceId) {
-      const baseVol = volumeToPercent(this.getStore().volume);
+      const baseVol = this.currentVolumePct();
       const duckPct = Math.round(baseVol * Math.max(0, Math.min(1, step.duckLevel)));
       await rampSpotifyRemoteVolume(deviceId, baseVol, duckPct, 300);
     }
@@ -710,7 +706,7 @@ class AutomationEngine {
       if (step.duckMusic) {
         const deviceId = this.getStore().deviceId;
         if (deviceId) {
-          const targetPct = volumeToPercent(this.getStore().volume);
+          const targetPct = this.currentVolumePct();
           const duckPct = Math.round(targetPct * Math.max(0, Math.min(1, step.duckLevel)));
           void rampSpotifyRemoteVolume(deviceId, duckPct, targetPct, 300);
         }
@@ -734,7 +730,7 @@ class AutomationEngine {
       const currentStep = store.automationSteps[store.currentStepIndex];
       if (currentStep && currentStep.id !== stepId) return;
       if (step.duckMusic && deviceId) {
-        const targetPct = volumeToPercent(this.getStore().volume);
+        const targetPct = this.currentVolumePct();
         const baseVol = targetPct;
         const duckPct = Math.round(baseVol * Math.max(0, Math.min(1, step.duckLevel)));
         void rampSpotifyRemoteVolume(deviceId, duckPct, targetPct, 300);
@@ -809,9 +805,9 @@ class AutomationEngine {
       const devId = store.deviceId;
       if (devId) {
         if (step.transitionIn === 'fadeIn') {
-          await rampSpotifyRemoteVolume(devId, 0, volumeToPercent(store.volume), FADE_DURATION);
+          await rampSpotifyRemoteVolume(devId, 0, this.currentVolumePct(), FADE_DURATION);
         } else {
-          await remoteSetVolumePercent(volumeToPercent(store.volume), devId).catch(() => {});
+          await remoteSetVolumePercent(this.currentVolumePct(), devId).catch(() => {});
         }
       }
     }
@@ -823,44 +819,6 @@ class AutomationEngine {
     if (step.type === 'track') {
       this.scheduleSpotifyStepAdvance(step, index);
     }
-  }
-
-  private scheduleAdvanceFromStep(step: AutomationStep, currentIndex: number, delayMs: number): void {
-    this.clearPlaybackTimersOnly();
-    this.advanceScheduleGen++;
-    const gen = this.advanceScheduleGen;
-    const stepId = step.id;
-    this.nextStepTimer = setTimeout(async () => {
-      if (gen !== this.advanceScheduleGen) return;
-      try {
-        // Re-read the fresh index from the store in case queue was mutated
-        const freshSteps = this.getSteps();
-        const freshIndex = freshSteps.findIndex((s) => s.id === stepId);
-        if (freshIndex === -1) return; // step was removed
-        const freshStep = freshSteps[freshIndex];
-
-        const audio = AudioEngine.get();
-        if (freshStep.transitionOut === 'fadeOut' && audio) {
-          const channel = freshStep.type === 'jingle' ? 'B' : 'A';
-          audio.fadeOut(channel, FADE_DURATION);
-        }
-        const nextStep = freshSteps[freshIndex + 1];
-        if (nextStep?.transitionIn === 'crossfade' && audio) {
-          const fromChannel = freshStep.type === 'jingle' ? 'B' : 'A';
-          const toChannel = nextStep.type === 'jingle' ? 'B' : 'A';
-          if (fromChannel !== toChannel) {
-            audio.crossfade(fromChannel, toChannel, FADE_DURATION);
-          }
-        }
-        const nextIndex = this.maybeInsertBreakAfter(freshIndex, freshStep);
-        if (gen !== this.advanceScheduleGen) return;
-        await this.executeStep(nextIndex);
-      } catch (err) {
-        this.emit({ type: 'error', message: `Step transition failed: ${err}` });
-        const freshIndex = this.getStore().currentStepIndex;
-        this.scheduleNextStepImmediate(freshIndex);
-      }
-    }, delayMs);
   }
 
   /** Build randomized break picks from the configured pool, respecting the avoid-recent window.
@@ -990,12 +948,11 @@ class AutomationEngine {
         const steps = st.automationSteps;
         const curStep = steps[st.currentStepIndex];
         const curDuration = (curStep as { durationMs?: number }).durationMs;
-        if (curDuration) {
+        if (curDuration && curStep.type === 'track') {
           const elapsed = Date.now() - this.currentStepStartTime;
-          const nextStep = steps[st.currentStepIndex + 1];
-          const overlapMs = nextStep?.transitionIn === 'crossfade' ? nextStep.overlapMs : 0;
-          const newDelay = Math.max(curDuration - elapsed - overlapMs, 500);
-          this.scheduleAdvanceFromStep(curStep, st.currentStepIndex, newDelay);
+          const remaining = Math.max(curDuration - elapsed, 0);
+          st.setStepTimeRemaining(remaining);
+          this.scheduleSpotifyStepAdvance(curStep, st.currentStepIndex);
         }
       }
 
@@ -1028,7 +985,7 @@ class AutomationEngine {
       const fadeMs = useStore.getState().fadeOutMs;
       const devId = store.deviceId;
       if (devId && !options?.skipFade) {
-        await rampSpotifyRemoteVolume(devId, volumeToPercent(store.volume), 0, fadeMs);
+        await rampSpotifyRemoteVolume(devId, this.currentVolumePct(), 0, fadeMs);
       }
 
       store.setAutomationStatus('paused');
@@ -1077,7 +1034,7 @@ class AutomationEngine {
     const store = this.getStore();
     const devId = store.deviceId;
     if (devId) {
-      await rampSpotifyRemoteVolume(devId, volumeToPercent(store.volume), 0, FADE_DURATION).catch(() => {});
+      await rampSpotifyRemoteVolume(devId, this.currentVolumePct(), 0, FADE_DURATION).catch(() => {});
     }
 
     store.setAutomationStatus('stopped');

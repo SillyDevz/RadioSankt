@@ -1,5 +1,22 @@
 import { create, StateCreator } from 'zustand';
 
+// ── Helpers ───────────────────────────────────────────────────────────
+
+function persistedSetter<V>(set: (partial: Partial<any>) => void, key: string) {
+  return (value: V) => {
+    set({ [key]: value });
+    window.electronAPI?.saveToStore(key, value);
+  };
+}
+
+function updateById<T extends { id: string | number }>(items: T[], id: T['id'], updates: Partial<T>): T[] {
+  return items.map(item => item.id === id ? { ...item, ...updates } : item);
+}
+
+function clampMs(ms: number, max = 10000): number {
+  return Math.max(0, Math.min(max, Number.isFinite(ms) ? ms : 0));
+}
+
 // ── Types ──────────────────────────────────────────────────────────────
 
 export type Page = 'studio' | 'program' | 'settings';
@@ -316,10 +333,7 @@ const createUISlice: StateCreator<StoreState, [], [], UISlice> = (set) => ({
   ],
   setCurrentPage: (page) => set({ currentPage: page }),
   setSpotifySearchOpen: (open) => set({ spotifySearchOpen: open }),
-  setWorkspaceLayout: (layout) => {
-    set({ workspaceLayout: layout });
-    window.electronAPI?.saveToStore('workspaceLayout', layout);
-  },
+  setWorkspaceLayout: persistedSetter(set, 'workspaceLayout'),
 });
 
 const createSpotifySlice: StateCreator<StoreState, [], [], SpotifySlice> = (set) => ({
@@ -496,9 +510,7 @@ const createAutomationSlice: StateCreator<StoreState, [], [], AutomationSlice> =
     }),
   updateAutomationStep: (id, updates) =>
     set((s) => ({
-      automationSteps: s.automationSteps.map((st) =>
-        st.id === id ? ({ ...st, ...updates } as AutomationStep) : st,
-      ),
+      automationSteps: updateById(s.automationSteps, id, updates) as AutomationStep[],
     })),
   setSelectedStepIndex: (index) => set({ selectedStepIndex: index }),
   setAutomationStatus: (status) => set({ automationStatus: status }),
@@ -513,7 +525,7 @@ const createAutomationSlice: StateCreator<StoreState, [], [], AutomationSlice> =
   setBreakRules: (breakRules) => set({ breakRules }),
   updateBreakRule: (id, updates) =>
     set((state) => ({
-      breakRules: state.breakRules.map((r) => (r.id === id ? { ...r, ...updates } : r)),
+      breakRules: updateById(state.breakRules, id, updates),
     })),
 });
 
@@ -574,10 +586,7 @@ const createOnboardingSlice: StateCreator<StoreState, [], [], OnboardingSlice> =
     'live-golive': false,
     'jingles-add': false,
   },
-  setHasCompletedOnboarding: (done) => {
-    set({ hasCompletedOnboarding: done });
-    window.electronAPI?.saveToStore('hasCompletedOnboarding', done);
-  },
+  setHasCompletedOnboarding: persistedSetter(set, 'hasCompletedOnboarding'),
   setOnboardingStep: (step) => set({ onboardingStep: step }),
   markCoachMarkSeen: (id) =>
     set((state) => {
@@ -603,24 +612,17 @@ const createLiveSlice: StateCreator<StoreState, [], [], LiveSlice> = (set) => ({
   soundboardVolume: 1,
   quickFireSlots: createDefaultQuickFireSlots(),
   setIsLive: (live) => set({ isLive: live }),
-  setSoundboardVolume: (volume) => {
-    set({ soundboardVolume: volume });
-    window.electronAPI?.saveToStore('soundboardVolume', volume);
-  },
+  setSoundboardVolume: persistedSetter(set, 'soundboardVolume'),
   setQuickFireSlots: (slots) => set({ quickFireSlots: slots }),
   updateQuickFireSlot: (id, updates) =>
     set((state) => {
-      const slots = state.quickFireSlots.map((s) =>
-        s.id === id ? { ...s, ...updates } : s,
-      );
+      const slots = updateById(state.quickFireSlots, id, updates);
       window.electronAPI?.saveToStore('quickFireSlots', slots);
       return { quickFireSlots: slots };
     }),
   clearQuickFireSlot: (id) =>
     set((state) => {
-      const slots = state.quickFireSlots.map((s) =>
-        s.id === id ? { ...s, name: '', jingleId: null, jinglePath: null, durationMs: 0, color: '#2a2a2a' } : s,
-      );
+      const slots = updateById(state.quickFireSlots, id, { name: '', jingleId: null, jinglePath: null, durationMs: 0, color: '#2a2a2a' } as Partial<QuickFireSlot>);
       window.electronAPI?.saveToStore('quickFireSlots', slots);
       return { quickFireSlots: slots };
     }),
@@ -638,18 +640,9 @@ const createSettingsSlice: StateCreator<StoreState, [], [], SettingsSlice> = (se
   autoUpdate: true,
   followProgramSchedule: true,
   continuePlaylistRecommendations: false,
-  setLanguage: (language) => {
-    set({ language });
-    window.electronAPI?.saveToStore('language', language);
-  },
-  setTheme: (theme) => {
-    set({ theme });
-    window.electronAPI?.saveToStore('theme', theme);
-  },
-  setAccentColor: (color) => {
-    set({ accentColor: color });
-    window.electronAPI?.saveToStore('accentColor', color);
-  },
+  setLanguage: persistedSetter(set, 'language'),
+  setTheme: persistedSetter(set, 'theme'),
+  setAccentColor: persistedSetter(set, 'accentColor'),
   setSongTransitionMode: (mode) => {
     set((state) => {
       const currentIdx = state.automationStatus !== 'stopped' ? state.currentStepIndex : -1;
@@ -665,17 +658,17 @@ const createSettingsSlice: StateCreator<StoreState, [], [], SettingsSlice> = (se
     window.electronAPI?.saveToStore('songTransitionMode', mode);
   },
   setFadeInMs: (ms) => {
-    const clamped = Math.max(0, Math.min(10000, Number.isFinite(ms) ? ms : 0));
+    const clamped = clampMs(ms);
     set({ fadeInMs: clamped });
     window.electronAPI?.saveToStore('fadeInMs', clamped);
   },
   setFadeOutMs: (ms) => {
-    const clamped = Math.max(0, Math.min(10000, Number.isFinite(ms) ? ms : 0));
+    const clamped = clampMs(ms);
     set({ fadeOutMs: clamped });
     window.electronAPI?.saveToStore('fadeOutMs', clamped);
   },
   setCrossfadeMs: (ms) => {
-    const clamped = Math.max(0, Math.min(10000, Number.isFinite(ms) ? ms : 0));
+    const clamped = clampMs(ms);
     set((state) => {
       const currentIdx = state.automationStatus !== 'stopped' ? state.currentStepIndex : -1;
       return {
@@ -692,22 +685,10 @@ const createSettingsSlice: StateCreator<StoreState, [], [], SettingsSlice> = (se
     });
     window.electronAPI?.saveToStore('crossfadeMs', clamped);
   },
-  setDuckLevel: (level) => {
-    set({ duckLevel: level });
-    window.electronAPI?.saveToStore('duckLevel', level);
-  },
-  setAutoUpdate: (auto) => {
-    set({ autoUpdate: auto });
-    window.electronAPI?.saveToStore('autoUpdate', auto);
-  },
-  setFollowProgramSchedule: (on) => {
-    set({ followProgramSchedule: on });
-    window.electronAPI?.saveToStore('followProgramSchedule', on);
-  },
-  setContinuePlaylistRecommendations: (on) => {
-    set({ continuePlaylistRecommendations: on });
-    window.electronAPI?.saveToStore('continuePlaylistRecommendations', on);
-  },
+  setDuckLevel: persistedSetter(set, 'duckLevel'),
+  setAutoUpdate: persistedSetter(set, 'autoUpdate'),
+  setFollowProgramSchedule: persistedSetter(set, 'followProgramSchedule'),
+  setContinuePlaylistRecommendations: persistedSetter(set, 'continuePlaylistRecommendations'),
 });
 
 // ── Store ──────────────────────────────────────────────────────────────
