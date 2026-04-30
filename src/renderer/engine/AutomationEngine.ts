@@ -6,6 +6,8 @@ import {
   playTrack,
   playPlaylistContext,
   remotePause,
+  remoteNext,
+  remotePrevious,
   remoteSetVolumePercent,
   resumePlaybackBestEffort,
   spotifyUriToPlaylistId,
@@ -678,6 +680,18 @@ class AutomationEngine {
       if (from < 0 || from >= lenBefore) return;
 
       const finishingStep = stepsBefore[from];
+
+      // Playlist block: skip to next track within the block, not the next step
+      if (finishingStep.type === 'playlist' && store.deviceId) {
+        const consumed = this.intraPlaylistCreditedForStepId === finishingStep.id
+          ? this.intraPlaylistCreditedCount + 1
+          : 1;
+        if (consumed < finishingStep.trackCount) {
+          await remoteNext(store.deviceId);
+          return;
+        }
+      }
+
       this.clearTransportForJump();
 
       const nextAfterBreak = this.maybeInsertBreakAfter(from, finishingStep);
@@ -702,6 +716,18 @@ class AutomationEngine {
 
       const from = store.currentStepIndex;
       const cur = steps[from];
+
+      // Playlist block: skip to previous track within the block
+      if (cur.type === 'playlist' && store.deviceId) {
+        const consumed = this.intraPlaylistCreditedForStepId === cur.id
+          ? this.intraPlaylistCreditedCount
+          : 0;
+        if (consumed > 0) {
+          await remotePrevious(store.deviceId);
+          return;
+        }
+      }
+
       const dec = this.breakProgressCreditForStep(cur);
       if (dec > 0) {
         this.songsSinceBreak = Math.max(0, this.songsSinceBreak - dec);
