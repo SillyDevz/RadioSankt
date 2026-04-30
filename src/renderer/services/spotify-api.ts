@@ -418,17 +418,21 @@ async function waitForPlaybackCondition(
   signal?: AbortSignal,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
+  let attempts = 0;
+  const minAttempts = Math.max(4, Math.ceil(timeoutMs / 3000));
+  while (Date.now() < deadline || attempts < minAttempts) {
     if (signal?.aborted) return;
     try {
       const snap = await getActivePlaybackUris();
       if (signal?.aborted) return;
       if (snap && predicate(snap)) return;
+      attempts++;
     } catch (err) {
       if (err instanceof Error && err.message.startsWith('RATE_LIMITED:')) {
         const secs = parseInt(err.message.split(':')[1], 10) || 2;
         await new Promise((r) => setTimeout(r, secs * 1000));
       }
+      attempts++;
     }
     await new Promise((r) => setTimeout(r, 500));
     if (signal?.aborted) return;

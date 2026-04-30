@@ -143,12 +143,18 @@ class AutomationEngine {
   private transportLock: Promise<void> = Promise.resolve();
   /** Single-flight guard so primary timeout + near-end poll cannot double-advance the same step. */
   private stepTransitionInFlight = false;
+  /** Deadline for stepTransitionInFlight — auto-clears if stuck longer than this. */
+  private stepTransitionDeadline = 0;
   /** Forces the next playTrackStep to call the Spotify API even if the step is in the same group. */
   private forceNextPlayback = false;
   /** URI preloaded into Spotify's native queue for gapless transition. */
   private preloadedNextUri: string | null = null;
   /** Watchdog: polls Spotify after queue ends, loops back if silence detected. */
   private silenceWatchdogTimer: ReturnType<typeof setInterval> | null = null;
+  /** Prevents watchdog re-entry when a previous tick is still running. */
+  private silenceWatchdogRunning = false;
+  /** Prevents concurrent executeStep calls. */
+  private executeStepInFlight = false;
   /** Auto-recovery watchdog: retries resume after connectivity-related pauses. */
   private autoRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
   private autoRecoveryAttempts = 0;
@@ -199,6 +205,7 @@ class AutomationEngine {
 
   private onVisibilityChange = (): void => {
     if (document.visibilityState !== 'visible') return;
+    if (this.executeStepInFlight || this.stepTransitionInFlight) return;
     const store = this.getStore();
     const curStep = store.automationSteps[store.currentStepIndex];
     const isLocalAudioStep = curStep?.type === 'jingle' || curStep?.type === 'ad';
@@ -232,7 +239,6 @@ class AutomationEngine {
       clearTimeout(this.autoRecoveryTimer);
       this.autoRecoveryTimer = null;
     }
-    this.autoRecoveryAttempts = 0;
   }
 
 
@@ -277,9 +283,16 @@ class AutomationEngine {
     const steps = this.getSteps();
     const cur = steps[currentIndex];
     if (!cur || cur.id !== finishingStep.id) return;
-    if (this.stepTransitionInFlight) return;
+    if (this.stepTransitionInFlight) {
+      if (Date.now() > this.stepTransitionDeadline) {
+        this.stepTransitionInFlight = false;
+      } else {
+        return;
+      }
+    }
 
     this.stepTransitionInFlight = true;
+    this.stepTransitionDeadline = Date.now() + 60_000;
     try {
       this.clearPlaybackTimersOnly();
 
@@ -424,7 +437,6 @@ class AutomationEngine {
       clearTimeout(this.playbackFallbackTimer);
       this.playbackFallbackTimer = null;
     }
-    this.stepTransitionInFlight = false;
   }
 
   /** Cancel Spotify/jingle advance timeouts without invalidating callback generation (seek/resync paths). */
@@ -471,6 +483,7 @@ class AutomationEngine {
       }
       if (store.automationStatus === 'stopped') {
         this.clearSilenceWatchdog();
+        this.autoRecoveryAttempts = 0;
         this.breakRecentKeys = [];
         this.songsSinceBreak = 0;
       }
@@ -542,6 +555,16 @@ class AutomationEngine {
   }
 
   async executeStep(index: number): Promise<void> {
+    if (this.executeStepInFlight) return;
+    this.executeStepInFlight = true;
+    try {
+      await this.executeStepInternal(index);
+    } finally {
+      this.executeStepInFlight = false;
+    }
+  }
+
+  private async executeStepInternal(index: number): Promise<void> {
     const steps = this.getSteps();
     const store = this.getStore();
 
@@ -690,15 +713,36 @@ class AutomationEngine {
         this.forceNextPlayback = false;
         this.preloadedNextUri = null;
         await playPlaylistContextAtOffset(step.groupContextUri, step.groupIndex ?? 0, deviceId);
+      } else {
+        // Same group — Spotify should auto-advance. Verify it did.
+        const state = await getRemotePlaybackState().catch(() => null);
+        if (!state?.isPlaying || state.track?.uri !== step.spotifyUri) {
+          await playPlaylistContextAtOffset(step.groupContextUri, step.groupIndex ?? 0, deviceId);
+        }
       }
     } else if (this.preloadedNextUri === step.spotifyUri) {
       this.preloadedNextUri = null;
       this.forceNextPlayback = false;
-      await waitForActiveTrackUri(step.spotifyUri, 3_000).catch(() => {});
+      // Verify Spotify actually auto-advanced to the preloaded track
+      try {
+        await waitForActiveTrackUri(step.spotifyUri, 3_000);
+      } catch {
+        await playTrack(step.spotifyUri, deviceId);
+      }
     } else {
       this.forceNextPlayback = false;
       this.preloadedNextUri = null;
-      await playTrack(step.spotifyUri, deviceId);
+      try {
+        await playTrack(step.spotifyUri, deviceId);
+      } catch (err) {
+        // If the play command went through but confirmation timed out, don't throw —
+        // the track is likely playing and the watchdog will catch it if not.
+        if (err instanceof Error && err.message.includes('did not switch')) {
+          console.warn('[AutomationEngine] Track confirmation timed out, assuming playback started');
+        } else {
+          throw err;
+        }
+      }
     }
   }
 
@@ -789,7 +833,10 @@ class AutomationEngine {
   }
 
   get isTransitioning(): boolean {
-    return this.stepTransitionInFlight;
+    if (this.stepTransitionInFlight && Date.now() > this.stepTransitionDeadline) {
+      this.stepTransitionInFlight = false;
+    }
+    return this.stepTransitionInFlight || this.executeStepInFlight;
   }
 
   private handlePauseStep(step: AutomationStep): void {
@@ -1048,6 +1095,7 @@ class AutomationEngine {
 
   private async stopInternal(): Promise<void> {
     this.clearAutoRecovery();
+    this.autoRecoveryAttempts = 0;
     this.clearSilenceWatchdog();
     this.invalidatePendingAdvance();
     this.clearCountdown();
@@ -1087,23 +1135,22 @@ class AutomationEngine {
     let silentTicks = 0;
 
     this.silenceWatchdogTimer = setInterval(async () => {
-      const store = this.getStore();
-      const status = store.automationStatus;
-      // Only act when automation expects music to be playing or is paused waiting to recover
-      if (status !== 'playing' && status !== 'stopped' && status !== 'paused') return;
-      // Don't interfere while a step transition is in progress (e.g. break jingle playing)
-      if (this.stepTransitionInFlight) {
-        silentTicks = 0;
-        return;
-      }
-      // Don't interfere during local audio steps (jingle/ad)
-      const curStep = store.automationSteps[store.currentStepIndex];
-      if (curStep && (curStep.type === 'jingle' || curStep.type === 'ad')) {
-        silentTicks = 0;
-        return;
-      }
-
+      if (this.silenceWatchdogRunning) return;
+      this.silenceWatchdogRunning = true;
       try {
+        const store = this.getStore();
+        const status = store.automationStatus;
+        if (status !== 'playing' && status !== 'stopped' && status !== 'paused') return;
+        if (this.stepTransitionInFlight || this.executeStepInFlight) {
+          silentTicks = 0;
+          return;
+        }
+        const curStep = store.automationSteps[store.currentStepIndex];
+        if (curStep && (curStep.type === 'jingle' || curStep.type === 'ad')) {
+          silentTicks = 0;
+          return;
+        }
+
         const state = await getRemotePlaybackState();
         if (state?.isPlaying) {
           silentTicks = 0;
@@ -1114,13 +1161,13 @@ class AutomationEngine {
           silentTicks = 0;
           this.emit({ type: 'error', message: 'Silence detected — restarting playback.' });
           if (status === 'stopped') {
-            // Queue ended, Spotify stopped — loop from start
             store.setAutomationStatus('playing');
+            this.invalidatePendingAdvance();
             await this.executeStep(0);
           } else {
-            // Mid-automation stall or paused too long — re-execute current step
             this.clearAutoRecovery();
             store.setAutomationStatus('playing');
+            this.invalidatePendingAdvance();
             this.forceNextPlayback = true;
             this.preloadedNextUri = null;
             await this.executeStep(store.currentStepIndex);
@@ -1128,6 +1175,8 @@ class AutomationEngine {
         }
       } catch {
         // Network error — don't count as silence
+      } finally {
+        this.silenceWatchdogRunning = false;
       }
     }, 5_000);
   }
