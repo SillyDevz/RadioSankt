@@ -161,6 +161,8 @@ class AutomationEngine {
   private transportLock: Promise<void> = Promise.resolve();
   /** Single-flight guard so primary timeout + near-end poll cannot double-advance the same step. */
   private stepTransitionInFlight = false;
+  /** Forces the next playTrackStep to call the Spotify API even if the step is in the same group. */
+  private forceNextPlayback = false;
   /** Auto-recovery watchdog: retries resume after connectivity-related pauses. */
   private autoRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
   private autoRecoveryAttempts = 0;
@@ -431,6 +433,7 @@ class AutomationEngine {
   private clearTransportForJump(): void {
     this.invalidatePendingAdvance();
     this.clearCountdown();
+    this.forceNextPlayback = true;
     AudioEngine.get()?.stopJingle();
   }
 
@@ -681,10 +684,12 @@ class AutomationEngine {
     if (step.groupId && step.groupContextUri) {
       const prevStep = store.automationSteps[store.currentStepIndex - 1];
       const sameGroup = prevStep?.type === 'track' && prevStep.groupId === step.groupId;
-      if (!sameGroup) {
+      if (!sameGroup || this.forceNextPlayback) {
+        this.forceNextPlayback = false;
         await playPlaylistContextAtOffset(step.groupContextUri, step.groupIndex ?? 0, deviceId);
       }
     } else {
+      this.forceNextPlayback = false;
       await playTrack(step.spotifyUri, deviceId);
     }
   }

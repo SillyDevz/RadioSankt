@@ -406,8 +406,7 @@ export default function AutomationQueueWidget() {
                   <div className="flex flex-col gap-2">
                     {steps.map((step, i) => {
                       const isGrouped = step.type === 'track' && !!step.groupId;
-                      const prev = steps[i - 1];
-                      const isFirstInGroup = isGrouped && (i === 0 || prev?.type !== 'track' || prev.groupId !== step.groupId);
+                      const isFirstInGroup = isGrouped && !steps.slice(0, i).some((s) => s.type === 'track' && s.groupId === step.groupId);
                       const isCollapsed = isGrouped && !expandedGroups.has(step.groupId!);
 
                       if (isGrouped && !isFirstInGroup && isCollapsed) return null;
