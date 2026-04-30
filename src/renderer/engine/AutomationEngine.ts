@@ -155,6 +155,10 @@ class AutomationEngine {
   private intraPlaylistCreditedCount = 0;
   /** Serializes intra-playlist break insertions so a rapid succession of track-change events doesn't race. */
   private intraPlaylistBreakInFlight = false;
+  /** Auto-recovery watchdog: retries resume after connectivity-related pauses. */
+  private autoRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
+  private autoRecoveryAttempts = 0;
+  private static readonly AUTO_RECOVERY_DELAYS = [30_000, 60_000, 120_000];
 
   private serialized<T>(fn: () => Promise<T>): Promise<T> {
     const prev = this.transportLock;
@@ -210,14 +214,45 @@ class AutomationEngine {
   private onVisibilityChange = (): void => {
     if (document.visibilityState !== 'visible') return;
     const store = this.getStore();
-    if (store.automationStatus === 'playing' && !store.isPlaying) {
+    const curStep = store.automationSteps[store.currentStepIndex];
+    const isLocalAudioStep = curStep?.type === 'jingle' || curStep?.type === 'ad';
+    if (store.automationStatus === 'playing' && !store.isPlaying && !isLocalAudioStep) {
       this.invalidatePendingAdvance();
       this.clearCountdown();
       store.setAutomationStatus('paused');
       window.dispatchEvent(new CustomEvent('radio-sankt:spotify-pause-sdk'));
       this.emit({ type: 'error', message: 'Playback interrupted (system sleep or network issue). Automation paused.' });
+      this.scheduleAutoRecovery();
     }
   };
+
+  private scheduleAutoRecovery(): void {
+    this.clearAutoRecovery();
+    const delays = AutomationEngine.AUTO_RECOVERY_DELAYS;
+    const delay = delays[Math.min(this.autoRecoveryAttempts, delays.length - 1)];
+    this.autoRecoveryTimer = setTimeout(() => {
+      this.autoRecoveryTimer = null;
+      const store = this.getStore();
+      if (store.automationStatus !== 'paused') return;
+      this.autoRecoveryAttempts++;
+      this.emit({ type: 'error', message: `Auto-recovery attempt ${this.autoRecoveryAttempts}...` });
+      void this.resume().catch(() => {
+        if (this.autoRecoveryAttempts < delays.length) {
+          this.scheduleAutoRecovery();
+        } else {
+          this.emit({ type: 'error', message: 'Auto-recovery failed. Manual resume required.' });
+        }
+      });
+    }, delay);
+  }
+
+  private clearAutoRecovery(): void {
+    if (this.autoRecoveryTimer) {
+      clearTimeout(this.autoRecoveryTimer);
+      this.autoRecoveryTimer = null;
+    }
+    this.autoRecoveryAttempts = 0;
+  }
 
   private onPlaylistTrackChanged = (e: Event) => {
     const d = (e as CustomEvent<{
@@ -510,16 +545,14 @@ class AutomationEngine {
     }, fallbackMs);
   }
 
-  /** Local clips: advance on real buffer end; fallback if `onended` never fires. */
-  private scheduleLocalAudioAdvance(
+  /** Local clips: fallback timer if `onended` never fires. */
+  private scheduleLocalAudioFallback(
     step: AutomationStep & { type: 'jingle' | 'ad' },
     currentIndex: number,
     advanceGen: number,
     decodedDurationMs: number,
-    deviceId: string | null | undefined,
   ): void {
     this.clearPlaybackTimersOnly();
-    this.armAutomationJingleEnded(step, currentIndex, advanceGen, deviceId);
 
     const fallbackMs = Math.max(decodedDurationMs, step.durationMs, 1000) + 4000;
     if (this.playbackFallbackTimer) clearTimeout(this.playbackFallbackTimer);
@@ -688,14 +721,10 @@ class AutomationEngine {
 
     if (index >= steps.length) {
       this.emit({ type: 'finished' });
-      const prevStep = steps.length > 0 ? steps[steps.length - 1] : undefined;
-      if (
-        store.continuePlaylistRecommendations &&
-        store.deviceId &&
-        (prevStep?.type === 'playlist' || prevStep?.type === 'track')
-      ) {
+      const lastMusicStep = [...steps].reverse().find((s) => s.type === 'playlist' || s.type === 'track');
+      if (store.deviceId && lastMusicStep) {
         try {
-          const fallbackSeed = await resolveRecommendationSeedFromPrevStep(prevStep);
+          const fallbackSeed = await resolveRecommendationSeedFromPrevStep(lastMusicStep);
           const seedUri = await waitForSeedTrackUri(9000, fallbackSeed);
           if (seedUri) {
             await startRecommendationsContinuation(seedUri, store.deviceId);
@@ -705,6 +734,12 @@ class AutomationEngine {
         } catch (err) {
           console.warn('[Automation] recommendations continuation failed:', err);
         }
+      }
+      // Non-stop: loop back to the beginning rather than stopping
+      if (steps.length > 0) {
+        this.emit({ type: 'error', message: 'Queue ended — looping from the start.' });
+        await this.executeStep(0);
+        return;
       }
       this.stopInternal();
       return;
@@ -768,6 +803,7 @@ class AutomationEngine {
       } else if (step.type === 'playlist') {
         await this.playPlaylistStep(step);
       } else if (step.type === 'jingle' || step.type === 'ad') {
+        this.armAutomationJingleEnded(step, index, this.advanceScheduleGen, this.getStore().deviceId);
         await this.playLocalAudioStep(step);
       }
 
@@ -802,7 +838,7 @@ class AutomationEngine {
         const clipTotal = Math.max(decodedMs, step.durationMs);
         this.currentStepStartTime = Date.now();
         this.startCountdown(step, clipTotal, clipTotal);
-        this.scheduleLocalAudioAdvance(step, index, this.advanceScheduleGen, decodedMs, this.getStore().deviceId);
+        this.scheduleLocalAudioFallback(step, index, this.advanceScheduleGen, decodedMs);
       }
     } catch (err) {
       const stepName = 'name' in step ? step.name : '';
@@ -814,6 +850,7 @@ class AutomationEngine {
       // If the error is connectivity/auth related, pause automation instead of rapid-skipping
       const isConnectivityError =
         detail.includes('Web Playback is not connected') ||
+        detail.includes('No Spotify device') ||
         detail.includes('aborted') ||
         detail.includes('network') ||
         detail.includes('Failed to fetch') ||
@@ -821,10 +858,15 @@ class AutomationEngine {
         detail.includes('401') ||
         detail.includes('403') ||
         detail.includes('429') ||
+        detail.includes('500') ||
+        detail.includes('502') ||
+        detail.includes('503') ||
+        detail.includes('504') ||
         detail.includes('RATE_LIMITED');
       if (isConnectivityError) {
         store.setAutomationStatus('paused');
         window.dispatchEvent(new CustomEvent('radio-sankt:spotify-pause-sdk'));
+        this.scheduleAutoRecovery();
         return;
       }
       // Skip to next step on non-connectivity errors (e.g. track removed from Spotify)
@@ -942,9 +984,18 @@ class AutomationEngine {
   private handlePauseStep(step: AutomationStep): void {
     this.getStore().setAutomationStatus('waitingAtPause');
     this.emit({ type: 'waitingAtPause', step });
+    const pauseTimeout = 'durationMs' in step && step.durationMs > 0 ? step.durationMs : 30_000;
+    const gen = this.advanceScheduleGen;
+    this.nextStepTimer = setTimeout(() => {
+      if (gen !== this.advanceScheduleGen) return;
+      if (this.getStore().automationStatus !== 'waitingAtPause') return;
+      this.emit({ type: 'error', message: 'Pause step timed out — auto-advancing.' });
+      void this.resume();
+    }, pauseTimeout);
   }
 
   async resume(options?: { skipGainRecovery?: boolean }): Promise<void> {
+    this.clearAutoRecovery();
     const store = this.getStore();
     if (store.automationStatus === 'waitingAtPause') {
       const nextIndex = store.currentStepIndex + 1;
@@ -1213,7 +1264,7 @@ class AutomationEngine {
     this.countdownHaltStartedAt = null;
   }
 
-  async pause(options?: { skipFade?: boolean }): Promise<void> {
+  async pause(options?: { skipFade?: boolean; autoRecover?: boolean }): Promise<void> {
     return this.serialized(async () => {
       const store = this.getStore();
       if (store.automationStatus !== 'playing') return;
@@ -1229,6 +1280,9 @@ class AutomationEngine {
 
       store.setAutomationStatus('paused');
       window.dispatchEvent(new CustomEvent('radio-sankt:spotify-pause'));
+      if (options?.autoRecover) {
+        this.scheduleAutoRecovery();
+      }
     });
   }
 
@@ -1258,6 +1312,7 @@ class AutomationEngine {
   }
 
   private async stopInternal(): Promise<void> {
+    this.clearAutoRecovery();
     stopRecommendationsContinuation();
     this.invalidatePendingAdvance();
     this.clearCountdown();

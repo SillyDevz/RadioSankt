@@ -83,8 +83,12 @@ class AudioEngine {
 
   /** Spotify routes through this graph; browsers/Electron may suspend the context until resumed. */
   async resumeContextIfNeeded(): Promise<void> {
-    if (this.ctx.state === 'suspended') {
+    if ((this.ctx.state as string) !== 'running') {
       await this.ctx.resume();
+      if ((this.ctx.state as string) !== 'running') {
+        await new Promise((r) => setTimeout(r, 100));
+        await this.ctx.resume();
+      }
     }
   }
 
@@ -301,6 +305,7 @@ class AudioEngine {
       } catch {
         /* already stopped */
       }
+      this.jingleSource.disconnect();
       this.jingleSource = null;
     }
     this.jingleBuffer = null;
