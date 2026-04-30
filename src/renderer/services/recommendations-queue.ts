@@ -80,12 +80,15 @@ export async function startRecommendationsContinuation(seedTrackUri: string, dev
       if (!curId) {
         consecutiveNullTicks++;
         if (consecutiveNullTicks >= MAX_NULL_TICKS && lastKnownSeedId) {
+          const deviceId = useStore.getState().deviceId;
           const batch = await fetchRecommendationTrackUris(lastKnownSeedId, BATCH_LIMIT, market ?? undefined);
           const novel = batch.filter((u) => !queuedSeen.has(u));
-          for (const u of novel.slice(0, ADD_PER_TICK)) {
-            try { await addTrackToQueue(u); queuedSeen.add(u); } catch { /* transient */ }
+          if (novel.length > 0 && deviceId) {
+            for (const u of novel) queuedSeen.add(u);
+            trimSeen();
+            await playTrackUris(novel, deviceId);
+            consecutiveNullTicks = 0;
           }
-          trimSeen();
         }
         consecutiveTickFailures = 0;
         return;
@@ -97,7 +100,21 @@ export async function startRecommendationsContinuation(seedTrackUri: string, dev
 
       if (state && !state.isPlaying) {
         resumeAttempts++;
-        try { await remoteResumeActiveDevice(); } catch { /* best effort */ }
+        if (resumeAttempts <= 2) {
+          try { await remoteResumeActiveDevice(); } catch { /* best effort */ }
+        } else {
+          const deviceId = useStore.getState().deviceId;
+          if (deviceId && lastKnownSeedId) {
+            const batch = await fetchRecommendationTrackUris(lastKnownSeedId, BATCH_LIMIT, market ?? undefined);
+            const novel = batch.filter((u) => !queuedSeen.has(u));
+            if (novel.length > 0) {
+              for (const u of novel) queuedSeen.add(u);
+              trimSeen();
+              await playTrackUris(novel, deviceId);
+              resumeAttempts = 0;
+            }
+          }
+        }
       } else if (state?.isPlaying) {
         resumeAttempts = 0;
       }

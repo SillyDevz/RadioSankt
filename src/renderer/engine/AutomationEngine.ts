@@ -9,7 +9,6 @@ import {
   addTrackToQueue,
   waitForActiveTrackUri,
 } from '@/services/spotify-api';
-import { startRecommendationsContinuation, stopRecommendationsContinuation } from '@/services/recommendations-queue';
 import type { AutomationStep } from '@/store';
 
 /** Spotify `/me/player/volume` rate-limits aggressively — throttle to ~8 calls/sec. */
@@ -126,25 +125,6 @@ function waitForSpotifyDeviceId(timeoutMs: number): Promise<string | null> {
   });
 }
 
-/** Stable seed URI from the previous step (when `/me/player` is flaky). */
-async function resolveRecommendationSeedFromPrevStep(prevStep: AutomationStep | undefined): Promise<string | null> {
-  if (!prevStep) return null;
-  if (prevStep.type === 'track') return prevStep.spotifyUri;
-  return null;
-}
-
-/** Poll Spotify player between tracks (204/no item); fall back to playlist-derived seed. */
-async function waitForSeedTrackUri(timeoutMs: number, fallbackUri: string | null): Promise<string | null> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const remote = await getRemotePlaybackState();
-    const uri = remote?.itemUri;
-    if (uri?.startsWith('spotify:track:')) return uri;
-    await new Promise((r) => setTimeout(r, 400));
-  }
-  return fallbackUri?.startsWith('spotify:track:') ? fallbackUri : null;
-}
-
 class AutomationEngine {
   private static instance: AutomationEngine | null = null;
 
@@ -167,6 +147,8 @@ class AutomationEngine {
   private forceNextPlayback = false;
   /** URI preloaded into Spotify's native queue for gapless transition. */
   private preloadedNextUri: string | null = null;
+  /** Watchdog: polls Spotify after queue ends, loops back if silence detected. */
+  private silenceWatchdogTimer: ReturnType<typeof setInterval> | null = null;
   /** Auto-recovery watchdog: retries resume after connectivity-related pauses. */
   private autoRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
   private autoRecoveryAttempts = 0;
@@ -305,12 +287,7 @@ class AutomationEngine {
       const audio = AudioEngine.get();
       const devId = store.deviceId;
 
-      const skipFadeForRec =
-        !nextMeta &&
-        store.continuePlaylistRecommendations &&
-        cur.type === 'track';
-
-      if (cur.transitionOut === 'fadeOut' && !skipFadeForRec) {
+      if (cur.transitionOut === 'fadeOut') {
         await this.fadeOutCurrentStep(cur, audio, devId);
       }
       if (nextMeta?.transitionIn === 'crossfade') {
@@ -479,7 +456,7 @@ class AutomationEngine {
         return;
       }
       if (store.automationStatus === 'stopped') {
-        stopRecommendationsContinuation();
+        this.clearSilenceWatchdog();
         this.breakRecentKeys = [];
         this.songsSinceBreak = 0;
       }
@@ -555,24 +532,9 @@ class AutomationEngine {
 
     if (index >= steps.length) {
       this.emit({ type: 'finished' });
-      const lastMusicStep = [...steps].reverse().find((s) => s.type === 'track');
-      if (store.deviceId && lastMusicStep) {
-        try {
-          const fallbackSeed = await resolveRecommendationSeedFromPrevStep(lastMusicStep);
-          const seedUri = await waitForSeedTrackUri(9000, fallbackSeed);
-          if (seedUri) {
-            await startRecommendationsContinuation(seedUri, store.deviceId);
-            this.finishAutomationKeepingSpotifyPlaying();
-            return;
-          }
-        } catch (err) {
-          console.warn('[Automation] recommendations continuation failed:', err);
-        }
-      }
-      // Non-stop: loop back to the beginning rather than stopping
+      // Let Spotify continue from its own queue/radio; watchdog loops back if silence detected
       if (steps.length > 0) {
-        this.emit({ type: 'error', message: 'Queue ended — looping from the start.' });
-        await this.executeStep(0);
+        this.startSilenceWatchdog(steps);
         return;
       }
       this.stopInternal();
@@ -1062,25 +1024,9 @@ class AutomationEngine {
     });
   }
 
-  /** Automation ended successfully but Spotify keeps playing (recommendations queue). */
-  private finishAutomationKeepingSpotifyPlaying(): void {
-    this.invalidatePendingAdvance();
-    this.clearCountdown();
-    this.breakRecentKeys = [];
-    this.songsSinceBreak = 0;
-
-    AudioEngine.get()?.stopJingle();
-
-    const store = this.getStore();
-    store.setAutomationStatus('stopped');
-    store.setCurrentStepIndex(0);
-    store.setStepTimeRemaining(0);
-    store.setIsPlaying(true);
-  }
-
   private async stopInternal(): Promise<void> {
     this.clearAutoRecovery();
-    stopRecommendationsContinuation();
+    this.clearSilenceWatchdog();
     this.invalidatePendingAdvance();
     this.clearCountdown();
     this.breakRecentKeys = [];
@@ -1105,6 +1051,44 @@ class AutomationEngine {
     store.setDuration(0);
     store.setIsPlaying(false);
     window.dispatchEvent(new CustomEvent('radio-sankt:spotify-pause'));
+  }
+
+  private clearSilenceWatchdog(): void {
+    if (this.silenceWatchdogTimer) {
+      clearInterval(this.silenceWatchdogTimer);
+      this.silenceWatchdogTimer = null;
+    }
+  }
+
+  private startSilenceWatchdog(steps: AutomationStep[]): void {
+    this.clearSilenceWatchdog();
+    this.invalidatePendingAdvance();
+    this.clearCountdown();
+
+    const store = this.getStore();
+    store.setAutomationStatus('stopped');
+    store.setIsPlaying(true);
+
+    let silentTicks = 0;
+
+    this.silenceWatchdogTimer = setInterval(async () => {
+      try {
+        const state = await getRemotePlaybackState();
+        if (state?.isPlaying) {
+          silentTicks = 0;
+          return;
+        }
+        silentTicks++;
+        if (silentTicks >= 2) {
+          this.clearSilenceWatchdog();
+          this.emit({ type: 'error', message: 'Silence detected — looping from the start.' });
+          store.setAutomationStatus('playing');
+          await this.executeStep(0);
+        }
+      } catch {
+        // Network error — don't count as silence, just retry next tick
+      }
+    }, 5_000);
   }
 }
 

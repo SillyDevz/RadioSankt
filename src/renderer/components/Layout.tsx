@@ -18,7 +18,6 @@ import {
   runScheduleTick,
 } from '@/services/automation-session';
 import AutomationEngine from '@/engine/AutomationEngine';
-import '@/services/recommendations-queue';
 import i18n, { isAppLanguage } from '@/i18n';
 import { useTranslation } from 'react-i18next';
 
