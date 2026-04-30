@@ -1002,6 +1002,10 @@ class AutomationEngine {
     return AutomationEngine.instance;
   }
 
+  get isPlayingIntraPlaylistBreak(): boolean {
+    return this.intraPlaylistBreakInFlight;
+  }
+
   private handlePauseStep(step: AutomationStep): void {
     this.getStore().setAutomationStatus('waitingAtPause');
     this.emit({ type: 'waitingAtPause', step });

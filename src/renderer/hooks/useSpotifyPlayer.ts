@@ -267,17 +267,20 @@ export function useSpotifyPlayer() {
 
         // Playback-stolen detection: if Spotify reports paused but automation thinks it's
         // playing, another device/user paused playback — pause automation to stay in sync.
-        // Skip when the current step is a jingle/ad — we intentionally pause Spotify for those.
+        // Skip when the current step is a jingle/ad or during intra-playlist breaks
+        // (we intentionally pause Spotify for those).
         const stBefore = useStore.getState();
         const curAutoStep = stBefore.automationSteps[stBefore.currentStepIndex];
         const isLocalAudioStep = curAutoStep?.type === 'jingle' || curAutoStep?.type === 'ad';
+        const engine = AutomationEngine.getInstance();
         if (
           !state.isPlaying &&
           stBefore.isPlaying &&
           (stBefore.automationStatus === 'playing') &&
-          !isLocalAudioStep
+          !isLocalAudioStep &&
+          !engine.isPlayingIntraPlaylistBreak
         ) {
-          AutomationEngine.getInstance().pause();
+          engine.pause();
         }
 
         setIsPlaying(state.isPlaying);
