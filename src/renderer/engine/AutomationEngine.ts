@@ -280,7 +280,7 @@ class AutomationEngine {
     }
   }
 
-  /** Fade/spotify ramp where configured, insert breaks, then load next step. Single-flight per advance generation. */
+  /** Fade/spotify ramp where configured, play inline breaks, then load next step. Single-flight per advance generation. */
   private async runStepTransition(
     finishingStep: AutomationStep,
     currentIndex: number,
@@ -323,10 +323,30 @@ class AutomationEngine {
 
       if (advanceGen !== this.advanceScheduleGen) return;
 
-      const nextIndex = this.maybeInsertBreakAfter(currentIndex, cur);
+      // Play inline break jingles if a break is due
+      const breakPicks = this.getBreakPicksIfDue(currentIndex, cur);
+      if (breakPicks.length > 0 && devId) {
+        await remotePause(devId).catch(() => {});
+        const breakAudio = AudioEngine.getOrInit();
+        breakAudio.resumeContextIfNeeded();
+        breakAudio.setVolume('B', 1);
+        for (const pick of breakPicks) {
+          if (pick.type !== 'jingle' && pick.type !== 'ad') continue;
+          try {
+            await breakAudio.playJingle(pick.filePath);
+            await new Promise<void>((resolve) => {
+              if (!breakAudio.isJinglePlaying()) { resolve(); return; }
+              breakAudio.onJingleEnded(() => resolve());
+            });
+          } catch { /* skip failed clip */ }
+        }
+        if (advanceGen !== this.advanceScheduleGen) return;
+        if (this.getStore().automationStatus !== 'playing') return;
+      }
+
       if (advanceGen !== this.advanceScheduleGen) return;
 
-      await this.executeStep(nextIndex);
+      await this.executeStep(currentIndex + 1);
     } catch (err) {
       this.emit({ type: 'error', message: `Step transition failed: ${err}` });
       this.scheduleNextStepImmediate(currentIndex);
@@ -488,16 +508,12 @@ class AutomationEngine {
       const from = store.currentStepIndex;
       if (from < 0 || from >= lenBefore) return;
 
-      const finishingStep = stepsBefore[from];
-
       this.clearTransportForJump();
 
-      const nextAfterBreak = this.maybeInsertBreakAfter(from, finishingStep);
       const stepsNow = this.getSteps();
       if (stepsNow.length === 0) return;
 
-      // Advance to next step index, or `steps.length` to finish (never wrap to 0 — that restarted the queue).
-      const target = Math.max(0, Math.min(nextAfterBreak, stepsNow.length));
+      const target = Math.min(from + 1, stepsNow.length);
       await this.executeStep(target);
     });
   }
@@ -885,34 +901,29 @@ class AutomationEngine {
     return picks;
   }
 
-  private maybeInsertBreakAfter(currentIndex: number, step: AutomationStep): number {
-    if (step.type !== 'track') return currentIndex + 1;
+  private getBreakPicksIfDue(currentIndex: number, step: AutomationStep): AutomationStep[] {
+    if (step.type !== 'track') return [];
 
     this.songsSinceBreak += 1;
 
     const store = this.getStore();
     const rule = store.breakRules.find((r) => r.enabled);
-    if (!rule) return currentIndex + 1;
+    if (!rule) return [];
     const everySongs = Math.max(1, Math.floor(rule.everySongs));
-    if (this.songsSinceBreak < everySongs) return currentIndex + 1;
+    if (this.songsSinceBreak < everySongs) return [];
 
     // Skip break if next step is already a user-placed jingle or ad
     const steps = this.getSteps();
     const nextStep = steps[currentIndex + 1];
     if (nextStep && (nextStep.type === 'jingle' || nextStep.type === 'ad')) {
       this.songsSinceBreak = 0;
-      return currentIndex + 1;
+      return [];
     }
 
     this.songsSinceBreak = 0;
 
     const picks = this.buildBreakPicks(rule);
-    if (picks.length === 0) return currentIndex + 1;
-
-    const insertAt = currentIndex + 1;
-    const currentSteps = store.automationSteps;
-    store.setAutomationSteps([...currentSteps.slice(0, insertAt), ...picks, ...currentSteps.slice(insertAt)]);
-    return insertAt;
+    return picks;
   }
 
 
