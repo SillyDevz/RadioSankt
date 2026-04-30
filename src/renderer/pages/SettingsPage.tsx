@@ -97,7 +97,16 @@ export default function SettingsPage() {
     if (!trimmed) return;
     await window.electronAPI?.saveSpotifyClientId(trimmed);
     setClientId(trimmed);
-    addToast(t('settings.spotify.saveClientIdSuccess'), 'success');
+    // If connected, disconnect since the old session is now invalid
+    if (connected) {
+      await window.electronAPI?.disconnectSpotify();
+      await window.electronAPI?.saveToStore('spotifyLastGrantedScopesDisplay', '');
+      clearSpotifyUserIdCache();
+      useStore.getState().disconnectSpotify();
+      addToast(t('settings.spotify.saveClientIdSuccess', { defaultValue: 'Client ID saved. Spotify disconnected — please reconnect.' }), 'warning');
+    } else {
+      addToast(t('settings.spotify.saveClientIdSuccess', { defaultValue: 'Client ID saved.' }), 'success');
+    }
   };
 
   const handleConnect = async () => {

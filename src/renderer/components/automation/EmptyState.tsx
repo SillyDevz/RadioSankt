@@ -1,6 +1,8 @@
-import i18n from '@/i18n';
+import { useTranslation } from 'react-i18next';
 
 export default function EmptyState() {
+  const { t } = useTranslation();
+
   return (
     <div className="flex flex-col items-center justify-center h-full gap-4 w-full">
       <div className="bg-bg-elevated/30 border border-border/50 rounded-2xl p-8 flex flex-col items-center gap-4 w-full max-w-sm text-center">
@@ -17,9 +19,9 @@ export default function EmptyState() {
           </svg>
         </div>
 
-        <h1 className="text-xl font-bold text-text-primary">{i18n.t('automation.empty.title', { defaultValue: 'Your automation playlist is empty' })}</h1>
+        <h1 className="text-xl font-bold text-text-primary">{t('automation.empty.title', { defaultValue: 'Your automation playlist is empty' })}</h1>
         <p className="text-text-secondary text-sm">
-          {i18n.t('automation.empty.body', { defaultValue: 'Use Search to add tracks, jingles, or ads, or Load set to open a saved automation. The queue is restored after restart.' })}
+          {t('automation.empty.body', { defaultValue: 'Use Search to add tracks, jingles, or ads, or Load set to open a saved automation. The queue is restored after restart.' })}
         </p>
       </div>
     </div>

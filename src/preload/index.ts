@@ -15,6 +15,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('update-downloaded', handler);
     return () => ipcRenderer.removeListener('update-downloaded', handler);
   },
+  onAppWillQuit: (cb: () => void) => {
+    const handler = () => cb();
+    ipcRenderer.on('app-will-quit', handler);
+    return () => { ipcRenderer.removeListener('app-will-quit', handler); };
+  },
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   quitAndInstall: () => ipcRenderer.invoke('quit-and-install'),
   toggleDevTools: () => ipcRenderer.invoke('toggle-devtools'),
@@ -48,6 +53,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     const handler = (_event: Electron.IpcRendererEvent, message: string) => cb(message);
     ipcRenderer.on('spotify-scope-reset', handler);
     return () => ipcRenderer.removeListener('spotify-scope-reset', handler);
+  },
+  onSpotifyAuthRevoked: (cb: () => void) => {
+    const handler = () => cb();
+    ipcRenderer.on('spotify-auth-revoked', handler);
+    return () => { ipcRenderer.removeListener('spotify-auth-revoked', handler); };
   },
   getSpotifyToken: () => ipcRenderer.invoke('spotify-get-token'),
   refreshSpotifyToken: () => ipcRenderer.invoke('spotify-refresh-token'),

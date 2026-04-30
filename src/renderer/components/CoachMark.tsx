@@ -34,7 +34,7 @@ export default function CoachMark({ id, targetSelector, text, placement = 'botto
 
   // Update position on resize
   useEffect(() => {
-    if (!shouldShow || !rect) return;
+    if (!shouldShow) return;
 
     const handleResize = () => {
       cancelAnimationFrame(rafRef.current);
@@ -49,7 +49,7 @@ export default function CoachMark({ id, targetSelector, text, placement = 'botto
       window.removeEventListener('resize', handleResize);
       cancelAnimationFrame(rafRef.current);
     };
-  }, [shouldShow, rect, targetSelector]);
+  }, [shouldShow, targetSelector]);
 
   if (!shouldShow || !rect) return null;
 

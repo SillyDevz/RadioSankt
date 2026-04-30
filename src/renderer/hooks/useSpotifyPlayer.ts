@@ -128,37 +128,46 @@ export function useSpotifyPlayer() {
 
   const deviceIdRef = useRef<string | null>(deviceId);
   deviceIdRef.current = deviceId;
+  const toggleInFlight = useRef(false);
 
   const togglePlayback = useCallback(async () => {
-    const { automationStatus, automationSteps, isPlaying } = useStore.getState();
+    if (toggleInFlight.current) return;
+    const { isLive } = useStore.getState();
+    if (isLive) return;
+    toggleInFlight.current = true;
+    try {
+      const { automationStatus, automationSteps, isPlaying } = useStore.getState();
 
-    if (automationStatus === 'waitingAtPause') {
-      await AutomationEngine.getInstance().resume();
-      return;
-    }
-
-    if (automationStatus === 'stopped' || automationSteps.length === 0) {
-      const devId = deviceIdRef.current;
-      if (!devId) return;
-      try {
-        if (isPlaying) await remotePause(devId);
-        else await remoteResume(devId);
-      } catch {
-        /* transport will refresh via state poll */
+      if (automationStatus === 'waitingAtPause') {
+        await AutomationEngine.getInstance().resume();
+        return;
       }
-      return;
+
+      if (automationStatus === 'stopped' || automationSteps.length === 0) {
+        const devId = deviceIdRef.current;
+        if (!devId) return;
+        try {
+          if (isPlaying) await remotePause(devId);
+          else await remoteResume(devId);
+        } catch {
+          /* transport will refresh via state poll */
+        }
+        return;
+      }
+
+      const engine = AutomationEngine.getInstance();
+
+      if (isPlaying) {
+        if (automationStatus === 'playing') await engine.pause();
+        else window.dispatchEvent(new CustomEvent('radio-sankt:spotify-pause'));
+        return;
+      }
+
+      if (automationStatus === 'paused') await engine.play();
+      else window.dispatchEvent(new CustomEvent('radio-sankt:spotify-resume'));
+    } finally {
+      toggleInFlight.current = false;
     }
-
-    const engine = AutomationEngine.getInstance();
-
-    if (isPlaying) {
-      if (automationStatus === 'playing') await engine.pause();
-      else window.dispatchEvent(new CustomEvent('radio-sankt:spotify-pause'));
-      return;
-    }
-
-    if (automationStatus === 'paused') await engine.play();
-    else window.dispatchEvent(new CustomEvent('radio-sankt:spotify-resume'));
   }, []);
 
   // ── Device discovery + state poll ─────────────────────────────────────
@@ -248,6 +257,17 @@ export function useSpotifyPlayer() {
         if (!state) {
           // Transient null — Spotify sometimes returns 204 between tracks. Don't wipe UI state.
           return;
+        }
+
+        // Playback-stolen detection: if Spotify reports paused but automation thinks it's
+        // playing, another device/user paused playback — pause automation to stay in sync.
+        const stBefore = useStore.getState();
+        if (
+          !state.isPlaying &&
+          stBefore.isPlaying &&
+          (stBefore.automationStatus === 'playing')
+        ) {
+          AutomationEngine.getInstance().pause();
         }
 
         setIsPlaying(state.isPlaying);
@@ -418,7 +438,13 @@ export function useSpotifyPlayer() {
     stateTimer = setInterval(pollState, STATE_POLL_MS);
     void pollState();
 
+    const onBeforeUnload = () => {
+      cancelled = true;
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+
     return () => {
+      window.removeEventListener('beforeunload', onBeforeUnload);
       cancelled = true;
       if (discoveryTimer) clearTimeout(discoveryTimer);
       if (stateTimer) clearInterval(stateTimer);
@@ -498,10 +524,12 @@ export function useSpotifyPlayer() {
 
   // ── Volume sync ─────────────────────────────────────────────────────────
   useEffect(() => {
-    const devId = deviceIdRef.current;
-    if (!devId) return;
     // While live, Spotify device should stay silent; the live handler ramps volume on Live exit.
     if (isLive) return;
+    // Skip volume sync while a fade ramp is in progress to avoid fighting the ramp.
+    if (liveRampRaf !== null) return;
+    const devId = deviceIdRef.current;
+    if (!devId) return;
     const pct = Math.round(Math.max(0, Math.min(1, volume)) * 100);
     void remoteSetVolumePercent(pct, devId).catch(() => {});
   }, [volume, isLive]);
@@ -558,6 +586,16 @@ export function useSpotifyPlayer() {
                 },
               }),
             );
+          }
+
+          // Update stepTimeRemaining when seeking while automation is paused
+          if (st.automationStatus === 'paused') {
+            if (cur && (cur.type === 'track' || cur.type === 'playlist')) {
+              const stepDurationMs = (cur as { durationMs: number }).durationMs;
+              if (stepDurationMs) {
+                st.setStepTimeRemaining(Math.max(0, stepDurationMs - clamped));
+              }
+            }
           }
         }
       } catch {

@@ -34,9 +34,10 @@ import {
   stopTokenRefreshTimer,
   consumeSpotifyScopePurgeNotice,
   getLastGrantedScopes,
+  shutdownServer,
 } from './spotify-auth';
 
-const store = new Store();
+const store = new Store({ clearInvalidConfig: true });
 let mainWindow: BrowserWindow | null = null;
 const GITHUB_OWNER = 'SillyDevz';
 const GITHUB_REPO = 'RadioSankt';
@@ -161,15 +162,23 @@ function applyDarwinDockIcon(): void {
   app.dock?.setIcon(icon);
 }
 
-/** Radio Sankt uses Spotify Connect remote-control (not Web Playback SDK), so no EME/DRM
- *  permissions are required. This handler simply leaves defaults intact for Spotify's
- *  OAuth popup and local file previews. */
+/** Spotify / Widevine need EME; only grant playback-related permissions. */
 function allowPlaybackPermissions(): void {
+  const ALLOWED_PERMISSIONS = new Set(['media', 'mediaKeySystem', 'protected-media-identifier']);
   const ses = session.defaultSession;
-  ses.setPermissionRequestHandler((_wc, _permission, callback) => {
-    callback(true);
+  ses.setPermissionRequestHandler((_wc, permission, callback) => {
+    callback(ALLOWED_PERMISSIONS.has(permission));
   });
-  ses.setPermissionCheckHandler(() => true);
+  ses.setPermissionCheckHandler((_wc, permission) => ALLOWED_PERMISSIONS.has(permission));
+}
+
+/** Restrict file reads to safe directories (userData, music, home). */
+function isAllowedReadPath(filePath: string): boolean {
+  const resolved = resolve(normalize(filePath));
+  const userData = app.getPath('userData');
+  const home = app.getPath('home');
+  const musicDir = app.getPath('music');
+  return resolved.startsWith(userData) || resolved.startsWith(musicDir) || resolved.startsWith(home);
 }
 
 function createWindow(): void {
@@ -178,7 +187,7 @@ function createWindow(): void {
     ...(icon ? { icon } : {}),
     width: 1280,
     height: 800,
-    minWidth: 900,
+    minWidth: 1080,
     minHeight: 600,
     ...(process.platform === 'darwin'
       ? {
@@ -204,6 +213,7 @@ function createWindow(): void {
   }
 
   mainWindow.on('closed', () => {
+    shutdownServer();
     mainWindow = null;
     stopTokenRefreshTimer();
   });
@@ -212,7 +222,12 @@ function createWindow(): void {
   mainWindow.webContents.on('will-navigate', (event, url) => {
     const devUrl = process.env.VITE_DEV_SERVER_URL;
     if (devUrl && url.startsWith(devUrl)) return;
-    if (url.startsWith('file://')) return;
+    if (url.startsWith('file://')) {
+      const urlPath = decodeURI(new URL(url).pathname);
+      const normalizedUrlPath = resolve(urlPath);
+      const normalizedAppDir = resolve(app.getAppPath());
+      if (normalizedUrlPath.startsWith(normalizedAppDir)) return;
+    }
     event.preventDefault();
   });
 
@@ -228,6 +243,10 @@ function createWindow(): void {
 function setupAutoUpdater(): void {
   if (!app.isPackaged) return;
 
+  const autoUpdateEnabled = store.get('autoUpdate');
+  if (autoUpdateEnabled === false) return;
+
+  autoUpdater.autoInstallOnAppQuit = false;
   autoUpdater.checkForUpdatesAndNotify();
 
   autoUpdater.on('update-available', (info) => {
@@ -292,7 +311,11 @@ function registerIpcHandlers(): void {
     },
   );
 
-  ipcMain.handle('quit-and-install', () => {
+  ipcMain.handle('quit-and-install', async () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('app-will-quit');
+      await new Promise((resolve) => setTimeout(resolve, 600));
+    }
     autoUpdater.quitAndInstall();
   });
 
@@ -300,20 +323,44 @@ function registerIpcHandlers(): void {
     return app.getVersion();
   });
 
+  const ALLOWED_DIALOG_PROPS = new Set(['openFile', 'multiSelections', 'openDirectory']);
+
   ipcMain.handle('open-file-dialog', async (_event, options) => {
-    // Only allow safe options from the renderer
-    return dialog.showOpenDialog({
-      properties: options?.properties || ['openFile'],
-      filters: options?.filters,
-      title: options?.title,
-    });
+    const properties = (options?.properties || ['openFile']).filter((p: string) =>
+      ALLOWED_DIALOG_PROPS.has(p),
+    );
+    return dialog.showOpenDialog({ properties, filters: options?.filters, title: options?.title });
   });
 
   ipcMain.handle('read-file', async (_event, filePath: string) => {
+    if (!isAllowedReadPath(filePath)) throw new Error('Access denied');
     return fs.readFile(filePath, 'utf-8');
   });
 
+  const RENDERER_WRITABLE_KEYS = new Set([
+    'language',
+    'theme',
+    'accentColor',
+    'volume',
+    'shortcuts',
+    'cartWall',
+    'workspaceLayout',
+    'hasCompletedOnboarding',
+    'seenCoachMarks',
+    'quickFireSlots',
+    'songTransitionMode',
+    'fadeInMs',
+    'fadeOutMs',
+    'crossfadeMs',
+    'duckLevel',
+    'autoUpdate',
+    'followProgramSchedule',
+    'spotifyLastGrantedScopesDisplay',
+    'automationSession',
+  ]);
+
   ipcMain.handle('save-to-store', (_event, key: string, value: unknown) => {
+    if (!RENDERER_WRITABLE_KEYS.has(key)) return;
     store.set(key, value);
   });
 
@@ -335,7 +382,9 @@ function registerIpcHandlers(): void {
   });
 
   ipcMain.handle('toggle-devtools', () => {
-    mainWindow?.webContents.toggleDevTools();
+    if (!app.isPackaged) {
+      mainWindow?.webContents.toggleDevTools();
+    }
   });
 
   ipcMain.handle('spotify-refresh-token', async () => {
@@ -376,6 +425,7 @@ function registerIpcHandlers(): void {
 
   // File system - binary
   ipcMain.handle('read-file-buffer', async (_event, filePath: string) => {
+    if (!isAllowedReadPath(filePath)) throw new Error('Access denied');
     const buf = await fs.readFile(filePath);
     return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength);
   });
@@ -469,6 +519,55 @@ function registerIpcHandlers(): void {
   });
 }
 
+function formatWidevineFailure(e: unknown): string {
+  const lines: string[] = [];
+  const walk = (x: unknown, indent: string): void => {
+    if (x == null) {
+      lines.push(`${indent}${String(x)}`);
+      return;
+    }
+    if (x instanceof Error) {
+      lines.push(`${indent}${x.name}: ${x.message}`);
+      const ext = x as Error & { detail?: unknown; errors?: unknown[] };
+      if (ext.detail !== undefined) {
+        lines.push(`${indent}detail:`);
+        walk(ext.detail, `${indent}  `);
+      }
+      if (Array.isArray(ext.errors)) {
+        ext.errors.forEach((sub, i) => {
+          lines.push(`${indent}[${i}]`);
+          walk(sub, `${indent}  `);
+        });
+      }
+      return;
+    }
+    if (typeof x === 'object') {
+      try {
+        lines.push(`${indent}${JSON.stringify(x, null, 2).split('\n').join(`\n${indent}`)}`);
+      } catch {
+        lines.push(`${indent}${Object.prototype.toString.call(x)}`);
+      }
+      return;
+    }
+    lines.push(`${indent}${String(x)}`);
+  };
+  walk(e, '');
+  return lines.join('\n');
+}
+
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+  });
+}
+
+
 app.whenReady().then(async () => {
   allowPlaybackPermissions();
   getDatabase();
@@ -477,6 +576,12 @@ app.whenReady().then(async () => {
   applyDarwinDockIcon();
   createWindow();
   setupAutoUpdater();
+
+  app.on('before-quit', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('app-will-quit');
+    }
+  });
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useStore } from '@/store';
 import {
   searchTracks,
@@ -11,7 +12,6 @@ import {
 import { buildSongStepTransition, type SpotifySearchResult } from '@/store';
 import Tooltip from '@/components/Tooltip';
 import AudioEngine from '@/engine/AudioEngine';
-import i18n from '@/i18n';
 import { basename, stripExtension } from '@/utils/path';
 
 function prettyAssetName(name: string): string {
@@ -28,6 +28,7 @@ function formatDuration(ms: number): string {
 const PLAYLIST_PLACEHOLDER = '\u{1F4DC}';
 
 export default function SearchWidget() {
+  const { t } = useTranslation();
   const connected = useStore((s) => s.connected);
   const addToast = useStore((s) => s.addToast);
   const jingles = useStore((s) => s.jingles);
@@ -52,10 +53,18 @@ export default function SearchWidget() {
   const [playlistTracksLoading, setPlaylistTracksLoading] = useState(false);
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchIdRef = useRef(0);
 
   useEffect(() => {
+    if (!window.electronAPI) return;
     window.electronAPI.getJingles().then((rows) => useStore.getState().setJingles(rows));
     window.electronAPI.getAds().then((rows) => useStore.getState().setAds(rows));
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
   }, []);
 
   const resetPlaylistsState = useCallback(() => {
@@ -97,7 +106,7 @@ export default function SearchWidget() {
       const tracks = await getPlaylistTracks(summary.id);
       setPlaylistTracks(tracks);
       if (tracks.length === 0) {
-        addToast(i18n.t('workspace.playlists.noPlayableTracks', { defaultValue: 'This playlist has no playable Spotify tracks (local files are skipped).' }), 'warning');
+        addToast(t('workspace.playlists.noPlayableTracks', { defaultValue: 'This playlist has no playable Spotify tracks (local files are skipped).' }), 'warning');
       }
     } catch (err) {
       addToast(`Failed to load tracks: ${err instanceof Error ? err.message : String(err)}`, 'error');
@@ -118,16 +127,19 @@ export default function SearchWidget() {
       }
 
       if (panel === 'spotify') {
+        const id = ++searchIdRef.current;
         debounceRef.current = setTimeout(async () => {
           setLoading(true);
           try {
             const results = await searchTracks(value);
+            if (searchIdRef.current !== id) return;
             setSearchResults(results);
           } catch (err) {
+            if (searchIdRef.current !== id) return;
             console.error('Spotify search error:', err);
             addToast(`Search failed: ${err instanceof Error ? err.message : String(err)}`, 'error');
           } finally {
-            setLoading(false);
+            if (searchIdRef.current === id) setLoading(false);
           }
         }, 300);
       }
@@ -223,7 +235,7 @@ export default function SearchWidget() {
       duckMusic: false,
       duckLevel: 0.2,
     });
-    addToast(i18n.t('workspace.search.addedTrack', { name: result.name, defaultValue: 'Added "{{name}}" to program' }), 'success');
+    addToast(t('workspace.search.addedTrack', { name: result.name, defaultValue: 'Added "{{name}}" to program' }), 'success');
   };
 
   const handleAddJingleToAutomation = (jingle: { id: number; name: string; filePath: string; durationMs: number }) => {
@@ -241,7 +253,7 @@ export default function SearchWidget() {
       duckMusic: false,
       duckLevel: 0.2,
     });
-    addToast(i18n.t('workspace.search.addedJingle', { name: jingle.name, defaultValue: 'Added jingle "{{name}}" to program' }), 'success');
+    addToast(t('workspace.search.addedJingle', { name: jingle.name, defaultValue: 'Added jingle "{{name}}" to program' }), 'success');
   };
 
   const handleAddAdToAutomation = (ad: { id: number; name: string; filePath: string; durationMs: number }) => {
@@ -259,27 +271,27 @@ export default function SearchWidget() {
       duckMusic: false,
       duckLevel: 0.2,
     });
-    addToast(i18n.t('workspace.search.addedAd', { name: ad.name, defaultValue: 'Added ad "{{name}}" to program' }), 'success');
+    addToast(t('workspace.search.addedAd', { name: ad.name, defaultValue: 'Added ad "{{name}}" to program' }), 'success');
   };
 
   const handleAddAllTracks = (tracks: SpotifySearchResult[]) => {
     if (tracks.length === 0) return;
     const { addAutomationStep } = useStore.getState();
-    for (const t of tracks) {
+    for (const tr of tracks) {
       addAutomationStep({
         id: crypto.randomUUID(),
         type: 'track',
-        spotifyUri: t.uri,
-        name: t.name,
-        artist: t.artist,
-        albumArt: t.albumArt,
-        durationMs: t.durationMs,
+        spotifyUri: tr.uri,
+        name: tr.name,
+        artist: tr.artist,
+        albumArt: tr.albumArt,
+        durationMs: tr.durationMs,
         ...buildSongStepTransition(songTransitionMode, crossfadeMs),
         duckMusic: false,
         duckLevel: 0.2,
       });
     }
-    addToast(i18n.t('workspace.search.addedTracksCount', { count: tracks.length, defaultValue: 'Added {{count}} tracks to program' }), 'success');
+    addToast(t('workspace.search.addedTracksCount', { count: tracks.length, defaultValue: 'Added {{count}} tracks to program' }), 'success');
   };
 
   const handleAddPlaylistStep = (summary: SpotifyPlaylistSummary, tracks: SpotifySearchResult[]) => {
@@ -298,7 +310,7 @@ export default function SearchWidget() {
       duckMusic: false,
       duckLevel: 0.2,
     });
-    addToast(i18n.t('workspace.search.addedPlaylistBlock', { name: summary.name, defaultValue: 'Added playlist "{{name}}" as one program step' }), 'success');
+    addToast(t('workspace.search.addedPlaylistBlock', { name: summary.name, defaultValue: 'Added playlist "{{name}}" as one program step' }), 'success');
   };
 
   const renderTrackRow = (track: SpotifySearchResult, key: string) => (
@@ -318,7 +330,7 @@ export default function SearchWidget() {
       </div>
       <span className="text-xs text-text-muted tabular-nums shrink-0">{formatDuration(track.durationMs)}</span>
       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-        <Tooltip content={i18n.t('workspace.search.addToQueue', { defaultValue: 'Add to queue' })} placement="top">
+        <Tooltip content={t('workspace.search.addToQueue', { defaultValue: 'Add to queue' })} placement="top">
           <button
             type="button"
             onClick={(e) => {
@@ -326,7 +338,7 @@ export default function SearchWidget() {
               handleAddTrackToAutomation(track);
             }}
             className="p-1.5 rounded-md hover:bg-bg-primary text-text-secondary hover:text-text-primary transition-colors"
-            aria-label={i18n.t('workspace.search.addToProgram', { defaultValue: 'Add to program' })}
+            aria-label={t('workspace.search.addToProgram', { defaultValue: 'Add to program' })}
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M12 5v14" />
@@ -334,7 +346,7 @@ export default function SearchWidget() {
             </svg>
           </button>
         </Tooltip>
-        <Tooltip content={i18n.t('workspace.search.playNow', { defaultValue: 'Play now' })} placement="top">
+        <Tooltip content={t('workspace.search.playNow', { defaultValue: 'Play now' })} placement="top">
           <button
             type="button"
             onClick={(e) => {
@@ -342,7 +354,7 @@ export default function SearchWidget() {
               handlePlayNow(track);
             }}
             className="p-1.5 rounded-md hover:bg-accent/20 text-accent transition-colors"
-            aria-label={i18n.t('workspace.search.playNow', { defaultValue: 'Play now' })}
+            aria-label={t('workspace.search.playNow', { defaultValue: 'Play now' })}
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
               <polygon points="5 3 19 12 5 21 5 3" />
@@ -369,11 +381,11 @@ export default function SearchWidget() {
       </div>
       <div className="flex-1 min-w-0">
         <div className="text-sm font-medium text-text-primary truncate">{prettyAssetName(jingle.name)}</div>
-        <div className="text-xs text-text-secondary truncate">{i18n.t('workspace.search.localAudio', { defaultValue: 'Local Audio' })}</div>
+        <div className="text-xs text-text-secondary truncate">{t('workspace.search.localAudio', { defaultValue: 'Local Audio' })}</div>
       </div>
       <span className="text-xs text-text-muted tabular-nums shrink-0">{formatDuration(jingle.durationMs)}</span>
       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-        <Tooltip content={i18n.t('workspace.search.addToQueue', { defaultValue: 'Add to queue' })} placement="top">
+        <Tooltip content={t('workspace.search.addToQueue', { defaultValue: 'Add to queue' })} placement="top">
           <button
             type="button"
             onClick={(e) => {
@@ -381,7 +393,7 @@ export default function SearchWidget() {
               handleAddJingleToAutomation(jingle);
             }}
             className="p-1.5 rounded-md hover:bg-bg-primary text-text-secondary hover:text-text-primary transition-colors"
-            aria-label={i18n.t('workspace.search.addToProgram', { defaultValue: 'Add to program' })}
+            aria-label={t('workspace.search.addToProgram', { defaultValue: 'Add to program' })}
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M12 5v14" />
@@ -389,7 +401,7 @@ export default function SearchWidget() {
             </svg>
           </button>
         </Tooltip>
-        <Tooltip content={i18n.t('workspace.search.playNow', { defaultValue: 'Play now' })} placement="top">
+        <Tooltip content={t('workspace.search.playNow', { defaultValue: 'Play now' })} placement="top">
           <button
             type="button"
             onClick={async (e) => {
@@ -398,7 +410,7 @@ export default function SearchWidget() {
               if (audio) await audio.playJingle(jingle.filePath);
             }}
             className="p-1.5 rounded-md hover:bg-accent/20 text-accent transition-colors"
-            aria-label={i18n.t('workspace.search.playNow', { defaultValue: 'Play now' })}
+            aria-label={t('workspace.search.playNow', { defaultValue: 'Play now' })}
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
               <polygon points="5 3 19 12 5 21 5 3" />
@@ -423,7 +435,7 @@ export default function SearchWidget() {
             panel === 'spotify' ? 'bg-bg-surface text-text-primary shadow-sm' : 'text-text-muted hover:text-text-secondary hover:bg-bg-surface/50'
           }`}
         >
-          {i18n.t('settings.sections.spotify')}
+          {t('settings.sections.spotify')}
         </button>
         <button
           type="button"
@@ -432,7 +444,7 @@ export default function SearchWidget() {
             panel === 'jingles' ? 'bg-bg-surface text-text-primary shadow-sm' : 'text-text-muted hover:text-text-secondary hover:bg-bg-surface/50'
           }`}
         >
-          {i18n.t('workspace.search.jinglesTab', { defaultValue: 'Jingles' })}
+          {t('workspace.search.jinglesTab', { defaultValue: 'Jingles' })}
         </button>
         <button
           type="button"
@@ -441,7 +453,7 @@ export default function SearchWidget() {
             panel === 'ads' ? 'bg-bg-surface text-text-primary shadow-sm' : 'text-text-muted hover:text-text-secondary hover:bg-bg-surface/50'
           }`}
         >
-          {i18n.t('workspace.search.adsTab', { defaultValue: 'Ads' })}
+          {t('workspace.search.adsTab', { defaultValue: 'Ads' })}
         </button>
         {connected && (
           <button
@@ -456,7 +468,7 @@ export default function SearchWidget() {
               panel === 'playlists' ? 'bg-bg-surface text-text-primary shadow-sm' : 'text-text-muted hover:text-text-secondary hover:bg-bg-surface/50'
             }`}
           >
-            {i18n.t('workspace.search.playlistsTab', { defaultValue: 'Playlists' })}
+            {t('workspace.search.playlistsTab', { defaultValue: 'Playlists' })}
           </button>
         )}
       </div>
@@ -474,11 +486,11 @@ export default function SearchWidget() {
             onChange={(e) => handleSearch(e.target.value)}
             placeholder={panel === 'spotify'
               ? (connected
-                ? i18n.t('workspace.search.searchSpotify', { defaultValue: 'Search Spotify...' })
-                : i18n.t('workspace.search.connectSpotifyFirst', { defaultValue: 'Connect Spotify first in Settings' }))
+                ? t('workspace.search.searchSpotify', { defaultValue: 'Search Spotify...' })
+                : t('workspace.search.connectSpotifyFirst', { defaultValue: 'Connect Spotify first in Settings' }))
               : panel === 'ads'
-                ? i18n.t('workspace.search.searchLocalAds', { defaultValue: 'Search local ads...' })
-                : i18n.t('workspace.search.searchLocalJingles', { defaultValue: 'Search local jingles...' })}
+                ? t('workspace.search.searchLocalAds', { defaultValue: 'Search local ads...' })
+                : t('workspace.search.searchLocalJingles', { defaultValue: 'Search local jingles...' })}
             disabled={panel === 'spotify' && !connected}
             className="flex-1 bg-transparent text-text-primary text-sm outline-none placeholder:text-text-muted disabled:opacity-50"
           />
@@ -487,7 +499,7 @@ export default function SearchWidget() {
               onClick={() => useStore.getState().setJingleManagerOpen(true)}
               className="px-3 py-1.5 bg-bg-elevated hover:bg-border text-text-primary rounded-lg text-xs font-medium transition-colors shrink-0 shadow-sm"
             >
-              {i18n.t('workspace.search.manage', { defaultValue: 'Manage' })}
+              {t('workspace.search.manage', { defaultValue: 'Manage' })}
             </button>
           )}
         </div>
@@ -509,13 +521,13 @@ export default function SearchWidget() {
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="m15 18-6-6 6-6"/>
                 </svg>
-                {i18n.t('common.back')}
+                {t('common.back')}
               </button>
               <div className="w-px h-4 bg-border mx-1" />
               <span className="text-sm text-text-primary font-medium truncate">{selectedPlaylist.name}</span>
             </>
           ) : (
-            <span className="text-sm font-medium text-text-primary">{i18n.t('workspace.playlists.youOwn', { defaultValue: 'Playlists you own' })}</span>
+            <span className="text-sm font-medium text-text-primary">{t('workspace.playlists.youOwn', { defaultValue: 'Playlists you own' })}</span>
           )}
         </div>
       )}
@@ -529,7 +541,7 @@ export default function SearchWidget() {
               <circle cx="6" cy="18" r="3" />
               <circle cx="18" cy="16" r="3" />
             </svg>
-            {i18n.t('workspace.search.goSettingsConnectSpotify', { defaultValue: 'Go to Settings to connect your Spotify account' })}
+            {t('workspace.search.goSettingsConnectSpotify', { defaultValue: 'Go to Settings to connect your Spotify account' })}
           </div>
         )}
 
@@ -541,7 +553,7 @@ export default function SearchWidget() {
               </div>
             )}
             {!loading && query && searchResults.length === 0 && (
-              <div className="py-8 text-center text-text-muted text-sm">{i18n.t('workspace.search.noTracksFound', { defaultValue: 'No tracks found' })}</div>
+              <div className="py-8 text-center text-text-muted text-sm">{t('workspace.search.noTracksFound', { defaultValue: 'No tracks found' })}</div>
             )}
             {!loading && !query && (
               <div className="py-12 flex flex-col items-center justify-center gap-3 text-text-muted">
@@ -549,7 +561,7 @@ export default function SearchWidget() {
                   <circle cx="11" cy="11" r="8" />
                   <path d="m21 21-4.3-4.3" />
                 </svg>
-                <span className="text-sm">{i18n.t('workspace.search.searchSpotifyShort', { defaultValue: 'Search Spotify' })}</span>
+                <span className="text-sm">{t('workspace.search.searchSpotifyShort', { defaultValue: 'Search Spotify' })}</span>
               </div>
             )}
             {searchResults.map((track) => renderTrackRow(track, track.uri))}
@@ -563,7 +575,7 @@ export default function SearchWidget() {
                 <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-text-muted/50">
                   <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
                 </svg>
-                <span className="text-sm">{i18n.t('workspace.search.noJinglesYet', { defaultValue: 'No jingles added yet. Add them from the Manage Jingles menu.' })}</span>
+                <span className="text-sm">{t('workspace.search.noJinglesYet', { defaultValue: 'No jingles added yet. Add them from the Manage Jingles menu.' })}</span>
                 <button
                   onClick={() => useStore.getState().setJingleManagerOpen(true)}
                   className="mt-2 px-4 py-2 bg-accent hover:bg-accent-hover text-bg-primary font-medium rounded-lg transition-colors text-xs flex items-center gap-2 shadow-sm"
@@ -571,11 +583,11 @@ export default function SearchWidget() {
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
                     <path d="M12 5v14M5 12h14" />
                   </svg>
-                  {i18n.t('workspace.search.manageJingles', { defaultValue: 'Manage Jingles' })}
+                  {t('workspace.search.manageJingles', { defaultValue: 'Manage Jingles' })}
                 </button>
               </div>
             ) : filteredJingles.length === 0 ? (
-              <div className="py-8 text-center text-text-muted text-sm">{i18n.t('workspace.search.noJinglesMatch', { defaultValue: 'No jingles match your search' })}</div>
+              <div className="py-8 text-center text-text-muted text-sm">{t('workspace.search.noJinglesMatch', { defaultValue: 'No jingles match your search' })}</div>
             ) : (
               filteredJingles.map((jingle) => renderJingleRow(jingle))
             )}
@@ -586,16 +598,16 @@ export default function SearchWidget() {
           <div className="py-1">
             {ads.length === 0 ? (
               <div className="py-12 flex flex-col items-center justify-center gap-3 text-text-muted">
-                <span className="text-sm">{i18n.t('workspace.search.noAdsYet', { defaultValue: 'No ads added yet. Add them from the Manage menu.' })}</span>
+                <span className="text-sm">{t('workspace.search.noAdsYet', { defaultValue: 'No ads added yet. Add them from the Manage menu.' })}</span>
                 <button
                   onClick={() => useStore.getState().setJingleManagerOpen(true)}
                   className="mt-2 px-4 py-2 bg-accent hover:bg-accent-hover text-bg-primary font-medium rounded-lg transition-colors text-xs shadow-sm"
                 >
-                  {i18n.t('workspace.search.manageLibrary', { defaultValue: 'Manage Library' })}
+                  {t('workspace.search.manageLibrary', { defaultValue: 'Manage Library' })}
                 </button>
               </div>
             ) : filteredAds.length === 0 ? (
-              <div className="py-8 text-center text-text-muted text-sm">{i18n.t('workspace.search.noAdsMatch', { defaultValue: 'No ads match your search' })}</div>
+              <div className="py-8 text-center text-text-muted text-sm">{t('workspace.search.noAdsMatch', { defaultValue: 'No ads match your search' })}</div>
             ) : (
               filteredAds.map((ad) => (
                 <div key={ad.id} className="flex items-center gap-3 px-4 py-2 hover:bg-bg-elevated transition-colors group cursor-default">
@@ -606,11 +618,11 @@ export default function SearchWidget() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <div className="text-sm font-medium text-text-primary truncate">{prettyAssetName(ad.name)}</div>
-                    <div className="text-xs text-text-secondary truncate">{i18n.t('workspace.search.adClip', { defaultValue: 'Ad clip' })}</div>
+                    <div className="text-xs text-text-secondary truncate">{t('workspace.search.adClip', { defaultValue: 'Ad clip' })}</div>
                   </div>
                   <span className="text-xs text-text-muted tabular-nums shrink-0">{formatDuration(ad.durationMs)}</span>
                   <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-                    <Tooltip content={i18n.t('workspace.search.addToQueue', { defaultValue: 'Add to queue' })} placement="top">
+                    <Tooltip content={t('workspace.search.addToQueue', { defaultValue: 'Add to queue' })} placement="top">
                       <button
                         type="button"
                         onClick={(e) => {
@@ -618,7 +630,7 @@ export default function SearchWidget() {
                           handleAddAdToAutomation(ad);
                         }}
                         className="p-1.5 rounded-md hover:bg-bg-primary text-text-secondary hover:text-text-primary transition-colors"
-                        aria-label={i18n.t('workspace.search.addAdToProgram', { defaultValue: 'Add ad to program' })}
+                        aria-label={t('workspace.search.addAdToProgram', { defaultValue: 'Add ad to program' })}
                       >
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                           <path d="M12 5v14" />
@@ -643,8 +655,8 @@ export default function SearchWidget() {
             {!playlistsLoading && playlists.length === 0 && (
               <div className="px-4 py-8 text-center text-text-muted text-sm">
                 {playlistsMore
-                  ? i18n.t('workspace.playlists.noneInBatch', { defaultValue: 'No playlists you own in this batch. Load more to keep scanning your library.' })
-                  : i18n.t('workspace.playlists.noneOwned', { defaultValue: 'No playlists you own. Playlists you only follow are hidden (Spotify Web API).' })}
+                  ? t('workspace.playlists.noneInBatch', { defaultValue: 'No playlists you own in this batch. Load more to keep scanning your library.' })
+                  : t('workspace.playlists.noneOwned', { defaultValue: 'No playlists you own. Playlists you only follow are hidden (Spotify Web API).' })}
               </div>
             )}
             {playlists.map((pl) => (
@@ -674,7 +686,7 @@ export default function SearchWidget() {
                   onClick={() => loadPlaylistsPage(playlistOffset, true)}
                   className="w-full py-2.5 rounded-lg bg-bg-elevated hover:bg-border text-sm font-medium text-text-primary transition-colors"
                 >
-                  {i18n.t('workspace.playlists.loadMore', { defaultValue: 'Load more' })}
+                  {t('workspace.playlists.loadMore', { defaultValue: 'Load more' })}
                 </button>
               </div>
             )}
@@ -695,22 +707,22 @@ export default function SearchWidget() {
                   onClick={() => handleAddAllTracks(playlistTracks)}
                   className="px-3 py-1.5 rounded-md text-xs font-medium bg-bg-elevated hover:bg-border text-text-primary transition-colors"
                 >
-                  {i18n.t('workspace.playlists.addAll', { count: playlistTracks.length, defaultValue: 'Add all ({{count}})' })}
+                  {t('workspace.playlists.addAll', { count: playlistTracks.length, defaultValue: 'Add all ({{count}})' })}
                 </button>
                 <button
                   type="button"
                   onClick={() => handleAddPlaylistStep(selectedPlaylist, playlistTracks)}
                   className="px-3 py-1.5 rounded-md text-xs font-medium bg-accent hover:bg-accent-hover text-bg-primary transition-colors shadow-sm"
                 >
-                  {i18n.t('workspace.playlists.addAsBlock', { defaultValue: 'Add as block' })}
+                  {t('workspace.playlists.addAsBlock', { defaultValue: 'Add as block' })}
                 </button>
-                <Tooltip content={i18n.t('workspace.playlists.playWholeNow', { defaultValue: 'Play the whole playlist now on the in-app player' })} placement="bottom">
+                <Tooltip content={t('workspace.playlists.playWholeNow', { defaultValue: 'Play the whole playlist now on the in-app player' })} placement="bottom">
                   <button
                     type="button"
                     onClick={() => handlePlayPlaylistNow(selectedPlaylist)}
                     className="px-3 py-1.5 rounded-md text-xs font-medium bg-bg-elevated hover:bg-border text-text-primary transition-colors ml-auto"
                   >
-                    {i18n.t('workspace.search.playNow', { defaultValue: 'Play now' })}
+                    {t('workspace.search.playNow', { defaultValue: 'Play now' })}
                   </button>
                 </Tooltip>
               </div>

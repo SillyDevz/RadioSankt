@@ -11,6 +11,8 @@ directories:
 files:
   - dist/**/*
   - package.json
+asarUnpack:
+  - "node_modules/better-sqlite3/**"
 afterPack: scripts/electron-builder-after-pack.cjs
 afterSign: scripts/electron-builder-after-sign.cjs
 mac:

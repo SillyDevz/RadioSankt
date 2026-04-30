@@ -187,6 +187,7 @@ export default function ProgramSchedulePage() {
     dur: number;
   } | null>(null);
   const dragRef = useRef<ActiveSlotDrag | null>(null);
+  const dragCleanupRef = useRef<(() => void) | null>(null);
   /** After slot pointer-up, a synthetic click can hit the grid under the cursor (slot moved away) — skip "new block". */
   const suppressScheduleGridClickRef = useRef(false);
   const weeklySlotsRef = useRef<WeeklySlot[]>([]);
@@ -240,6 +241,12 @@ export default function ProgramSchedulePage() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    return () => {
+      dragCleanupRef.current?.();
+    };
+  }, []);
 
   const monday = useMemo(() => {
     const base = startOfWeekMonday(new Date());
@@ -389,6 +396,7 @@ export default function ProgramSchedulePage() {
         window.removeEventListener('pointermove', onMove);
         window.removeEventListener('pointerup', onUp, true);
         window.removeEventListener('pointercancel', onUp, true);
+        dragCleanupRef.current = null;
       };
 
       const onUp = async (ev: PointerEvent) => {
@@ -449,6 +457,7 @@ export default function ProgramSchedulePage() {
       window.addEventListener('pointermove', onMove);
       window.addEventListener('pointerup', onUp, true);
       window.addEventListener('pointercancel', onUp, true);
+      dragCleanupRef.current = cleanup;
     },
     [addToast, maxDow, refresh, weeklyWritesOk],
   );
@@ -674,6 +683,7 @@ export default function ProgramSchedulePage() {
       {modal && (
         <WeeklySlotModal
           playlists={playlists}
+          weeklySlots={weeklySlots}
           initial={
             modal.mode === 'new'
               ? {
@@ -708,11 +718,13 @@ export default function ProgramSchedulePage() {
 
 function WeeklySlotModal({
   playlists,
+  weeklySlots,
   initial,
   onClose,
   onSaved,
 }: {
   playlists: PlaylistOpt[];
+  weeklySlots: WeeklySlot[];
   initial: {
     id: number | null;
     playlistId: number;
@@ -768,6 +780,11 @@ function WeeklySlotModal({
       }
       maxMs = Math.round(n * 60000);
     }
+    const clampedDuration = Math.min(Math.max(5, durationMinutes), 1440 - startMinute);
+    if (hasWeeklyConflict(weeklySlots, initial.id ?? -1, dayOfWeek, startMinute, clampedDuration)) {
+      addToast(i18n.t('schedule.overlapNotSaved', { defaultValue: 'Overlaps another block - not saved.' }), 'warning');
+      return;
+    }
     try {
       if (initial.id == null) {
         const addW = api.addWeeklySlot;
@@ -779,7 +796,7 @@ function WeeklySlotModal({
           playlistId,
           dayOfWeek,
           startMinute,
-          Math.max(5, durationMinutes),
+          clampedDuration,
           maxMs,
           label.trim() || null,
         );
@@ -794,7 +811,7 @@ function WeeklySlotModal({
           playlistId,
           dayOfWeek,
           startMinute,
-          Math.max(5, durationMinutes),
+          clampedDuration,
           maxMs,
           label.trim() || null,
         );
@@ -894,7 +911,7 @@ function WeeklySlotModal({
             <input
               type="number"
               min={5}
-              max={24 * 60}
+              max={1440 - startMinute}
               value={durationMinutes}
               onChange={(e) => setDurationMinutes(Number(e.target.value))}
               className="w-full bg-bg-elevated border border-border rounded px-2 py-1.5 text-sm outline-none focus:border-accent"

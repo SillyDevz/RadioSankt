@@ -141,6 +141,7 @@ class AutomationEngine {
   private songsSinceBreak = 0;
   /** Invalidates pending step-advance timeouts after skip/pause/seek-reschedule so stale callbacks cannot run. */
   private advanceScheduleGen = 0;
+  private transportLock: Promise<void> = Promise.resolve();
   /** Single-flight guard so primary timeout + near-end poll cannot double-advance the same step. */
   private stepTransitionInFlight = false;
   /** Running elapsed credit inside the current playlist block (completed prior tracks). */
@@ -155,9 +156,17 @@ class AutomationEngine {
   /** Serializes intra-playlist break insertions so a rapid succession of track-change events doesn't race. */
   private intraPlaylistBreakInFlight = false;
 
+  private serialized<T>(fn: () => Promise<T>): Promise<T> {
+    const prev = this.transportLock;
+    let resolve!: () => void;
+    this.transportLock = new Promise<void>((r) => { resolve = r; });
+    return prev.then(fn).finally(() => resolve());
+  }
+
   constructor() {
     if (typeof window === 'undefined') return;
     window.addEventListener('radio-sankt:spotify-seek-sync', this.onSpotifySeekSync);
+    document.addEventListener('visibilitychange', this.onVisibilityChange);
     window.addEventListener('radio-sankt:spotify-playlist-track-changed', this.onPlaylistTrackChanged);
     window.addEventListener('radio-sankt:automation-playlist-progress', this.onAutomationPlaylistProgress);
     window.addEventListener('radio-sankt:automation-spotify-near-end', this.onSpotifyNearEnd);
@@ -196,6 +205,18 @@ class AutomationEngine {
     const d = (e as CustomEvent<{ positionMs?: number; playbackUri?: string; contextUri?: string }>).detail;
     if (typeof d?.positionMs !== 'number') return;
     this.handleSpotifySeekSync(d.positionMs, d.playbackUri, d.contextUri);
+  };
+
+  private onVisibilityChange = (): void => {
+    if (document.visibilityState !== 'visible') return;
+    const store = this.getStore();
+    if (store.automationStatus === 'playing' && !store.isPlaying) {
+      this.invalidatePendingAdvance();
+      this.clearCountdown();
+      store.setAutomationStatus('paused');
+      window.dispatchEvent(new CustomEvent('radio-sankt:spotify-pause-sdk'));
+      this.emit({ type: 'error', message: 'Playback interrupted (system sleep or network issue). Automation paused.' });
+    }
   };
 
   private onPlaylistTrackChanged = (e: Event) => {
@@ -259,7 +280,7 @@ class AutomationEngine {
 
       const audio = AudioEngine.getOrInit();
       audio.resumeContextIfNeeded();
-      audio.setVolume(1);
+      audio.setVolume('B', 1);
 
       // Play jingles sequentially on the local audio channel.
       // Register onJingleEnded only after playJingle starts — playJingle calls stopJingle() first,
@@ -316,6 +337,7 @@ class AutomationEngine {
       this.intraPlaylistBreakInFlight = false;
     }
   }
+
 
   /** After user seek, realign wall-clock advance timer + countdown with Spotify position. */
   private handleSpotifySeekSync(positionMs: number, playbackUri?: string, contextUri?: string): void {
@@ -432,14 +454,14 @@ class AutomationEngine {
 
       if (cur.transitionOut === 'fadeOut' && !skipFadeForRec) {
         if (jingleLike(cur)) {
-          if (audio) await audio.fadeOut(FADE_DURATION);
+          if (audio) await audio.fadeOut('B', FADE_DURATION);
         } else if (devId && (cur.type === 'track' || cur.type === 'playlist')) {
           await rampSpotifyRemoteVolume(devId, volumeToPercent(store.volume), 0, FADE_DURATION);
         }
       }
       if (nextMeta?.transitionIn === 'crossfade') {
         if (jingleLike(cur)) {
-          if (audio) await audio.fadeOut(FADE_DURATION);
+          if (audio) await audio.fadeOut('B', FADE_DURATION);
         } else if (devId && (cur.type === 'track' || cur.type === 'playlist')) {
           await rampSpotifyRemoteVolume(devId, volumeToPercent(store.volume), 0, FADE_DURATION);
         }
@@ -576,25 +598,27 @@ class AutomationEngine {
   }
 
   async play(): Promise<void> {
-    const store = this.getStore();
-    const steps = this.getSteps();
-    if (steps.length === 0) return;
+    return this.serialized(async () => {
+      const store = this.getStore();
+      const steps = this.getSteps();
+      if (steps.length === 0) return;
 
-    if (store.automationStatus === 'paused') {
-      await this.resumeFromPausedTransport();
-      return;
-    }
-    if (store.automationStatus === 'stopped') {
-      stopRecommendationsContinuation();
-      this.breakRecentKeys = [];
-      this.songsSinceBreak = 0;
-      this.intraPlaylistCreditedForStepId = null;
-      this.intraPlaylistCreditedCount = 0;
-    }
+      if (store.automationStatus === 'paused') {
+        await this.resumeFromPausedTransport();
+        return;
+      }
+      if (store.automationStatus === 'stopped') {
+        stopRecommendationsContinuation();
+        this.breakRecentKeys = [];
+        this.songsSinceBreak = 0;
+        this.intraPlaylistCreditedForStepId = null;
+        this.intraPlaylistCreditedCount = 0;
+      }
 
-    // Start from current step index (or 0)
-    store.setAutomationStatus('playing');
-    await this.executeStep(store.currentStepIndex);
+      // Start from current step index (or 0)
+      store.setAutomationStatus('playing');
+      await this.executeStep(store.currentStepIndex);
+    });
   }
 
   /** Jump to a step and run automation from there (clears pending timers / jingle). */
@@ -607,51 +631,55 @@ class AutomationEngine {
   }
 
   async skipForward(): Promise<void> {
-    const store = this.getStore();
-    if (store.automationStatus === 'stopped') return;
+    return this.serialized(async () => {
+      const store = this.getStore();
+      if (store.automationStatus === 'stopped') return;
 
-    window.dispatchEvent(new CustomEvent('radio-sankt:resume-audio-context'));
+      window.dispatchEvent(new CustomEvent('radio-sankt:resume-audio-context'));
 
-    const stepsBefore = this.getSteps();
-    const lenBefore = stepsBefore.length;
-    if (lenBefore === 0) return;
+      const stepsBefore = this.getSteps();
+      const lenBefore = stepsBefore.length;
+      if (lenBefore === 0) return;
 
-    const from = store.currentStepIndex;
-    if (from < 0 || from >= lenBefore) return;
+      const from = store.currentStepIndex;
+      if (from < 0 || from >= lenBefore) return;
 
-    const finishingStep = stepsBefore[from];
-    this.clearTransportForJump();
+      const finishingStep = stepsBefore[from];
+      this.clearTransportForJump();
 
-    const nextAfterBreak = this.maybeInsertBreakAfter(from, finishingStep);
-    const stepsNow = this.getSteps();
-    if (stepsNow.length === 0) return;
+      const nextAfterBreak = this.maybeInsertBreakAfter(from, finishingStep);
+      const stepsNow = this.getSteps();
+      if (stepsNow.length === 0) return;
 
-    // Advance to next step index, or `steps.length` to finish (never wrap to 0 — that restarted the queue).
-    const target = Math.max(0, Math.min(nextAfterBreak, stepsNow.length));
-    await this.executeStep(target);
+      // Advance to next step index, or `steps.length` to finish (never wrap to 0 — that restarted the queue).
+      const target = Math.max(0, Math.min(nextAfterBreak, stepsNow.length));
+      await this.executeStep(target);
+    });
   }
 
   async skipBackward(): Promise<void> {
-    const store = this.getStore();
-    if (store.automationStatus === 'stopped') return;
+    return this.serialized(async () => {
+      const store = this.getStore();
+      if (store.automationStatus === 'stopped') return;
 
-    window.dispatchEvent(new CustomEvent('radio-sankt:resume-audio-context'));
+      window.dispatchEvent(new CustomEvent('radio-sankt:resume-audio-context'));
 
-    const steps = this.getSteps();
-    if (steps.length === 0) return;
+      const steps = this.getSteps();
+      if (steps.length === 0) return;
 
-    const from = store.currentStepIndex;
-    const cur = steps[from];
-    const dec = this.breakProgressCreditForStep(cur);
-    if (dec > 0) {
-      this.songsSinceBreak = Math.max(0, this.songsSinceBreak - dec);
-    }
+      const from = store.currentStepIndex;
+      const cur = steps[from];
+      const dec = this.breakProgressCreditForStep(cur);
+      if (dec > 0) {
+        this.songsSinceBreak = Math.max(0, this.songsSinceBreak - dec);
+      }
 
-    this.clearTransportForJump();
+      this.clearTransportForJump();
 
-    const prev = from - 1;
-    const target = prev < 0 ? steps.length - 1 : prev;
-    await this.executeStep(target);
+      const prev = from - 1;
+      const target = prev < 0 ? steps.length - 1 : prev;
+      await this.executeStep(target);
+    });
   }
 
   async executeStep(index: number): Promise<void> {
@@ -691,6 +719,8 @@ class AutomationEngine {
       this.handlePauseStep(step);
       return;
     }
+
+    const genBefore = this.advanceScheduleGen;
 
     // Populate the NowPlaying bar immediately from the step's own metadata so the UI
     // reflects the active step before the Spotify state poll catches up. (The poll
@@ -741,10 +771,12 @@ class AutomationEngine {
         await this.playLocalAudioStep(step);
       }
 
+      if (genBefore !== this.advanceScheduleGen) return;
+
       if (step.transitionIn === 'fadeIn') {
         if (step.type === 'jingle' || step.type === 'ad') {
           const audio = AudioEngine.get();
-          if (audio) await audio.fadeIn(FADE_DURATION);
+          if (audio) await audio.fadeIn('B', FADE_DURATION);
         } else if (step.type === 'track' || step.type === 'playlist') {
           const devId = this.getStore().deviceId;
           if (devId) {
@@ -752,6 +784,8 @@ class AutomationEngine {
           }
         }
       }
+
+      if (genBefore !== this.advanceScheduleGen) return;
 
       this.invalidatePendingAdvance();
 
@@ -777,6 +811,23 @@ class AutomationEngine {
         type: 'error',
         message: detail ? `Failed to play step: ${stepName} — ${detail}` : `Failed to play step: ${stepName}`,
       });
+      // If the error is connectivity/auth related, pause automation instead of rapid-skipping
+      const isConnectivityError =
+        detail.includes('Web Playback is not connected') ||
+        detail.includes('aborted') ||
+        detail.includes('network') ||
+        detail.includes('Failed to fetch') ||
+        detail.includes('Premium') ||
+        detail.includes('401') ||
+        detail.includes('403') ||
+        detail.includes('429') ||
+        detail.includes('RATE_LIMITED');
+      if (isConnectivityError) {
+        store.setAutomationStatus('paused');
+        window.dispatchEvent(new CustomEvent('radio-sankt:spotify-pause-sdk'));
+        return;
+      }
+      // Skip to next step on non-connectivity errors (e.g. track removed from Spotify)
       this.invalidatePendingAdvance();
       this.scheduleNextStepImmediate(index);
     }
@@ -839,10 +890,22 @@ class AutomationEngine {
     }
 
     if (step.transitionIn === 'fadeIn') {
-      audio.setVolume(0);
+      audio.setVolume('B', 0);
     }
 
-    await audio.playJingle(step.filePath);
+    try {
+      await audio.playJingle(step.filePath);
+    } catch (err) {
+      if (step.duckMusic) {
+        const deviceId = this.getStore().deviceId;
+        if (deviceId) {
+          const targetPct = volumeToPercent(this.getStore().volume);
+          const duckPct = Math.round(targetPct * Math.max(0, Math.min(1, step.duckLevel)));
+          void rampSpotifyRemoteVolume(deviceId, duckPct, targetPct, 300);
+        }
+      }
+      throw err;
+    }
     // Duck restore + step advance share one `onJingleEnded` (AudioEngine allows a single handler).
   }
 
@@ -853,8 +916,12 @@ class AutomationEngine {
     deviceId: string | null | undefined,
   ): void {
     const audio = AudioEngine.getOrInit();
+    const stepId = step.id;
     audio.onJingleEnded(() => {
       if (gen !== this.advanceScheduleGen) return;
+      const store = this.getStore();
+      const currentStep = store.automationSteps[store.currentStepIndex];
+      if (currentStep && currentStep.id !== stepId) return;
       if (step.duckMusic && deviceId) {
         const targetPct = volumeToPercent(this.getStore().volume);
         const baseVol = targetPct;
@@ -938,6 +1005,44 @@ class AutomationEngine {
     }
   }
 
+  private scheduleAdvanceFromStep(step: AutomationStep, currentIndex: number, delayMs: number): void {
+    this.clearPlaybackTimersOnly();
+    this.advanceScheduleGen++;
+    const gen = this.advanceScheduleGen;
+    const stepId = step.id;
+    this.nextStepTimer = setTimeout(async () => {
+      if (gen !== this.advanceScheduleGen) return;
+      try {
+        // Re-read the fresh index from the store in case queue was mutated
+        const freshSteps = this.getSteps();
+        const freshIndex = freshSteps.findIndex((s) => s.id === stepId);
+        if (freshIndex === -1) return; // step was removed
+        const freshStep = freshSteps[freshIndex];
+
+        const audio = AudioEngine.get();
+        if (freshStep.transitionOut === 'fadeOut' && audio) {
+          const channel = freshStep.type === 'jingle' ? 'B' : 'A';
+          audio.fadeOut(channel, FADE_DURATION);
+        }
+        const nextStep = freshSteps[freshIndex + 1];
+        if (nextStep?.transitionIn === 'crossfade' && audio) {
+          const fromChannel = freshStep.type === 'jingle' ? 'B' : 'A';
+          const toChannel = nextStep.type === 'jingle' ? 'B' : 'A';
+          if (fromChannel !== toChannel) {
+            audio.crossfade(fromChannel, toChannel, FADE_DURATION);
+          }
+        }
+        const nextIndex = this.maybeInsertBreakAfter(freshIndex, freshStep);
+        if (gen !== this.advanceScheduleGen) return;
+        await this.executeStep(nextIndex);
+      } catch (err) {
+        this.emit({ type: 'error', message: `Step transition failed: ${err}` });
+        const freshIndex = this.getStore().currentStepIndex;
+        this.scheduleNextStepImmediate(freshIndex);
+      }
+    }, delayMs);
+  }
+
   /** Build randomized break picks from the configured pool, respecting the avoid-recent window.
    *  Pure helper — updates breakRecentKeys but does not mutate the queue or counters. */
   private buildBreakPicks(rule: {
@@ -958,20 +1063,27 @@ class AutomationEngine {
     const pickCount = Math.max(1, Math.floor(rule.itemsPerBreak));
     const avoidRecent = Math.max(0, Math.floor(rule.avoidRecent));
     const picks: AutomationStep[] = [];
+    const pickedKeys = new Set<string>();
 
     for (let i = 0; i < pickCount; i += 1) {
-      const candidates = pool.filter((p) => !this.breakRecentKeys.includes(`${p.kind}:${p.id}`));
-      const source = (candidates.length > 0 ? candidates : pool)[Math.floor(Math.random() * (candidates.length > 0 ? candidates.length : pool.length))];
-      if (!source) continue;
-      const key = `${source.kind}:${source.id}`;
+      const candidates = pool.filter((p) => {
+        const k = `${p.kind}:${p.id}`;
+        return !this.breakRecentKeys.includes(k) && !pickedKeys.has(k);
+      });
+      const fallback = pool.filter((p) => !pickedKeys.has(`${p.kind}:${p.id}`));
+      const source = candidates.length > 0 ? candidates : fallback;
+      if (source.length === 0) break;
+      const pick = source[Math.floor(Math.random() * source.length)];
+      const key = `${pick.kind}:${pick.id}`;
+      pickedKeys.add(key);
       this.breakRecentKeys = [key, ...this.breakRecentKeys].slice(0, avoidRecent);
       picks.push({
         id: crypto.randomUUID(),
-        type: source.kind,
-        ...(source.kind === 'ad' ? { adId: source.id } : { jingleId: source.id }),
-        name: source.name,
-        filePath: source.filePath,
-        durationMs: source.durationMs,
+        type: pick.kind,
+        ...(pick.kind === 'ad' ? { adId: pick.id } : { jingleId: pick.id }),
+        name: pick.name,
+        filePath: pick.filePath,
+        durationMs: pick.durationMs,
         transitionIn: 'immediate',
         transitionOut: 'immediate',
         overlapMs: 0,
@@ -1008,16 +1120,26 @@ class AutomationEngine {
     if (!rule) return currentIndex + 1;
     const everySongs = Math.max(1, Math.floor(rule.everySongs));
     if (this.songsSinceBreak < everySongs) return currentIndex + 1;
+
+    // Skip break if next step is already a user-placed jingle or ad
+    const steps = this.getSteps();
+    const nextStep = steps[currentIndex + 1];
+    if (nextStep && (nextStep.type === 'jingle' || nextStep.type === 'ad')) {
+      this.songsSinceBreak = 0;
+      return currentIndex + 1;
+    }
+
     this.songsSinceBreak = 0;
 
     const picks = this.buildBreakPicks(rule);
     if (picks.length === 0) return currentIndex + 1;
 
     const insertAt = currentIndex + 1;
-    const steps = store.automationSteps;
-    store.setAutomationSteps([...steps.slice(0, insertAt), ...picks, ...steps.slice(insertAt)]);
+    const currentSteps = store.automationSteps;
+    store.setAutomationSteps([...currentSteps.slice(0, insertAt), ...picks, ...currentSteps.slice(insertAt)]);
     return insertAt;
   }
+
 
   private scheduleNextStepImmediate(currentIndex: number): void {
     this.invalidatePendingAdvance();
@@ -1056,8 +1178,21 @@ class AutomationEngine {
         return;
       }
       if (this.countdownHaltStartedAt != null) {
-        this.currentStepStartTime += Date.now() - this.countdownHaltStartedAt;
+        const haltDuration = Date.now() - this.countdownHaltStartedAt;
+        this.currentStepStartTime += haltDuration;
         this.countdownHaltStartedAt = null;
+
+        // Reschedule advance timer with corrected remaining time
+        const steps = st.automationSteps;
+        const curStep = steps[st.currentStepIndex];
+        const curDuration = (curStep as { durationMs?: number }).durationMs;
+        if (curDuration) {
+          const elapsed = Date.now() - this.currentStepStartTime;
+          const nextStep = steps[st.currentStepIndex + 1];
+          const overlapMs = nextStep?.transitionIn === 'crossfade' ? nextStep.overlapMs : 0;
+          const newDelay = Math.max(curDuration - elapsed - overlapMs, 500);
+          this.scheduleAdvanceFromStep(curStep, st.currentStepIndex, newDelay);
+        }
       }
 
       const elapsed = Date.now() - this.currentStepStartTime;
@@ -1079,24 +1214,28 @@ class AutomationEngine {
   }
 
   async pause(options?: { skipFade?: boolean }): Promise<void> {
-    const store = this.getStore();
-    if (store.automationStatus !== 'playing') return;
+    return this.serialized(async () => {
+      const store = this.getStore();
+      if (store.automationStatus !== 'playing') return;
 
-    this.invalidatePendingAdvance();
-    this.clearCountdown();
+      this.invalidatePendingAdvance();
+      this.clearCountdown();
 
-    const fadeMs = useStore.getState().fadeOutMs;
-    const devId = store.deviceId;
-    if (devId && !options?.skipFade) {
-      await rampSpotifyRemoteVolume(devId, volumeToPercent(store.volume), 0, fadeMs);
-    }
+      const fadeMs = useStore.getState().fadeOutMs;
+      const devId = store.deviceId;
+      if (devId && !options?.skipFade) {
+        await rampSpotifyRemoteVolume(devId, volumeToPercent(store.volume), 0, fadeMs);
+      }
 
-    store.setAutomationStatus('paused');
-    window.dispatchEvent(new CustomEvent('radio-sankt:spotify-pause'));
+      store.setAutomationStatus('paused');
+      window.dispatchEvent(new CustomEvent('radio-sankt:spotify-pause'));
+    });
   }
 
   async stop(): Promise<void> {
-    await this.stopInternal();
+    return this.serialized(async () => {
+      await this.stopInternal();
+    });
   }
 
   /** Automation ended successfully but Spotify keeps playing (recommendations queue). */

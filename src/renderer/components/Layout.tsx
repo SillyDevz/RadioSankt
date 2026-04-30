@@ -17,6 +17,7 @@ import {
   resetWeeklyScheduleFireKeys,
   runScheduleTick,
 } from '@/services/automation-session';
+import AutomationEngine from '@/engine/AutomationEngine';
 import '@/services/recommendations-queue';
 import i18n, { isAppLanguage } from '@/i18n';
 import { useTranslation } from 'react-i18next';
@@ -68,18 +69,24 @@ function Layout() {
       return () => unsubPersist();
     }
 
-    Promise.all([
+    Promise.allSettled([
       api.getFromStore('hasCompletedOnboarding').then((val) => {
         if (val === true) useStore.setState({ hasCompletedOnboarding: true });
       }),
       api.getFromStore('seenCoachMarks').then((val) => {
         if (val && typeof val === 'object') useStore.setState({ seenCoachMarks: val as Record<CoachMarkId, boolean> });
       }),
-      api.getFromStore('theme').then((val) => { if (val) useStore.setState({ theme: val as ThemeMode }); }),
+      api.getFromStore('theme').then((val) => {
+        if (val === 'dark' || val === 'light') useStore.setState({ theme: val });
+      }),
       api.getFromStore('language').then((val) => {
         if (isAppLanguage(val)) useStore.setState({ language: val });
       }),
-      api.getFromStore('accentColor').then((val) => { if (val) useStore.setState({ accentColor: val as AccentColor }); }),
+      api.getFromStore('accentColor').then((val) => {
+        if (val && typeof val === 'string' && val in ACCENT_COLORS) {
+          useStore.setState({ accentColor: val as AccentColor });
+        }
+      }),
       api.getFromStore('songTransitionMode').then((val) => {
         if (val === 'immediate' || val === 'fade' || val === 'crossfade') {
           useStore.setState({ songTransitionMode: val as SongTransitionMode });
@@ -96,7 +103,14 @@ function Layout() {
       api.getFromStore('continuePlaylistRecommendations').then((val) => {
         if (typeof val === 'boolean') useStore.setState({ continuePlaylistRecommendations: val });
       }),
-      api.getFromStore('workspaceLayout').then((val) => { if (Array.isArray(val)) useStore.setState({ workspaceLayout: val as any }); }),
+      api.getFromStore('workspaceLayout').then((val) => {
+        if (Array.isArray(val)) {
+          const valid = val.filter(
+            (item) => item && typeof item === 'object' && typeof item.id === 'string' && typeof item.visible === 'boolean'
+          );
+          if (valid.length > 0) useStore.setState({ workspaceLayout: valid as any });
+        }
+      }),
       api.getFromStore('soundboardVolume').then((val) => {
         if (typeof val === 'number') useStore.setState({ soundboardVolume: Math.max(0, Math.min(1, val)) });
       }),
@@ -123,7 +137,7 @@ function Layout() {
         }
       }),
       loadAutomation(),
-    ]).finally(() => setSettingsLoaded(true));
+    ]).then(() => setSettingsLoaded(true));
 
     return () => unsubPersist();
   }, []);
@@ -143,6 +157,20 @@ function Layout() {
     void runScheduleTick();
     return () => clearInterval(id);
   }, [settingsLoaded]);
+
+  useEffect(() => {
+    let lastErrorToast = 0;
+    const unsub = AutomationEngine.getInstance().on((event) => {
+      if (event.type === 'error') {
+        const now = Date.now();
+        if (now - lastErrorToast > 5000) {
+          lastErrorToast = now;
+          useStore.getState().addToast(event.message, 'error');
+        }
+      }
+    });
+    return unsub;
+  }, []);
 
   useEffect(() => {
     if (!window.electronAPI || !settingsLoaded) return;
@@ -187,11 +215,18 @@ function Layout() {
       typeof api.onSpotifyScopeReset === 'function'
         ? api.onSpotifyScopeReset((message) => {
             clearSpotifyUserIdCache();
+            AutomationEngine.getInstance().stop();
             useStore.getState().disconnectSpotify();
             void api.saveToStore('spotifyLastGrantedScopesDisplay', '');
             useStore.getState().addToast(message, 'warning');
           })
         : () => {};
+
+    const cleanupRevoked = api.onSpotifyAuthRevoked?.(() => {
+      AutomationEngine.getInstance().stop();
+      useStore.getState().disconnectSpotify();
+      useStore.getState().addToast('Spotify session expired. Please reconnect from Settings.', 'warning');
+    });
 
     const unsubRefresh = api.onSpotifyTokenRefreshed((data) => {
       useStore.setState({ token: data.accessToken });
@@ -201,6 +236,7 @@ function Layout() {
       unsubComplete();
       unsubError();
       unsubScopeReset();
+      cleanupRevoked?.();
       unsubRefresh();
     };
   }, []);

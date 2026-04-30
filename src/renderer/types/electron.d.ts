@@ -44,6 +44,7 @@ interface ElectronAPI {
   onSpotifyAuthError: (cb: (error: string) => void) => () => void;
   /** Present on current preload; may be missing if the desktop build is stale. */
   onSpotifyScopeReset?: (cb: (message: string) => void) => () => void;
+  onSpotifyAuthRevoked?: (cb: () => void) => () => void;
   getSpotifyToken: () => Promise<string | null>;
   refreshSpotifyToken: () => Promise<string | null>;
   onSpotifyTokenRefreshed: (cb: (data: { accessToken: string; expiresIn: number }) => void) => () => void;
