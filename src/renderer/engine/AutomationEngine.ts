@@ -788,6 +788,10 @@ class AutomationEngine {
     return AutomationEngine.instance;
   }
 
+  get isTransitioning(): boolean {
+    return this.stepTransitionInFlight;
+  }
+
   private handlePauseStep(step: AutomationStep): void {
     this.getStore().setAutomationStatus('waitingAtPause');
     this.emit({ type: 'waitingAtPause', step });
@@ -1087,6 +1091,11 @@ class AutomationEngine {
       const status = store.automationStatus;
       // Only act when automation expects music to be playing or is paused waiting to recover
       if (status !== 'playing' && status !== 'stopped' && status !== 'paused') return;
+      // Don't interfere while a step transition is in progress (e.g. break jingle playing)
+      if (this.stepTransitionInFlight) {
+        silentTicks = 0;
+        return;
+      }
       // Don't interfere during local audio steps (jingle/ad)
       const curStep = store.automationSteps[store.currentStepIndex];
       if (curStep && (curStep.type === 'jingle' || curStep.type === 'ad')) {

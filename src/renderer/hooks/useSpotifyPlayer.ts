@@ -276,7 +276,8 @@ export function useSpotifyPlayer() {
         !state.isPlaying &&
         stBefore.isPlaying &&
         (stBefore.automationStatus === 'playing') &&
-        !isLocalAudioStep
+        !isLocalAudioStep &&
+        !engine.isTransitioning
       ) {
         engine.pause();
       }
@@ -286,7 +287,8 @@ export function useSpotifyPlayer() {
       if (
         state.isPlaying &&
         stBefore.automationStatus === 'paused' &&
-        !isLocalAudioStep
+        !isLocalAudioStep &&
+        !engine.isTransitioning
       ) {
         void engine.resume({ skipGainRecovery: true });
       }
