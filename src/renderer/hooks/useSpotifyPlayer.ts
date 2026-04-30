@@ -281,6 +281,16 @@ export function useSpotifyPlayer() {
         engine.pause();
       }
 
+      // External resume detection: if Spotify is playing but automation is paused,
+      // the owner pressed play from Spotify — resume automation to stay in sync.
+      if (
+        state.isPlaying &&
+        stBefore.automationStatus === 'paused' &&
+        !isLocalAudioStep
+      ) {
+        void engine.resume({ skipGainRecovery: true });
+      }
+
       if (state.isPlaying !== useStore.getState().isPlaying) setIsPlaying(state.isPlaying);
 
       if (state.deviceId && state.deviceId !== deviceIdRef.current) {

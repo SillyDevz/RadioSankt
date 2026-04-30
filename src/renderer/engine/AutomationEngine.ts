@@ -1085,8 +1085,8 @@ class AutomationEngine {
     this.silenceWatchdogTimer = setInterval(async () => {
       const store = this.getStore();
       const status = store.automationStatus;
-      // Only act when automation expects music to be playing
-      if (status !== 'playing' && status !== 'stopped') return;
+      // Only act when automation expects music to be playing or is paused waiting to recover
+      if (status !== 'playing' && status !== 'stopped' && status !== 'paused') return;
       // Don't interfere during local audio steps (jingle/ad)
       const curStep = store.automationSteps[store.currentStepIndex];
       if (curStep && (curStep.type === 'jingle' || curStep.type === 'ad')) {
@@ -1108,8 +1108,10 @@ class AutomationEngine {
             // Queue ended, Spotify stopped — loop from start
             store.setAutomationStatus('playing');
             await this.executeStep(0);
-          } else if (status === 'playing' && curStep?.type === 'track') {
-            // Mid-automation stall — re-execute current step
+          } else {
+            // Mid-automation stall or paused too long — re-execute current step
+            this.clearAutoRecovery();
+            store.setAutomationStatus('playing');
             this.forceNextPlayback = true;
             this.preloadedNextUri = null;
             await this.executeStep(store.currentStepIndex);
