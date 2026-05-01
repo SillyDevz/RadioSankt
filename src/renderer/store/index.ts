@@ -365,7 +365,6 @@ const createSpotifySlice: StateCreator<StoreState, [], [], SpotifySlice> = (set)
   setSearchResults: (results) => set({ searchResults: results }),
   setSpotifyGrantedScopes: (spotifyGrantedScopes) => set({ spotifyGrantedScopes }),
   disconnectSpotify: () => {
-    window.dispatchEvent(new CustomEvent('radio-sankt:stop-recommendations'));
     set({
       connected: false,
       user: null,
@@ -460,7 +459,6 @@ const createAutomationSlice: StateCreator<StoreState, [], [], AutomationSlice> =
       };
     }),
   clearAutomationSteps: () => {
-    window.dispatchEvent(new CustomEvent('radio-sankt:stop-recommendations'));
     set({
       automationSteps: [],
       selectedStepIndex: null,
