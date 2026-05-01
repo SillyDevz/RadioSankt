@@ -436,9 +436,22 @@ class AutomationEngine {
           store.setStepTimeRemaining(remaining);
           this.currentStepStartTime = Date.now() - (state.progressMs ?? 0);
           this.preloadNextTrack(nextStep, idx + 1);
+        } else if (
+          nextStep?.type === 'track' &&
+          state.track?.uri === nextStep.spotifyUri
+        ) {
+          // Spotify auto-advanced to the next step (cross-group or standalone)
+          // Treat as a natural transition
+          void this.advanceFromStep(step, idx);
         } else {
-          // Genuinely wrong track — force correct track
-          await this.forcePlayCurrentStep(step);
+          // Genuinely wrong track — but only force-replay if the current step hasn't elapsed
+          const elapsed = Date.now() - this.currentStepStartTime;
+          if (elapsed >= step.durationMs - AUTOMATION_SPOTIFY_NEAR_END_MS) {
+            // Current step likely ended — advance instead of replaying
+            void this.advanceFromStep(step, idx);
+          } else {
+            await this.forcePlayCurrentStep(step);
+          }
         }
       }
     } else {
