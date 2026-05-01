@@ -5,6 +5,7 @@ import {
   playTrack,
   playPlaylistContextAtOffset,
   remotePause,
+  remoteResumeActiveDevice,
   remoteSetVolumePercent,
   addTrackToQueue,
   waitForActiveTrackUri,
@@ -103,7 +104,7 @@ const FADE_DURATION = 800;
 export const AUTOMATION_SPOTIFY_NEAR_END_MS = 3000;
 
 /** Reconciliation loop interval. */
-const LOOP_INTERVAL_MS = 2000;
+const LOOP_INTERVAL_MS = 1000;
 
 /** After issuing a Spotify command, skip reconciliation for this long. */
 const COMMAND_COOLDOWN_MS = 3500;
@@ -647,7 +648,23 @@ class AutomationEngine {
         }
         // Re-check state after breaks
         if (this.getStore().automationStatus !== 'playing') return;
-        this.forceNextPlayback = true;
+        // Check if Spotify already has the next track loaded (it auto-advanced before we paused)
+        const postBreakState = await getRemotePlaybackState().catch(() => null);
+        const nextStep = steps[currentIndex + 1];
+        if (
+          postBreakState &&
+          !postBreakState.isPlaying &&
+          nextStep?.type === 'track' &&
+          postBreakState.track?.uri === nextStep.spotifyUri
+        ) {
+          // Next track is already loaded — just resume, don't restart
+          await remoteResumeActiveDevice().catch(() => {});
+          this.markCommand();
+          // Let executeStep handle the UI/state update without re-issuing play
+          this.forceNextPlayback = false;
+        } else {
+          this.forceNextPlayback = true;
+        }
       }
 
       await this.executeStep(currentIndex + 1);
