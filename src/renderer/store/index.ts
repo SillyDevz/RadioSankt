@@ -293,8 +293,6 @@ interface SettingsSlice {
   autoUpdate: boolean;
   /** When true, automation loads and plays the set for each weekly block at its start time (app must stay open). */
   followProgramSchedule: boolean;
-  /** After the program ends on a playlist step, seed Spotify recommendations from the last track and keep queue topped up. */
-  continuePlaylistRecommendations: boolean;
   setTheme: (theme: ThemeMode) => void;
   setLanguage: (language: AppLanguage) => void;
   setAccentColor: (color: AccentColor) => void;
@@ -305,7 +303,6 @@ interface SettingsSlice {
   setDuckLevel: (level: number) => void;
   setAutoUpdate: (auto: boolean) => void;
   setFollowProgramSchedule: (on: boolean) => void;
-  setContinuePlaylistRecommendations: (on: boolean) => void;
 }
 
 interface OnboardingSlice {
@@ -637,7 +634,6 @@ const createSettingsSlice: StateCreator<StoreState, [], [], SettingsSlice> = (se
   duckLevel: 20,
   autoUpdate: true,
   followProgramSchedule: true,
-  continuePlaylistRecommendations: false,
   setLanguage: persistedSetter(set, 'language'),
   setTheme: persistedSetter(set, 'theme'),
   setAccentColor: persistedSetter(set, 'accentColor'),
@@ -686,7 +682,6 @@ const createSettingsSlice: StateCreator<StoreState, [], [], SettingsSlice> = (se
   setDuckLevel: persistedSetter(set, 'duckLevel'),
   setAutoUpdate: persistedSetter(set, 'autoUpdate'),
   setFollowProgramSchedule: persistedSetter(set, 'followProgramSchedule'),
-  setContinuePlaylistRecommendations: persistedSetter(set, 'continuePlaylistRecommendations'),
 });
 
 // ── Store ──────────────────────────────────────────────────────────────

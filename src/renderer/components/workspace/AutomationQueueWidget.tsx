@@ -72,8 +72,6 @@ function QueueHeader() {
   const { t } = useTranslation();
   const setSavePlaylistModalOpen = useStore((s) => s.setSavePlaylistModalOpen);
   const setLoadPlaylistModalOpen = useStore((s) => s.setLoadPlaylistModalOpen);
-  const continuePlaylistRecommendations = useStore((s) => s.continuePlaylistRecommendations);
-  const setContinuePlaylistRecommendations = useStore((s) => s.setContinuePlaylistRecommendations);
   const breakRule = useStore((s) => s.breakRules[0]);
   const updateBreakRule = useStore((s) => s.updateBreakRule);
   const jingles = useStore((s) => s.jingles);
@@ -107,15 +105,6 @@ function QueueHeader() {
           </button>
         </div>
       </div>
-      <label className="flex cursor-pointer select-none items-start gap-2 text-xs text-text-secondary">
-        <input
-          type="checkbox"
-          className={checkboxClassName}
-          checked={continuePlaylistRecommendations}
-          onChange={(e) => setContinuePlaylistRecommendations(e.target.checked)}
-        />
-        <span className="leading-snug">{t('automation.queue.continueRecommendations', { defaultValue: 'Continue with playlist recommendations when queue ends' })}</span>
-      </label>
       {breakRule && (
         <>
           <div className="space-y-1 text-xs">

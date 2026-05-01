@@ -99,9 +99,6 @@ function Layout() {
       api.getFromStore('followProgramSchedule').then((val) => {
         if (typeof val === 'boolean') useStore.setState({ followProgramSchedule: val });
       }),
-      api.getFromStore('continuePlaylistRecommendations').then((val) => {
-        if (typeof val === 'boolean') useStore.setState({ continuePlaylistRecommendations: val });
-      }),
       api.getFromStore('workspaceLayout').then((val) => {
         if (Array.isArray(val)) {
           const valid = val.filter(
