@@ -315,8 +315,9 @@ function registerIpcHandlers(): void {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('app-will-quit');
       await new Promise((resolve) => setTimeout(resolve, 600));
+      mainWindow.destroy();
     }
-    autoUpdater.quitAndInstall();
+    autoUpdater.quitAndInstall(true, true);
   });
 
   ipcMain.handle('get-app-version', () => {
