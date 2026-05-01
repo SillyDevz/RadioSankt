@@ -403,7 +403,6 @@ class AutomationEngine {
         const durationMs = state.track.durationMs ?? step.durationMs;
         const remaining = Math.max(0, durationMs - (state.progressMs ?? 0));
         store.setStepTimeRemaining(remaining);
-        // Sync start time for any external consumers
         this.currentStepStartTime = Date.now() - (state.progressMs ?? 0);
 
         // Near-end detection — trigger transition
@@ -411,8 +410,36 @@ class AutomationEngine {
           void this.advanceFromStep(step, idx);
         }
       } else {
-        // Wrong track playing — force correct track
-        await this.forcePlayCurrentStep(step);
+        // Spotify is playing a different track — check if it auto-advanced to the next step
+        const steps = this.getSteps();
+        const nextStep = steps[idx + 1];
+        if (
+          nextStep?.type === 'track' &&
+          state.track?.uri === nextStep.spotifyUri &&
+          nextStep.groupId && nextStep.groupId === step.groupId
+        ) {
+          // Spotify auto-advanced within the group — sync our index forward
+          store.setCurrentStepIndex(idx + 1);
+          this.songsSinceBreak += 1;
+          this.emit({ type: 'stepChanged', index: idx + 1 });
+          store.setCurrentTrack({
+            id: nextStep.spotifyUri,
+            title: nextStep.name,
+            artist: nextStep.artist,
+            album: '',
+            albumArt: nextStep.albumArt,
+            duration: nextStep.durationMs,
+            uri: nextStep.spotifyUri,
+          });
+          store.setDuration(nextStep.durationMs);
+          const remaining = Math.max(0, (state.track?.durationMs ?? nextStep.durationMs) - (state.progressMs ?? 0));
+          store.setStepTimeRemaining(remaining);
+          this.currentStepStartTime = Date.now() - (state.progressMs ?? 0);
+          this.preloadNextTrack(nextStep, idx + 1);
+        } else {
+          // Genuinely wrong track — force correct track
+          await this.forcePlayCurrentStep(step);
+        }
       }
     } else {
       // Spotify not playing but we expect it to be
