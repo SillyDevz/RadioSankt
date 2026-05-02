@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useStore } from '@/store';
 import AudioEngine from '@/engine/AudioEngine';
@@ -9,7 +9,33 @@ import { basename } from '@/utils/path';
 import { formatDuration } from '@/utils/formatTime';
 
 type LibraryKind = 'jingles' | 'ads';
-type AudioAsset = { id: number; name: string; filePath: string; durationMs: number };
+type AudioAsset = { id: number; name: string; filePath: string; durationMs: number; crossfadeMs: number };
+
+function CrossfadeInput({ asset, onChange }: { asset: AudioAsset; onChange: (id: number, seconds: number) => void }) {
+  const [local, setLocal] = useState(() => ((asset.crossfadeMs || 0) / 1000).toFixed(1));
+  useEffect(() => {
+    setLocal(((asset.crossfadeMs || 0) / 1000).toFixed(1));
+  }, [asset.crossfadeMs]);
+  const commit = useCallback(() => {
+    const val = parseFloat(local) || 0;
+    const clamped = Math.max(0, Math.min(val, Math.floor(asset.durationMs / 1000)));
+    onChange(asset.id, clamped);
+    setLocal(clamped.toFixed(1));
+  }, [local, asset.id, asset.durationMs, onChange]);
+  return (
+    <input
+      type="number"
+      min={0}
+      max={Math.floor(asset.durationMs / 1000)}
+      step={0.5}
+      value={local}
+      onChange={(e) => setLocal(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => { if (e.key === 'Enter') commit(); }}
+      className="w-14 px-1.5 py-0.5 text-center text-[11px] bg-bg-surface border border-border rounded text-text-primary outline-none focus:border-accent"
+    />
+  );
+}
 
 export default function JingleManagerModal({
   mode = 'manage',
@@ -33,6 +59,8 @@ export default function JingleManagerModal({
   const removeAd = useStore((s) => s.removeAd);
   const updateJingleName = useStore((s) => s.updateJingleName);
   const updateAdName = useStore((s) => s.updateAdName);
+  const updateJingleCrossfade = useStore((s) => s.updateJingleCrossfade);
+  const updateAdCrossfade = useStore((s) => s.updateAdCrossfade);
   const playingJingleId = useStore((s) => s.playingJingleId);
   const setPlayingJingleId = useStore((s) => s.setPlayingJingleId);
   const addToast = useStore((s) => s.addToast);
@@ -196,6 +224,17 @@ export default function JingleManagerModal({
     setEditingId(null);
   };
 
+  const handleCrossfadeChange = async (id: number, seconds: number) => {
+    const ms = Math.max(0, Math.round(seconds * 1000));
+    if (shownKind === 'ads') {
+      await window.electronAPI.updateAdCrossfade(id, ms);
+      updateAdCrossfade(id, ms);
+    } else {
+      await window.electronAPI.updateJingleCrossfade(id, ms);
+      updateJingleCrossfade(id, ms);
+    }
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -251,6 +290,13 @@ export default function JingleManagerModal({
                       <input ref={editInputRef} value={editName} onChange={(e) => setEditName(e.target.value)} onBlur={commitRename} onKeyDown={(e) => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') setEditingId(null); }} className="mt-8 text-sm font-medium text-text-primary bg-bg-surface border border-accent rounded-md px-3 py-1.5 text-center outline-none shadow-sm" />
                     ) : (
                       <span onDoubleClick={() => { setEditingId(asset.id); setEditName(asset.name); }} className="mt-8 text-sm font-medium text-text-primary text-center truncate cursor-text" title={asset.name}>{asset.name}</span>
+                    )}
+                    {mode === 'manage' && (
+                      <div className="flex items-center justify-center gap-1.5 text-[11px] text-text-muted">
+                        <label className="whitespace-nowrap">{t('workspace.jingles.crossfade', { defaultValue: 'Crossfade' })}</label>
+                        <CrossfadeInput asset={asset} onChange={handleCrossfadeChange} />
+                        <span>s</span>
+                      </div>
                     )}
                     <div className="flex items-center justify-center gap-3 pt-2 border-t border-border/50">
                       <Tooltip content={isPlaying ? t('automation.queue.stop', { defaultValue: 'Stop' }) : t('nowPlaying.play', { defaultValue: 'Play' })} placement="bottom">

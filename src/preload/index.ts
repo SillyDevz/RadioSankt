@@ -83,6 +83,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getJingles: () => ipcRenderer.invoke('get-jingles'),
   deleteJingle: (id: number) => ipcRenderer.invoke('delete-jingle', id),
   renameJingle: (id: number, name: string) => ipcRenderer.invoke('rename-jingle', id, name),
+  updateJingleCrossfade: (id: number, crossfadeMs: number) =>
+    ipcRenderer.invoke('update-jingle-crossfade', id, crossfadeMs),
 
   // Ads
   saveAd: (name: string, filePath: string, durationMs: number) =>
@@ -90,6 +92,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getAds: () => ipcRenderer.invoke('get-ads'),
   deleteAd: (id: number) => ipcRenderer.invoke('delete-ad', id),
   renameAd: (id: number, name: string) => ipcRenderer.invoke('rename-ad', id, name),
+  updateAdCrossfade: (id: number, crossfadeMs: number) =>
+    ipcRenderer.invoke('update-ad-crossfade', id, crossfadeMs),
 
   // Automation Playlists
   savePlaylist: (name: string, steps: string) => ipcRenderer.invoke('save-playlist', name, steps),

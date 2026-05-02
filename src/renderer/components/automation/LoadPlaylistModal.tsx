@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useStore } from '@/store';
 import type { AutomationStep } from '@/store';
+import { patchLegacySteps } from '@/services/automation-session';
 import ModalShell from '@/components/ModalShell';
 
 export default function LoadPlaylistModal() {
@@ -30,6 +31,7 @@ export default function LoadPlaylistModal() {
         return;
       }
       const steps: AutomationStep[] = JSON.parse(row.steps);
+      patchLegacySteps(steps);
       const jingleIds = new Set(useStore.getState().jingles.map((j) => j.id));
       const adIds = new Set(useStore.getState().ads.map((a) => a.id));
       const validSteps = steps.filter((s) => {

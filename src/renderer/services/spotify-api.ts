@@ -360,11 +360,6 @@ export async function remoteResume(deviceId: string): Promise<void> {
   await playerCommand('play', 'PUT', { device_id: deviceId });
 }
 
-/** Resume on whichever device Spotify considers active (no `device_id`). Use when cached ids may be stale. */
-export async function remoteResumeActiveDevice(): Promise<void> {
-  await playerCommand('play', 'PUT');
-}
-
 export async function remotePause(deviceId: string): Promise<void> {
   await playerCommand('pause', 'PUT', { device_id: deviceId });
 }

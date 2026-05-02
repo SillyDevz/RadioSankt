@@ -16,6 +16,15 @@ export interface AutomationSessionSnapshot {
 
 const VALID_STEP_TYPES = new Set(['track', 'playlist', 'jingle', 'ad', 'pause']);
 
+export function patchLegacySteps(steps: AutomationStep[]): AutomationStep[] {
+  for (const s of steps) {
+    if ((s.type === 'jingle' || s.type === 'ad') && typeof (s as any).crossfadeMs !== 'number') {
+      (s as any).crossfadeMs = 0;
+    }
+  }
+  return steps;
+}
+
 function parseSnapshot(raw: unknown): AutomationSessionSnapshot | null {
   if (!raw || typeof raw !== 'object') return null;
   const o = raw as Record<string, unknown>;
@@ -49,7 +58,7 @@ function parseSnapshot(raw: unknown): AutomationSessionSnapshot | null {
     : undefined;
   return {
     v: 1,
-    automationSteps: validSteps,
+    automationSteps: patchLegacySteps(validSteps),
     currentPlaylistId: typeof o.currentPlaylistId === 'number' ? o.currentPlaylistId : null,
     currentPlaylistName: typeof o.currentPlaylistName === 'string' ? o.currentPlaylistName : null,
     breakRules: normalizedBreakRules as BreakRule[] | undefined,
@@ -249,6 +258,7 @@ async function loadAndPlayFromPlaylist(
       if ((s.type === 'jingle' || s.type === 'ad') && typeof s.filePath !== 'string') return false;
       return true;
     });
+    patchLegacySteps(steps);
   } catch {
     useStore.getState().addToast('Scheduled set data was invalid.', 'error');
     return;

@@ -5,7 +5,6 @@ import {
   playTrack,
   playPlaylistContextAtOffset,
   remotePause,
-  remoteResumeActiveDevice,
   remoteSetVolumePercent,
   addTrackToQueue,
   waitForActiveTrackUri,
@@ -148,6 +147,12 @@ class AutomationEngine {
   private silentTicks = 0;
   /** Whether the queue has ended and we're monitoring for silence to loop. */
   private postQueueEnd = false;
+  /** Timer for crossfade ramp on standalone jingle steps. */
+  private jingleCrossfadeTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Whether the crossfade ramp has already started for the current jingle step. */
+  private jingleCrossfadeRampStarted = false;
+  /** How many times we've force-replayed the current step (prevents infinite loop). */
+  private forcePlayAttempts = 0;
 
   constructor() {
     if (typeof window === 'undefined') return;
@@ -401,10 +406,20 @@ class AutomationEngine {
 
       // Update countdown from Spotify's actual position (no drift)
       if (state.track?.uri === expectedUri) {
+        this.forcePlayAttempts = 0;
         const durationMs = state.track.durationMs ?? step.durationMs;
-        const remaining = Math.max(0, durationMs - (state.progressMs ?? 0));
+        const progressMs = state.progressMs ?? 0;
+        const remaining = Math.max(0, durationMs - progressMs);
+
+        // Detect backward position jump — track looped back (Spotify replayed it)
+        const prevProgress = Date.now() - this.currentStepStartTime;
+        if (prevProgress > AUTOMATION_SPOTIFY_NEAR_END_MS && progressMs > 0 && progressMs < prevProgress - COMMAND_COOLDOWN_MS) {
+          void this.advanceFromStep(step, idx);
+          return;
+        }
+
         store.setStepTimeRemaining(remaining);
-        this.currentStepStartTime = Date.now() - (state.progressMs ?? 0);
+        this.currentStepStartTime = Date.now() - progressMs;
 
         // Near-end detection — trigger transition
         if (remaining < AUTOMATION_SPOTIFY_NEAR_END_MS && remaining > 0) {
@@ -434,7 +449,12 @@ class AutomationEngine {
           if (elapsed >= step.durationMs - AUTOMATION_SPOTIFY_NEAR_END_MS) {
             // Current step likely ended — advance instead of replaying
             void this.advanceFromStep(step, idx);
+          } else if (this.forcePlayAttempts >= 2) {
+            // Already retried twice — stop looping and advance
+            this.forcePlayAttempts = 0;
+            void this.advanceFromStep(step, idx);
           } else {
+            this.forcePlayAttempts++;
             await this.forcePlayCurrentStep(step);
           }
         }
@@ -500,6 +520,7 @@ class AutomationEngine {
   // ─── Step Execution ──────────────────────────────────────────────────
 
   private async executeStep(index: number): Promise<void> {
+    this.forcePlayAttempts = 0;
     const steps = this.getSteps();
     const store = this.getStore();
 
@@ -626,45 +647,51 @@ class AutomationEngine {
         AudioEngine.get()?.stopAutomationJingle();
       }
 
-      // Play inline break jingles if due
+      // Play inline break jingles if due — duck music instead of pausing to avoid state races
       const breakPicks = this.getBreakPicksIfDue(currentIndex, cur);
       if (breakPicks.length > 0 && devId) {
         this.preloadedNextUri = null;
-        await remotePause(devId).catch(() => {});
-        await remoteSetVolumePercent(this.currentVolumePct(), devId).catch(() => {});
+        const baseVol = this.currentVolumePct();
+        const duckPct = Math.round(baseVol * (this.getStore().duckLevel / 100));
+        await rampSpotifyRemoteVolume(devId, baseVol, duckPct, 300);
         const breakAudio = AudioEngine.getOrInit();
         breakAudio.resumeContextIfNeeded();
         breakAudio.setVolume('B', 1);
-        for (const pick of breakPicks) {
+        for (let i = 0; i < breakPicks.length; i++) {
+          const pick = breakPicks[i];
           if (pick.type !== 'jingle' && pick.type !== 'ad') continue;
+          const isLast = i === breakPicks.length - 1;
+          const crossfadeMs = isLast ? (pick.crossfadeMs || 0) : 0;
           try {
             await breakAudio.playJingle(pick.filePath);
             await new Promise<void>((resolve) => {
               if (!breakAudio.isJinglePlaying()) { resolve(); return; }
               const timeout = setTimeout(() => resolve(), (pick.durationMs || 30_000) + 5_000);
-              breakAudio.onJingleEnded(() => { clearTimeout(timeout); resolve(); });
+              let rampStarted = false;
+              const rampTimer = crossfadeMs > 0
+                ? setTimeout(() => {
+                    rampStarted = true;
+                    void rampSpotifyRemoteVolume(devId, duckPct, baseVol, crossfadeMs);
+                  }, Math.max(0, (pick.durationMs || 30_000) - crossfadeMs))
+                : null;
+              breakAudio.onJingleEnded(() => {
+                clearTimeout(timeout);
+                if (rampTimer) clearTimeout(rampTimer);
+                if (isLast && !rampStarted) {
+                  void rampSpotifyRemoteVolume(devId, duckPct, baseVol, 300);
+                }
+                resolve();
+              });
             });
           } catch { /* skip failed clip */ }
         }
-        // Re-check state after breaks
-        if (this.getStore().automationStatus !== 'playing') return;
-        // Check if Spotify already has the next track loaded (it auto-advanced before we paused)
-        const postBreakState = await getRemotePlaybackState().catch(() => null);
-        const nextStep = steps[currentIndex + 1];
-        if (
-          postBreakState &&
-          !postBreakState.isPlaying &&
-          nextStep?.type === 'track' &&
-          postBreakState.track?.uri === nextStep.spotifyUri
-        ) {
-          // Next track is already loaded — just resume, don't restart
-          await remoteResumeActiveDevice().catch(() => {});
-          this.markCommand();
-          // Let executeStep handle the UI/state update without re-issuing play
-          this.forceNextPlayback = false;
-        } else {
-          this.forceNextPlayback = true;
+        if (this.getStore().automationStatus !== 'playing') {
+          void rampSpotifyRemoteVolume(devId, duckPct, baseVol, 300);
+          return;
         }
+        // Safety: ensure volume is restored even if last jingle failed or callback didn't fire
+        await remoteSetVolumePercent(baseVol, devId).catch(() => {});
+        this.markCommand();
       }
 
       await this.executeStep(currentIndex + 1);
@@ -754,6 +781,16 @@ class AutomationEngine {
 
     try {
       await audio.playJingle(step.filePath);
+      // Start crossfade ramp early if configured and ducking
+      if (step.duckMusic && deviceId && step.crossfadeMs > 0) {
+        const delay = Math.max(0, (step.durationMs || 30_000) - step.crossfadeMs);
+        this.jingleCrossfadeTimer = setTimeout(() => {
+          this.jingleCrossfadeRampStarted = true;
+          const targetPct = this.currentVolumePct();
+          const duckPct = Math.round(targetPct * Math.max(0, Math.min(1, step.duckLevel)));
+          void rampSpotifyRemoteVolume(deviceId, duckPct, targetPct, step.crossfadeMs);
+        }, delay);
+      }
     } catch (err) {
       if (step.duckMusic && deviceId) {
         const targetPct = this.currentVolumePct();
@@ -771,11 +808,20 @@ class AutomationEngine {
   ): void {
     const audio = AudioEngine.getOrInit();
     const stepId = step.id;
+    this.jingleCrossfadeRampStarted = false;
+    if (this.jingleCrossfadeTimer) {
+      clearTimeout(this.jingleCrossfadeTimer);
+      this.jingleCrossfadeTimer = null;
+    }
     audio.onJingleEnded(() => {
       const store = this.getStore();
       const currentStep = store.automationSteps[store.currentStepIndex];
       if (currentStep && currentStep.id !== stepId) return;
-      if (step.duckMusic && deviceId) {
+      if (this.jingleCrossfadeTimer) {
+        clearTimeout(this.jingleCrossfadeTimer);
+        this.jingleCrossfadeTimer = null;
+      }
+      if (step.duckMusic && deviceId && !this.jingleCrossfadeRampStarted) {
         const targetPct = this.currentVolumePct();
         const duckPct = Math.round(targetPct * Math.max(0, Math.min(1, step.duckLevel)));
         void rampSpotifyRemoteVolume(deviceId, duckPct, targetPct, 300);
@@ -884,6 +930,11 @@ class AutomationEngine {
     this.silentTicks = 0;
     this.breakRecentKeys = [];
     this.songsSinceBreak = 0;
+    if (this.jingleCrossfadeTimer) {
+      clearTimeout(this.jingleCrossfadeTimer);
+      this.jingleCrossfadeTimer = null;
+    }
+    this.jingleCrossfadeRampStarted = false;
 
     const audio = AudioEngine.get();
     if (audio) {
@@ -918,6 +969,11 @@ class AutomationEngine {
     this.forceNextPlayback = true;
     this.preloadedNextUri = null;
     this.silentTicks = 0;
+    if (this.jingleCrossfadeTimer) {
+      clearTimeout(this.jingleCrossfadeTimer);
+      this.jingleCrossfadeTimer = null;
+    }
+    this.jingleCrossfadeRampStarted = false;
     AudioEngine.get()?.stopJingle();
   }
 
@@ -975,7 +1031,7 @@ class AutomationEngine {
     const store = this.getStore();
     const selectedJingles = new Set(rule.selectedJingleIds ?? []);
     const selectedAds = new Set(rule.selectedAdIds ?? []);
-    const pool: Array<{ kind: 'jingle' | 'ad'; id: number; name: string; filePath: string; durationMs: number }> = [
+    const pool: Array<{ kind: 'jingle' | 'ad'; id: number; name: string; filePath: string; durationMs: number; crossfadeMs: number }> = [
       ...store.jingles.filter((j) => selectedJingles.has(j.id)).map((j) => ({ kind: 'jingle' as const, ...j })),
       ...store.ads.filter((a) => selectedAds.has(a.id)).map((a) => ({ kind: 'ad' as const, ...a })),
     ];
@@ -1005,6 +1061,7 @@ class AutomationEngine {
         name: pick.name,
         filePath: pick.filePath,
         durationMs: pick.durationMs,
+        crossfadeMs: pick.crossfadeMs,
         transitionIn: 'immediate',
         transitionOut: 'immediate',
         overlapMs: 0,

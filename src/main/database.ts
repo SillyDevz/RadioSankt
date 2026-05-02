@@ -70,6 +70,11 @@ export function getDatabase(): Database.Database {
   const migrations: Array<() => void> = [
     // v1: initial schema (tables already created above via IF NOT EXISTS)
     () => {},
+    // v2: per-jingle crossfade time (ramp music back up before jingle ends)
+    () => {
+      db!.exec(`ALTER TABLE jingles ADD COLUMN crossfadeMs INTEGER NOT NULL DEFAULT 0`);
+      db!.exec(`ALTER TABLE ads ADD COLUMN crossfadeMs INTEGER NOT NULL DEFAULT 0`);
+    },
   ];
 
   if (currentVersion < migrations.length) {
@@ -94,6 +99,7 @@ export interface JingleRow {
   name: string;
   filePath: string;
   durationMs: number;
+  crossfadeMs: number;
   createdAt: string;
 }
 
@@ -119,11 +125,17 @@ export function renameJingle(id: number, name: string): void {
   db.prepare('UPDATE jingles SET name = ? WHERE id = ?').run(name, id);
 }
 
+export function updateJingleCrossfade(id: number, crossfadeMs: number): void {
+  const db = getDatabase();
+  db.prepare('UPDATE jingles SET crossfadeMs = ? WHERE id = ?').run(crossfadeMs, id);
+}
+
 export interface AdRow {
   id: number;
   name: string;
   filePath: string;
   durationMs: number;
+  crossfadeMs: number;
   createdAt: string;
 }
 
@@ -147,6 +159,11 @@ export function deleteAd(id: number): void {
 export function renameAd(id: number, name: string): void {
   const db = getDatabase();
   db.prepare('UPDATE ads SET name = ? WHERE id = ?').run(name, id);
+}
+
+export function updateAdCrossfade(id: number, crossfadeMs: number): void {
+  const db = getDatabase();
+  db.prepare('UPDATE ads SET crossfadeMs = ? WHERE id = ?').run(crossfadeMs, id);
 }
 
 // ── Automation Playlists ──────────────────────────────────────────────

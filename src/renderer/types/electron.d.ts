@@ -3,6 +3,7 @@ interface JingleRecord {
   name: string;
   filePath: string;
   durationMs: number;
+  crossfadeMs: number;
   createdAt: string;
 }
 
@@ -11,6 +12,7 @@ interface AdRecord {
   name: string;
   filePath: string;
   durationMs: number;
+  crossfadeMs: number;
   createdAt: string;
 }
 
@@ -64,12 +66,14 @@ interface ElectronAPI {
   getJingles: () => Promise<JingleRecord[]>;
   deleteJingle: (id: number) => Promise<void>;
   renameJingle: (id: number, name: string) => Promise<void>;
+  updateJingleCrossfade: (id: number, crossfadeMs: number) => Promise<void>;
 
   // Ads
   saveAd: (name: string, filePath: string, durationMs: number) => Promise<AdRecord>;
   getAds: () => Promise<AdRecord[]>;
   deleteAd: (id: number) => Promise<void>;
   renameAd: (id: number, name: string) => Promise<void>;
+  updateAdCrossfade: (id: number, crossfadeMs: number) => Promise<void>;
 
   // Automation Playlists
   savePlaylist: (name: string, steps: string) => Promise<{ id: number; name: string; steps: string; createdAt: string; updatedAt: string }>;

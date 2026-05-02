@@ -107,8 +107,8 @@ export type AutomationStep = (
       durationMs: number;
       trackCount: number;
     }
-  | { type: 'jingle'; jingleId: number; name: string; filePath: string; durationMs: number }
-  | { type: 'ad'; adId: number; name: string; filePath: string; durationMs: number }
+  | { type: 'jingle'; jingleId: number; name: string; filePath: string; durationMs: number; crossfadeMs: number }
+  | { type: 'ad'; adId: number; name: string; filePath: string; durationMs: number; crossfadeMs: number }
   | { type: 'pause'; label: string }
 ) & { id: string } & StepTransition;
 
@@ -257,6 +257,7 @@ interface JingleSlice {
   addJingle: (jingle: JingleRecord) => void;
   removeJingle: (id: number) => void;
   updateJingleName: (id: number, name: string) => void;
+  updateJingleCrossfade: (id: number, crossfadeMs: number) => void;
   setPlayingJingleId: (id: number | null) => void;
 }
 
@@ -266,6 +267,7 @@ interface AdSlice {
   addAd: (ad: JingleRecord) => void;
   removeAd: (id: number) => void;
   updateAdName: (id: number, name: string) => void;
+  updateAdCrossfade: (id: number, crossfadeMs: number) => void;
 }
 
 export type CoachMarkId = 'automation-drag' | 'automation-pause' | 'live-golive' | 'jingles-add';
@@ -555,6 +557,13 @@ const createJingleSlice: StateCreator<StoreState, [], [], JingleSlice> = (set) =
         s.jingleId === id ? { ...s, name } : s,
       ),
     })),
+  updateJingleCrossfade: (id, crossfadeMs) =>
+    set((state) => ({
+      jingles: state.jingles.map((j) => (j.id === id ? { ...j, crossfadeMs } : j)),
+      automationSteps: state.automationSteps.map((s) =>
+        s.type === 'jingle' && s.jingleId === id ? { ...s, crossfadeMs } : s,
+      ),
+    })),
   setPlayingJingleId: (id) => set({ playingJingleId: id }),
 });
 
@@ -568,6 +577,13 @@ const createAdSlice: StateCreator<StoreState, [], [], AdSlice> = (set) => ({
       ads: state.ads.map((a) => (a.id === id ? { ...a, name } : a)),
       automationSteps: state.automationSteps.map((s) =>
         s.type === 'ad' && s.adId === id ? { ...s, name } : s,
+      ),
+    })),
+  updateAdCrossfade: (id, crossfadeMs) =>
+    set((state) => ({
+      ads: state.ads.map((a) => (a.id === id ? { ...a, crossfadeMs } : a)),
+      automationSteps: state.automationSteps.map((s) =>
+        s.type === 'ad' && s.adId === id ? { ...s, crossfadeMs } : s,
       ),
     })),
 });

@@ -8,10 +8,12 @@ import {
   getJingles,
   deleteJingle,
   renameJingle,
+  updateJingleCrossfade,
   saveAd,
   getAds,
   deleteAd,
   renameAd,
+  updateAdCrossfade,
   getDatabase,
   savePlaylist,
   updatePlaylist,
@@ -448,6 +450,10 @@ function registerIpcHandlers(): void {
     renameJingle(id, name);
   });
 
+  ipcMain.handle('update-jingle-crossfade', (_event, id: number, crossfadeMs: number) => {
+    updateJingleCrossfade(id, crossfadeMs);
+  });
+
   // Ads
   ipcMain.handle('save-ad', (_event, name: string, filePath: string, durationMs: number) => {
     return saveAd(name, filePath, durationMs);
@@ -463,6 +469,10 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle('rename-ad', (_event, id: number, name: string) => {
     renameAd(id, name);
+  });
+
+  ipcMain.handle('update-ad-crossfade', (_event, id: number, crossfadeMs: number) => {
+    updateAdCrossfade(id, crossfadeMs);
   });
 
   // Automation Playlists

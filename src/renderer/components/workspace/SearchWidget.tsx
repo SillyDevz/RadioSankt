@@ -232,7 +232,7 @@ export default function SearchWidget() {
     addToast(t('workspace.search.addedTrack', { name: result.name, defaultValue: 'Added "{{name}}" to program' }), 'success');
   };
 
-  const handleAddJingleToAutomation = (jingle: { id: number; name: string; filePath: string; durationMs: number }) => {
+  const handleAddJingleToAutomation = (jingle: { id: number; name: string; filePath: string; durationMs: number; crossfadeMs: number }) => {
     const { addAutomationStep } = useStore.getState();
     addAutomationStep({
       id: crypto.randomUUID(),
@@ -241,6 +241,7 @@ export default function SearchWidget() {
       name: jingle.name,
       filePath: jingle.filePath,
       durationMs: jingle.durationMs,
+      crossfadeMs: jingle.crossfadeMs,
       transitionIn: 'immediate',
       transitionOut: 'immediate',
       overlapMs: 0,
@@ -250,7 +251,7 @@ export default function SearchWidget() {
     addToast(t('workspace.search.addedJingle', { name: jingle.name, defaultValue: 'Added jingle "{{name}}" to program' }), 'success');
   };
 
-  const handleAddAdToAutomation = (ad: { id: number; name: string; filePath: string; durationMs: number }) => {
+  const handleAddAdToAutomation = (ad: { id: number; name: string; filePath: string; durationMs: number; crossfadeMs: number }) => {
     const { addAutomationStep } = useStore.getState();
     addAutomationStep({
       id: crypto.randomUUID(),
@@ -259,6 +260,7 @@ export default function SearchWidget() {
       name: ad.name,
       filePath: ad.filePath,
       durationMs: ad.durationMs,
+      crossfadeMs: ad.crossfadeMs,
       transitionIn: 'immediate',
       transitionOut: 'immediate',
       overlapMs: 0,
@@ -366,7 +368,7 @@ export default function SearchWidget() {
     </div>
   );
 
-  const renderJingleRow = (jingle: { id: number; name: string; filePath: string; durationMs: number }) => (
+  const renderJingleRow = (jingle: { id: number; name: string; filePath: string; durationMs: number; crossfadeMs: number }) => (
     <div
       key={jingle.id}
       onDoubleClick={async () => {
