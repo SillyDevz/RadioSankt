@@ -460,11 +460,19 @@ class AutomationEngine {
         }
       }
     } else {
-      // Spotify not playing but we expect it to be
+      // Spotify not playing but we expect it to be (e.g. "can't play this track")
       this.silentTicks++;
       if (this.silentTicks >= 2) {
         this.silentTicks = 0;
-        await this.forcePlayCurrentStep(step);
+        if (this.forcePlayAttempts >= 2) {
+          // Track is unplayable — skip to next
+          this.forcePlayAttempts = 0;
+          this.emit({ type: 'error', message: `Skipping unplayable track: ${step.name}` });
+          void this.advanceFromStep(step, idx);
+        } else {
+          this.forcePlayAttempts++;
+          await this.forcePlayCurrentStep(step);
+        }
       }
     }
   }
